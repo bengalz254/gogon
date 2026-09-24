@@ -160,3 +160,19 @@ def test_entries_in_a_window_are_spaced_out():
     buys = [e["ts"] for e in engine.events if e["kind"] == "BUY" and e["window"] == T0]
     assert len(buys) == 2
     assert buys[1] - buys[0] >= engine.s.strategy.min_seconds_between_entries
+
+
+def test_market_lookup_errors_do_not_stop_the_bot():
+    class Flaky(FakeGateway):
+        calls = 0
+
+        def discover(self, asset, start):
+            self.calls += 1
+            if self.calls == 1:
+                raise ConnectionError("gamma-api.polymarket.com timed out")
+            return super().discover(asset, start)
+
+    engine, history = make(Flaky())
+    run(engine, history, price_path, T0 - 5, T0 + 300 + 20)
+    assert engine.windows[("btc", T0)].market is not None
+    assert engine.stats.windows_traded == 1

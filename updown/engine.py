@@ -159,7 +159,13 @@ class UpDownEngine:
                 logger.info("[%s] skipping window %d: %s", st.asset, st.start, st.skip_reason)
         if st.market is None and not st.skip_reason and now - st.last_discovery_try >= DISCOVERY_RETRY_S:
             st.last_discovery_try = now
-            st.market = self.gateway.discover(st.asset, st.start)
+            try:
+                st.market = self.gateway.discover(st.asset, st.start)
+            except Exception as exc:  # network trouble: one line, retried in a few seconds
+                if now - st.last_status_log >= STATUS_LOG_EVERY_S:
+                    st.last_status_log = now
+                    logger.warning("[%s] market lookup failed (will retry): %s", st.asset, _short(exc))
+                return
             if st.market is None and now - st.start >= 30 and not st.warned_missing:
                 st.warned_missing = True
                 logger.warning(
@@ -369,6 +375,12 @@ class UpDownEngine:
             mode=self.mode,
             filled=filled,
         )
+
+
+def _short(exc: Exception) -> str:
+    """First line of an exception, without urllib3's nested retry noise."""
+    text = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+    return f"{type(exc).__name__}: {text[:160]}"
 
 
 def _fmt(x: float | None) -> str:
