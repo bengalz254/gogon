@@ -108,6 +108,7 @@ counts as edge. Paper mode is the default here too.
 python -m updown.main --simulate          # offline simulator
 python scripts/updown_calibrate.py        # check the model on real BTC history
 python -m updown.main                     # paper trading on the live market
+python scripts/updown_dashboard.py        # radar dashboard (add --demo to preview)
 ```
 
 Full guide (Bahasa Indonesia): [docs/UPDOWN_5M.md](docs/UPDOWN_5M.md).

@@ -29,6 +29,7 @@ def run_live(settings, logger) -> None:
     from updown.engine import UpDownEngine
     from updown.feeds import BinanceFeed, PriceHistory
     from updown.markets import PolymarketGateway
+    from updown.state import build_state, write_state
 
     live = settings.wallet.live_trading
     logger.info("Starting 5-minute Up/Down bot | assets=%s | live_trading=%s", settings.assets, live)
@@ -58,6 +59,10 @@ def run_live(settings, logger) -> None:
     while not _stop:
         started = time.time()
         engine.tick(started)
+        try:
+            write_state(settings.state_path, build_state(engine, time.time()))
+        except Exception:
+            logger.exception("Could not write dashboard state")
         time.sleep(max(0.0, settings.tick_seconds - (time.time() - started)))
 
     feed.stop()

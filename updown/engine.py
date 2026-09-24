@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import copy
 import logging
+from collections import deque
 from dataclasses import dataclass, field
 
 from bot.journal import TradeJournal
@@ -49,6 +50,11 @@ class WindowState:
     settled: bool = False
     last_resolution_try: float = -1e18
     last_status_log: float = -1e18
+    # For the dashboard: spot path, last books seen, last decision reason, fills.
+    track: list[tuple[float, float]] = field(default_factory=list)
+    books: dict | None = None
+    why: str = ""
+    fills: list[dict] = field(default_factory=list)
 
     @property
     def has_position(self) -> bool:
@@ -80,6 +86,9 @@ class UpDownEngine:
         self.windows: dict[tuple[str, int], WindowState] = {}
         self.stats = Stats()
         self.mode = "live" if broker.live else "paper"
+        self.started_at: float | None = None
+        self.recent_windows: deque[dict] = deque(maxlen=96)  # finished windows, newest last
+        self.events: deque[dict] = deque(maxlen=60)  # fills and settlements, newest last
 
     # -- inputs ---------------------------------------------------------
     def on_price(self, asset: str, ts: float, price: float) -> None:
@@ -87,6 +96,8 @@ class UpDownEngine:
 
     # -- main tick -------------------------------------------------------
     def tick(self, now: float) -> None:
+        if self.started_at is None:
+            self.started_at = now
         for asset in self.s.assets:
             start = window_start(now, self.s.window_seconds)
             key = (asset, start)
@@ -96,6 +107,7 @@ class UpDownEngine:
             try:
                 self._prepare(state, now)
                 self._trade(state, now)
+                self._record_track(state, now)
             except Exception:
                 logger.exception("[%s] error while trading window %d", asset, start)
         self._settle(now)
@@ -128,6 +140,13 @@ class UpDownEngine:
                     f" | polymarket price_to_beat={ptb:.2f} (gap {ptb - st.strike:+.2f})" if ptb else "",
                 )
 
+    def _record_track(self, st: WindowState, now: float) -> None:
+        latest = self.history.latest(st.asset)
+        if st.strike is None or latest is None or latest[0] < st.start:
+            return
+        if not st.track or latest[0] > st.track[-1][0]:
+            st.track.append((latest[0], latest[1]))
+
     def _open_exposure(self) -> float:
         return sum(w.pos.total_cost_usd for w in self.windows.values() if not w.settled and w.has_position)
 
@@ -141,6 +160,7 @@ class UpDownEngine:
             return  # nothing to do yet; don't spend API calls
         latest = self.history.latest(st.asset)
         if latest is None or now - latest[0] > self.s.feed.max_age_s:
+            st.why = "price feed stale; not trading"
             if now - st.last_status_log >= STATUS_LOG_EVERY_S:
                 st.last_status_log = now
                 logger.warning("[%s] price feed stale; not trading", st.asset)
@@ -152,6 +172,8 @@ class UpDownEngine:
         books = {o: self.gateway.book(st.market.tokens[o]) for o in (UP, DOWN)}
         snap = Snapshot(spot=latest[1], strike=st.strike, seconds_left=seconds_left, sigma=self.vol[st.asset].sigma, books=books)
         decision, why = self.strategy.decide(snap, st.pos, room)
+        st.books = books
+        st.why = why_not or why
 
         if now - st.last_status_log >= STATUS_LOG_EVERY_S:
             st.last_status_log = now
@@ -181,6 +203,14 @@ class UpDownEngine:
                 st.pos.cost_usd[decision.outcome] *= (held - sold) / held if held else 0.0
                 st.pos.shares[decision.outcome] = held - sold
                 st.cash_usd += fill.usd - fill.fee_usd
+        if filled:
+            event = {
+                "ts": now, "asset": st.asset, "window": st.start, "kind": decision.side,
+                "outcome": decision.outcome, "shares": fill.shares, "price": fill.usd / fill.shares,
+                "usd": fill.usd, "fee": fill.fee_usd, "fair": decision.fair_prob, "reason": decision.reason,
+            }
+            st.fills.append(event)
+            self.events.append(event)
         logger.info(
             "[%s][%s] %s %.2f %s @<=%.3f ($%.2f + fee $%.2f) %s | %s",
             self.mode.upper(), st.asset, decision.side, fill.shares if filled else decision.shares, decision.outcome,
@@ -202,7 +232,12 @@ class UpDownEngine:
             if not st.has_position:
                 st.settled = True
                 if st.pos.entries:  # traded, but fully exited before expiry
-                    self._book(st, now, st.cash_usd, "exited early")
+                    self._book(st, now, st.cash_usd, "exited early", None)
+                else:
+                    self.recent_windows.append({
+                        "asset": st.asset, "start": st.start, "result": "skip" if st.skip_reason else "idle",
+                        "pnl": 0.0, "note": st.skip_reason or st.why,
+                    })
                 continue
             if now - st.last_resolution_try < 10:
                 continue
@@ -231,10 +266,10 @@ class UpDownEngine:
             pnl = st.cash_usd + payout
             st.pos = WindowPosition(entries=st.pos.entries)
             st.settled = True
-            self._book(st, now, pnl, f"{outcome} won via {source}")
+            self._book(st, now, pnl, f"{outcome} won via {source}", outcome)
         self._forget_old(now)
 
-    def _book(self, st: WindowState, now: float, pnl: float, note: str) -> None:
+    def _book(self, st: WindowState, now: float, pnl: float, note: str, winner: str | None) -> None:
         self.risk.record_window(now, pnl)
         self.stats.windows_traded += 1
         self.stats.pnl_usd += pnl
@@ -244,6 +279,16 @@ class UpDownEngine:
         elif pnl < 0:
             self.stats.losses += 1
         self.sizing.bankroll_usd = max(0.0, self.s.sizing.bankroll_usd + self.stats.pnl_usd)
+        sides = sorted({f["outcome"] for f in st.fills if f["kind"] == "BUY"})
+        result = "win" if pnl > 0 else "loss" if pnl < 0 else "flat"
+        self.recent_windows.append({
+            "asset": st.asset, "start": st.start, "result": result, "pnl": pnl,
+            "sides": sides, "winner": winner, "note": note, "cum_pnl": self.stats.pnl_usd,
+        })
+        self.events.append({
+            "ts": now, "asset": st.asset, "window": st.start, "kind": "SETTLE", "outcome": winner,
+            "pnl": pnl, "reason": note,
+        })
         logger.info(
             "[%s] window %d settled: %s | P&L $%+.2f | total $%+.2f over %d windows (%dW/%dL) | today $%+.2f",
             st.asset, st.start, note, pnl, self.stats.pnl_usd, self.stats.windows_traded,

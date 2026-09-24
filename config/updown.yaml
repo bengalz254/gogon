@@ -10,6 +10,8 @@ assets: [btc]
 slug_template: "{asset}-updown-5m-{start}"
 window_seconds: 300
 tick_seconds: 1.0
+# Live snapshot read by the radar dashboard (python scripts/updown_dashboard.py).
+state_path: "data/updown_state.json"
 
 model:
   vol_halflife_s: 180      # how fast the live volatility estimate adapts

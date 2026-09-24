@@ -113,6 +113,34 @@ python -m updown.main
 python scripts/dashboard.py
 ```
 
+### Dashboard radar
+
+```powershell
+# terminal 1: bot
+python -m updown.main
+# terminal 2: dashboard (otomatis membuka http://127.0.0.1:8766)
+python scripts/updown_dashboard.py
+
+# coba tampilan tanpa bot / tanpa internet (pakai simulator):
+python scripts/updown_dashboard.py --demo
+```
+
+Isi dashboard:
+- **Radar scope.** Satu putaran sapuan = satu window 5 menit. Titik yang
+  bergerak adalah harga BTC: di luar cincin strike artinya di atas harga awal
+  (Up, biru), di dalam cincin artinya di bawah (Down, oranye). Jaraknya dari
+  cincin dihitung dalam satuan volatilitas. Belah ketupat menandai order yang
+  terisi, dan pita hijau di pinggir menandai zona trading. Di tengah ada
+  P(Up) dan sisa waktu.
+- **Sinyal.** Pita peluang model (dengan uji volatilitas ±30%) dibandingkan
+  dengan harga ask Up/Down di Polymarket pada satu sumbu, ditambah bar edge
+  setelah fee untuk tiap sisi dan alasan keputusan terakhir bot.
+- **Jejak harga** window ini vs strike, **P&L kumulatif**, **riwayat 48
+  window**, panel **risiko** (rugi harian, kalah beruntun, eksposur), dan
+  **log** setiap order dan settlement beserta alasannya.
+- Arahkan kursor ke grafik untuk melihat detailnya. Kalau bot berhenti,
+  dashboard akan memberi tahu.
+
 Semua trade (paper maupun live) dicatat di `data/trades.csv` dengan strategi
 `updown_5m`, dan langsung muncul di dashboard.
 
@@ -141,4 +169,6 @@ Semua trade (paper maupun live) dicatat di `data/trades.csv` dengan strategi
 | `updown/risk.py` | Batas rugi harian dan cooldown |
 | `updown/sim.py` | Simulator offline |
 | `scripts/updown_calibrate.py` | Uji kalibrasi model dengan data historis |
+| `updown/state.py` | Snapshot status bot untuk dashboard |
+| `scripts/updown_dashboard.py` + `.html` | Dashboard radar (lokal, offline) |
 | `config/updown.yaml` | Semua parameter |

@@ -1,0 +1,932 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gogon Radar</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 34 34'%3E%3Crect width='34' height='34' rx='8' fill='%23040907'/%3E%3Ccircle cx='17' cy='17' r='13' fill='none' stroke='%234dffab' stroke-opacity='.6'/%3E%3Cpath d='M17 17 L17 4 A13 13 0 0 1 28.3 10.5 Z' fill='%234dffab' fill-opacity='.35'/%3E%3Ccircle cx='23' cy='12' r='2' fill='%232196d4'/%3E%3C/svg%3E">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #040907;
+    --panel: #0a1611;
+    --panel-2: #0d1d16;
+    --line: rgba(92, 255, 176, 0.10);
+    --line-strong: rgba(92, 255, 176, 0.22);
+    --grid: rgba(120, 255, 190, 0.09);
+    --phosphor: #4dffab;
+    --phosphor-dim: rgba(77, 255, 171, 0.55);
+    --text-primary: #e8fff3;
+    --text-secondary: #a3c9b6;
+    --text-muted: #62877a;
+    --up: #2196d4;
+    --down: #e0661f;
+    --good: #3ecf7a;
+    --warning: #e8b339;
+    --critical: #ef5350;
+    --radius: 14px;
+    --mono: "Cascadia Mono", "JetBrains Mono", "SF Mono", Consolas, ui-monospace, monospace;
+    --sans: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background:
+      radial-gradient(1200px 600px at 20% -10%, rgba(40, 140, 90, 0.10), transparent 60%),
+      radial-gradient(900px 500px at 110% 10%, rgba(33, 150, 212, 0.06), transparent 60%),
+      var(--bg);
+    color: var(--text-primary);
+    font-family: var(--sans);
+    font-size: 14px;
+    min-height: 100vh;
+  }
+  /* faint scanlines, like an old scope */
+  body::before {
+    content: "";
+    position: fixed; inset: 0; pointer-events: none; z-index: 50;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,0.12) 0 1px, transparent 1px 3px);
+    mix-blend-mode: multiply;
+  }
+
+  /* ---------- top bar ---------- */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 14px 24px; border-bottom: 1px solid var(--line);
+    background: rgba(6, 14, 10, 0.75); backdrop-filter: blur(8px);
+    position: sticky; top: 0; z-index: 20; flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand svg { flex: none; }
+  .brand h1 { margin: 0; font-size: 16px; letter-spacing: 0.14em; font-weight: 700; }
+  .brand h1 span { color: var(--phosphor); }
+  .brand p { margin: 2px 0 0; color: var(--text-muted); font-size: 12px; letter-spacing: 0.04em; }
+  .top-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 5px 11px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
+    border: 1px solid var(--line-strong); color: var(--text-secondary); background: rgba(10, 22, 17, 0.8);
+    white-space: nowrap;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); }
+  .pill.online .dot { background: var(--good); box-shadow: 0 0 8px var(--good); animation: blink 1.6s infinite; }
+  .pill.offline { color: var(--critical); border-color: rgba(239, 83, 80, 0.4); }
+  .pill.offline .dot { background: var(--critical); }
+  .pill.stale { color: var(--warning); border-color: rgba(232, 179, 57, 0.4); }
+  .pill.stale .dot { background: var(--warning); }
+  .pill.mode-paper { color: var(--warning); border-color: rgba(232, 179, 57, 0.35); }
+  .pill.mode-live { color: #fff; background: rgba(239, 83, 80, 0.25); border-color: var(--critical); }
+  .pill.mode-demo { color: var(--up); border-color: rgba(33, 150, 212, 0.45); }
+  .clock { font-family: var(--mono); color: var(--text-secondary); font-size: 12px; }
+  @keyframes blink { 50% { opacity: 0.35; } }
+
+  .banner {
+    display: none; margin: 16px 24px 0; padding: 12px 16px; border-radius: 10px;
+    border: 1px solid rgba(232, 179, 57, 0.35); background: rgba(232, 179, 57, 0.07); color: var(--text-secondary);
+    font-size: 13px;
+  }
+  .banner.show { display: block; }
+  .banner code { font-family: var(--mono); color: var(--text-primary); background: rgba(255,255,255,0.05); padding: 1px 6px; border-radius: 4px; }
+
+  /* ---------- layout ---------- */
+  main {
+    display: grid; gap: 16px; padding: 16px 24px 32px;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    max-width: 1560px; margin: 0 auto;
+  }
+  .card {
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 16px 18px; position: relative; min-width: 0;
+  }
+  .card-h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+  .card-h h2 { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.16em; color: var(--text-secondary); text-transform: uppercase; }
+  .card-h h2::before { content: "◢ "; color: var(--phosphor); }
+  .card-h .sub { font-family: var(--mono); font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .scope-card { grid-row: span 2; display: flex; flex-direction: column; }
+  .scope-wrap { position: relative; width: 100%; aspect-ratio: 1 / 1; max-height: 640px; margin: 0 auto; }
+  #scope { width: 100%; height: 100%; display: block; cursor: crosshair; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 10px; color: var(--text-secondary); font-size: 12px; }
+  .legend i { display: inline-block; vertical-align: middle; margin-right: 6px; }
+  .sw-dot { width: 9px; height: 9px; border-radius: 50%; }
+  .sw-diamond { width: 9px; height: 9px; transform: rotate(45deg); border-radius: 2px; }
+  .sw-band { width: 16px; height: 8px; border-radius: 2px; background: rgba(77, 255, 171, 0.22); border: 1px solid rgba(77,255,171,0.4); }
+  .sw-ring { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--phosphor-dim); }
+
+  .right-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+  .tile { padding: 14px 16px; }
+  .tile .label { font-size: 10.5px; letter-spacing: 0.16em; color: var(--text-muted); font-weight: 700; text-transform: uppercase; }
+  .tile .value { font-size: 28px; font-weight: 650; margin-top: 6px; letter-spacing: -0.01em; white-space: nowrap; }
+  .tile .meta { margin-top: 4px; font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile .value .ico { font-size: 16px; margin-right: 4px; vertical-align: 3px; }
+  .good-ico { color: var(--good); } .bad-ico { color: var(--critical); }
+
+  .signal-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+  .axis-svg, .chart-svg { width: 100%; display: block; overflow: hidden; }
+  .edge-row { display: grid; grid-template-columns: 74px minmax(0, 1fr) 112px; align-items: center; gap: 10px; margin: 6px 0 12px; }
+  .edge-row .name { font-size: 12px; font-weight: 700; letter-spacing: 0.1em; white-space: nowrap; }
+  .edge-row .val { font-family: var(--mono); font-size: 12px; text-align: right; color: var(--text-secondary); white-space: nowrap; }
+  .edge-row .val b { color: var(--text-primary); font-weight: 600; }
+  .edge-row .val .go { color: var(--good); }
+  .terminal {
+    margin-top: 12px; font-family: var(--mono); font-size: 12px; color: var(--phosphor);
+    background: rgba(0, 0, 0, 0.35); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+    min-height: 40px; line-height: 1.5; word-break: break-word;
+  }
+  .terminal .prompt { color: var(--text-muted); }
+  .cursor { display: inline-block; width: 7px; height: 13px; background: var(--phosphor); vertical-align: -2px; margin-left: 3px; animation: blink 1s steps(1) infinite; }
+  .kv { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+  .kv div { background: rgba(0,0,0,0.22); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 0; }
+  .kv span { display: block; font-size: 10px; letter-spacing: 0.14em; color: var(--text-muted); font-weight: 700; }
+  .kv b { display: block; margin-top: 3px; font-family: var(--mono); font-weight: 500; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .row-2 { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 16px; }
+  .row-3 { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 16px; flex: 1; }
+
+  .strip { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 4px; }
+  .cell {
+    aspect-ratio: 1 / 1; border-radius: 4px; display: grid; place-items: center;
+    font-size: 11px; font-weight: 700; background: rgba(255,255,255,0.03); color: var(--text-muted);
+    border: 1px solid rgba(255,255,255,0.03); cursor: default; outline: none;
+  }
+  .cell.win { background: rgba(62, 207, 122, 0.22); color: var(--good); border-color: rgba(62, 207, 122, 0.4); }
+  .cell.loss { background: rgba(239, 83, 80, 0.2); color: var(--critical); border-color: rgba(239, 83, 80, 0.4); }
+  .cell.flat { background: rgba(163, 201, 182, 0.12); color: var(--text-secondary); }
+  .cell.empty { background: transparent; border-style: dashed; border-color: rgba(255,255,255,0.05); }
+  .cell:hover, .cell:focus { outline: 1px solid var(--phosphor-dim); outline-offset: 1px; }
+  .strip-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; color: var(--text-secondary); }
+
+  .risk-status { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: 0.12em; font-size: 13px; margin-bottom: 14px; }
+  .risk-status .badge { padding: 4px 10px; border-radius: 6px; border: 1px solid; }
+  .risk-status .armed { color: var(--good); border-color: rgba(62,207,122,0.45); background: rgba(62,207,122,0.08); }
+  .risk-status .hold { color: var(--warning); border-color: rgba(232,179,57,0.45); background: rgba(232,179,57,0.08); }
+  .risk-status .stop { color: var(--critical); border-color: rgba(239,83,80,0.5); background: rgba(239,83,80,0.1); }
+  .risk-status small { font-weight: 500; letter-spacing: 0; color: var(--text-secondary); font-size: 12px; }
+  .meter-label { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
+  .meter-label b { font-family: var(--mono); font-weight: 500; color: var(--text-primary); }
+  .meter { height: 8px; border-radius: 4px; background: rgba(255,255,255,0.05); overflow: hidden; margin-bottom: 14px; }
+  .meter > div { height: 100%; border-radius: 4px; background: var(--good); transition: width 0.4s ease; }
+  .pips { display: flex; gap: 6px; margin-bottom: 14px; }
+  .pip { width: 22px; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.06); }
+  .pip.on { background: var(--critical); }
+
+  .log-card { grid-column: 1 / -1; }
+  .table-wrap { overflow-x: auto; max-height: 340px; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { text-align: left; font-size: 10.5px; letter-spacing: 0.14em; color: var(--text-muted); font-weight: 700; padding: 8px 10px; border-bottom: 1px solid var(--line-strong); position: sticky; top: 0; background: var(--panel); }
+  td { padding: 8px 10px; border-bottom: 1px solid var(--line); color: var(--text-secondary); white-space: nowrap; }
+  td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; color: var(--text-primary); }
+  th.num { text-align: right; }
+  td.reason { white-space: normal; min-width: 280px; color: var(--text-muted); font-size: 12px; }
+  .tag { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 11px; letter-spacing: 0.08em; color: var(--text-primary); }
+  .tag i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+  .empty-note { color: var(--text-muted); font-size: 13px; padding: 18px 4px; text-align: center; }
+
+  .tooltip {
+    position: fixed; z-index: 60; pointer-events: none; opacity: 0; transition: opacity 0.12s;
+    background: rgba(4, 12, 9, 0.96); border: 1px solid var(--line-strong); border-radius: 8px;
+    padding: 8px 10px; font-size: 12px; color: var(--text-secondary); min-width: 140px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+  }
+  .tooltip b { color: var(--text-primary); font-family: var(--mono); font-weight: 500; }
+  .tooltip .t-title { color: var(--phosphor); font-size: 10.5px; letter-spacing: 0.14em; font-weight: 700; margin-bottom: 4px; }
+  .tooltip.show { opacity: 1; }
+
+  footer { color: var(--text-muted); font-size: 11.5px; text-align: center; padding: 0 24px 28px; }
+  .stale-frame main { opacity: 0.55; transition: opacity 0.3s; }
+
+  @media (max-width: 1180px) {
+    main { grid-template-columns: minmax(0, 1fr); }
+    .scope-card { grid-row: auto; }
+    .scope-wrap { max-width: 560px; }
+    .row-2, .row-3 { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 720px) {
+    .topbar { padding: 12px 16px; }
+    main { padding: 12px 16px 24px; gap: 12px; }
+    .banner { margin: 12px 16px 0; }
+    .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .signal-grid { grid-template-columns: minmax(0, 1fr); }
+    .kv { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .tile .value { font-size: 24px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pill.online .dot, .cursor { animation: none; }
+  }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true">
+      <circle cx="17" cy="17" r="15.5" fill="none" stroke="#4dffab" stroke-opacity=".5"/>
+      <circle cx="17" cy="17" r="10" fill="none" stroke="#4dffab" stroke-opacity=".3"/>
+      <circle cx="17" cy="17" r="4.5" fill="none" stroke="#4dffab" stroke-opacity=".3"/>
+      <path d="M17 17 L17 1.5 A15.5 15.5 0 0 1 30.4 9.2 Z" fill="#4dffab" fill-opacity=".25"/>
+      <line x1="17" y1="17" x2="30.4" y2="9.2" stroke="#4dffab" stroke-width="1.6"/>
+      <circle cx="23.5" cy="11.5" r="1.8" fill="#2196d4"/>
+    </svg>
+    <div>
+      <h1>GOGON <span>RADAR</span></h1>
+      <p>Polymarket · 5-minute Up/Down · fair-value hunter</p>
+    </div>
+  </div>
+  <div class="top-right">
+    <span class="pill" id="asset-pill">BTC</span>
+    <span class="pill" id="mode-pill">—</span>
+    <span class="pill" id="link-pill"><span class="dot"></span><span id="link-text">CONNECTING</span></span>
+    <span class="clock" id="clock">--:--:-- UTC</span>
+  </div>
+</header>
+
+<div class="banner" id="banner"></div>
+
+<main>
+  <!-- RADAR SCOPE -->
+  <section class="card scope-card" aria-label="Radar scope for the current window">
+    <div class="card-h"><h2>Radar scope</h2><span class="sub" id="slug">—</span></div>
+    <div class="scope-wrap"><canvas id="scope" role="img" aria-label="Radar scope"></canvas></div>
+    <div class="legend">
+      <span><i class="sw-dot" style="background:var(--up)"></i>Harga di atas strike (Up)</span>
+      <span><i class="sw-dot" style="background:var(--down)"></i>Di bawah strike (Down)</span>
+      <span><i class="sw-ring"></i>Strike (harga awal)</span>
+      <span><i class="sw-band"></i>Zona trading</span>
+      <span><i class="sw-diamond" style="background:var(--text-primary)"></i>Order terisi</span>
+    </div>
+  </section>
+
+  <!-- RIGHT COLUMN -->
+  <div class="right-col">
+    <div class="tiles">
+      <div class="card tile"><div class="label">P&amp;L sesi</div><div class="value" id="t-pnl">—</div><div class="meta" id="t-pnl-meta">—</div></div>
+      <div class="card tile"><div class="label">Win rate</div><div class="value" id="t-win">—</div><div class="meta" id="t-win-meta">—</div></div>
+      <div class="card tile"><div class="label">Bankroll</div><div class="value" id="t-bank">—</div><div class="meta" id="t-bank-meta">—</div></div>
+      <div class="card tile"><div class="label">Fee dibayar</div><div class="value" id="t-fee">—</div><div class="meta" id="t-fee-meta">—</div></div>
+    </div>
+
+    <section class="card" aria-label="Signal">
+      <div class="card-h"><h2>Sinyal · model vs pasar</h2><span class="sub" id="sig-sub">—</span></div>
+      <div class="signal-grid">
+        <div>
+          <svg class="axis-svg" id="prob-axis" viewBox="0 0 420 150" role="img" aria-label="Probability axis"></svg>
+        </div>
+        <div>
+          <div class="meter-label" style="margin-bottom:2px"><span>Edge setelah fee (worst-case vol)</span><b id="edge-need">—</b></div>
+          <div class="edge-row"><span class="name" style="color:var(--up)">▲ UP</span><svg class="axis-svg" id="edge-up" viewBox="0 0 200 22"></svg><span class="val" id="edge-up-v">—</span></div>
+          <div class="edge-row"><span class="name" style="color:var(--down)">▼ DOWN</span><svg class="axis-svg" id="edge-down" viewBox="0 0 200 22"></svg><span class="val" id="edge-down-v">—</span></div>
+          <div class="kv">
+            <div><span>SPOT</span><b id="kv-spot">—</b></div>
+            <div><span>STRIKE</span><b id="kv-strike">—</b></div>
+            <div><span>VOLATILITAS</span><b id="kv-vol">—</b></div>
+            <div><span>FEED</span><b id="kv-feed">—</b></div>
+          </div>
+        </div>
+      </div>
+      <div class="terminal" id="terminal"><span class="prompt">radar&gt;</span> menunggu data…<span class="cursor"></span></div>
+    </section>
+  <!-- HISTORY + RISK -->
+    <div class="row-3">
+      <section class="card" aria-label="Recent windows">
+        <div class="card-h"><h2>Riwayat window</h2><span class="sub" id="hist-sub">48 window terakhir · terbaru di kanan bawah</span></div>
+        <div class="strip" id="strip"></div>
+        <div class="strip-legend">
+          <span><span class="good-ico">✓</span> Menang</span>
+          <span><span class="bad-ico">✕</span> Kalah</span>
+          <span style="color:var(--text-secondary)">= Impas / keluar awal</span>
+          <span style="color:var(--text-muted)">· Tanpa trade</span>
+          <span style="color:var(--text-muted)">– Dilewati</span>
+        </div>
+      </section>
+      <section class="card" aria-label="Risk">
+        <div class="card-h"><h2>Risiko</h2><span class="sub" id="risk-sub">—</span></div>
+        <div class="risk-status" id="risk-status"></div>
+        <div class="meter-label"><span>Rugi harian terpakai</span><b id="loss-v">—</b></div>
+        <div class="meter"><div id="loss-bar" style="width:0%"></div></div>
+        <div class="meter-label"><span>Kalah beruntun</span><b id="streak-v">—</b></div>
+        <div class="pips" id="pips"></div>
+        <div class="meter-label"><span>Eksposur terbuka</span><b id="expo-v">—</b></div>
+        <div class="meter-label" style="flex-wrap:wrap;gap:4px 12px"><span>Posisi window ini</span><b id="pos-v" style="margin-left:auto">—</b></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- PRICE TRACK + PNL -->
+  <div class="row-2">
+    <section class="card" aria-label="Price track for the current window">
+      <div class="card-h"><h2>Jejak harga · window ini</h2><span class="sub" id="track-sub">—</span></div>
+      <svg class="chart-svg" id="track" viewBox="0 0 720 260" role="img" aria-label="Spot price versus strike"></svg>
+    </section>
+    <section class="card" aria-label="Cumulative profit and loss">
+      <div class="card-h"><h2>P&amp;L kumulatif</h2><span class="sub" id="pnl-sub">—</span></div>
+      <svg class="chart-svg" id="pnl" viewBox="0 0 520 260" role="img" aria-label="Cumulative P&L per settled window"></svg>
+    </section>
+  </div>
+
+  <!-- EVENT LOG -->
+  <section class="card log-card" aria-label="Event log">
+    <div class="card-h"><h2>Log kejadian</h2><span class="sub" id="log-sub">order &amp; settlement terbaru</span></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>WAKTU</th><th>AKSI</th><th>SISI</th><th class="num">SAHAM</th><th class="num">HARGA</th><th class="num">FAIR</th><th class="num">USD / P&amp;L</th><th>ALASAN</th></tr></thead>
+        <tbody id="log-body"></tbody>
+      </table>
+      <div class="empty-note" id="log-empty">Belum ada order. Bot hanya menembak saat edge ≥ batas.</div>
+    </div>
+  </section>
+</main>
+<footer>Paper mode = fill disimulasikan; hasil live biasanya lebih kecil. Bukan nasihat keuangan.</footer>
+<div class="tooltip" id="tip"></div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const C = {
+    up: css("--up"), down: css("--down"), good: css("--good"), bad: css("--critical"), warn: css("--warning"),
+    phos: css("--phosphor"), text: css("--text-primary"), text2: css("--text-secondary"), muted: css("--text-muted"),
+    grid: css("--grid"), panel: css("--panel"),
+  };
+  const SVGNS = "http://www.w3.org/2000/svg";
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  let payload = null, state = null, view = null, recvPerf = 0, assetIdx = 0;
+
+  // ---------- formatting ----------
+  const usd = (x, sign = false) => {
+    if (x == null || isNaN(x)) return "—";
+    const s = Math.abs(x).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return (x < 0 ? "−$" : sign && x > 0 ? "+$" : "$") + s;
+  };
+  const price = (x) => x == null ? "—" : x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const pct = (x, d = 0) => x == null ? "—" : (x * 100).toFixed(d) + "%";
+  // A probability is never 0 or 100%: say so instead of rounding into certainty.
+  const prob = (x, d = 0) => x == null ? "—" : x > 1 - 0.5 * 10 ** -(d + 2) ? ">" + (100 - 10 ** -d).toFixed(d) + "%"
+    : x < 0.5 * 10 ** -(d + 2) ? "<" + (10 ** -d).toFixed(d) + "%" : pct(x, d);
+  const cents = (x) => x == null ? "—" : x.toFixed(2);
+  const signed = (x, d = 3) => x == null ? "—" : (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(d);
+  const mmss = (s) => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+  const hhmmss = (t) => new Date(t * 1000).toISOString().slice(11, 19);
+  const hhmm = (t) => new Date(t * 1000).toISOString().slice(11, 16);
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  // Size an SVG's viewBox to its on-screen width so 11px text stays 11px.
+  function fit(svg, H, minW = 300) {
+    const W = Math.max(minW, Math.round(svg.getBoundingClientRect().width) || minW);
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    svg.setAttribute("height", H);
+    return W;
+  }
+  let resizeTimer = null;
+  window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => state && render(), 120); });
+
+  function el(tag, attrs = {}, parent) {
+    const n = document.createElementNS(SVGNS, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    if (parent) parent.appendChild(n);
+    return n;
+  }
+
+  // ---------- tooltip ----------
+  const tip = $("tip");
+  function showTip(html, x, y) {
+    tip.innerHTML = html;
+    tip.classList.add("show");
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    let left = x + 14, top = y + 14;
+    if (left + w > window.innerWidth - 8) left = x - w - 14;
+    if (top + h > window.innerHeight - 8) top = y - h - 14;
+    tip.style.left = left + "px"; tip.style.top = top + "px";
+  }
+  const hideTip = () => tip.classList.remove("show");
+
+  // ---------- polling ----------
+  async function poll() {
+    try {
+      const r = await fetch("/api/state", { cache: "no-store" });
+      const p = await r.json();
+      if (p.status === "retry") return;
+      payload = p;
+      if (p.state) { state = p.state; recvPerf = performance.now(); }
+      render();
+    } catch (e) {
+      payload = { status: "server_down" };
+      renderLink();
+    }
+  }
+  setInterval(poll, 1000);
+  poll();
+
+  // time as the bot sees it, interpolated between polls so the sweep glides
+  function botNow() {
+    if (!state) return Date.now() / 1000;
+    const dt = Math.min(2.5, (performance.now() - recvPerf) / 1000);
+    return state.now + (payload && payload.status === "online" ? dt : 0);
+  }
+
+  // ---------- render ----------
+  function renderLink() {
+    const pill = $("link-pill"), text = $("link-text"), banner = $("banner");
+    pill.className = "pill";
+    document.body.classList.remove("stale-frame");
+    const st = payload ? payload.status : "starting";
+    if (st === "online") { pill.classList.add("online"); text.textContent = "LIVE FEED"; banner.classList.remove("show"); }
+    else if (st === "stale") {
+      pill.classList.add("stale"); text.textContent = "BOT DIAM " + Math.round(payload.age) + "s";
+      banner.innerHTML = "Bot tidak memperbarui data. Apakah bot masih jalan? Cek terminal bot, lalu jalankan lagi <code>python -m updown.main</code>.";
+      banner.classList.add("show"); document.body.classList.add("stale-frame");
+    } else if (st === "no_bot") {
+      pill.classList.add("offline"); text.textContent = "BOT OFFLINE";
+      banner.innerHTML = "Bot belum jalan. Buka terminal kedua dan jalankan <code>python -m updown.main</code>, atau coba tampilan dengan <code>python scripts/updown_dashboard.py --demo</code>.";
+      banner.classList.add("show");
+    } else if (st === "server_down") {
+      pill.classList.add("offline"); text.textContent = "SERVER MATI";
+      banner.innerHTML = "Tidak bisa menghubungi server dashboard. Jalankan lagi <code>python scripts/updown_dashboard.py</code>.";
+      banner.classList.add("show"); document.body.classList.add("stale-frame");
+    } else { text.textContent = "CONNECTING"; }
+  }
+
+  function render() {
+    renderLink();
+    if (!state) return;
+    view = state.assets[Math.min(assetIdx, state.assets.length - 1)];
+    const mode = payload.demo ? "demo" : state.mode;
+    const mp = $("mode-pill");
+    mp.className = "pill mode-" + mode;
+    mp.textContent = mode === "live" ? "● LIVE · UANG ASLI" : mode === "demo" ? "DEMO · SIMULATOR" : "PAPER · SIMULASI";
+    $("asset-pill").textContent = view.asset.toUpperCase() + " · 5M";
+    $("clock").textContent = hhmmss(state.now) + " UTC";
+    $("slug").textContent = view.slug || (view.skip_reason ? "window dilewati" : "mencari market…");
+    renderTiles(); renderSignal(); renderTrack(); renderPnl(); renderStrip(); renderRisk(); renderLog();
+  }
+
+  function renderTiles() {
+    const s = state.stats, cfg = state.config;
+    const pnl = s.pnl_usd;
+    $("t-pnl").innerHTML = (pnl > 0 ? '<span class="ico good-ico">▲</span>' : pnl < 0 ? '<span class="ico bad-ico">▼</span>' : "") + usd(pnl, true);
+    $("t-pnl-meta").textContent = "hari ini " + usd(state.risk.today_pnl, true);
+    const n = s.wins + s.losses;
+    $("t-win").textContent = n ? pct(s.wins / n) : "—";
+    $("t-win-meta").textContent = `${s.wins}M / ${s.losses}K · ${s.windows_traded} window`;
+    $("t-bank").textContent = usd(state.bankroll);
+    const growth = cfg.bankroll_start ? (state.bankroll / cfg.bankroll_start - 1) : 0;
+    $("t-bank-meta").textContent = "awal " + usd(cfg.bankroll_start) + " · " + (growth >= 0 ? "+" : "−") + Math.abs(growth * 100).toFixed(1) + "%";
+    $("t-fee").textContent = usd(s.fees_usd);
+    $("t-fee-meta").textContent = s.orders + " order terisi";
+  }
+
+  // --- probability axis: model band vs what the market charges, all on one P(Up) axis
+  function renderSignal() {
+    const svg = $("prob-axis"); svg.innerHTML = "";
+    const W = fit(svg, 150, 280), x0 = 18, x1 = W - 18, y = 58;
+    const X = (p) => x0 + (x1 - x0) * Math.min(1, Math.max(0, p));
+    el("line", { x1: x0, y1: y, x2: x1, y2: y, stroke: C.text2, "stroke-opacity": 0.35, "stroke-width": 1 }, svg);
+    for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+      el("line", { x1: X(t), y1: y - 4, x2: X(t), y2: y + 4, stroke: C.text2, "stroke-opacity": 0.35 }, svg);
+      const tx = el("text", { x: X(t), y: y + 84, "text-anchor": "middle", fill: C.muted, "font-size": 11, "font-family": "var(--mono)" }, svg);
+      tx.textContent = (t * 100) + "%";
+    }
+    const lbl = el("text", { x: x0, y: 14, fill: C.muted, "font-size": 10.5, "letter-spacing": "0.14em", "font-weight": 700 }, svg);
+    lbl.textContent = "PELUANG UP · P(UP)";
+
+    const b = view.books;
+    if (view.p_up == null) {
+      const t = el("text", { x: W / 2, y: y - 18, "text-anchor": "middle", fill: C.text2, "font-size": 13 }, svg);
+      t.textContent = view.skip_reason ? "Window dilewati — menunggu window berikutnya" : "Menunggu harga & strike…";
+    } else {
+      // conservative band
+      const lo = view.p_up_low, hi = view.p_up_high;
+      el("rect", { x: X(lo), y: y - 11, width: Math.max(2, X(hi) - X(lo)), height: 22, rx: 4, fill: C.phos, "fill-opacity": 0.14, stroke: C.phos, "stroke-opacity": 0.45 }, svg);
+      el("line", { x1: X(view.p_up), y1: y - 16, x2: X(view.p_up), y2: y + 16, stroke: C.phos, "stroke-width": 2 }, svg);
+      const edgeAnchor = (x) => x < W * 0.22 ? "start" : x > W * 0.78 ? "end" : "middle";
+      const mt = el("text", { x: X(view.p_up), y: y - 22, "text-anchor": edgeAnchor(X(view.p_up)), fill: C.text, "font-size": 12, "font-weight": 650 }, svg);
+      mt.textContent = "MODEL " + prob(view.p_up, 1);
+      // Up ask sits at its price; buying Down at d is a bet that P(Up) < 1 - d.
+      const ux = b && b.Up && b.Up.ask != null ? X(b.Up.ask) : null;
+      const dx = b && b.Down && b.Down.ask != null ? X(1 - b.Down.ask) : null;
+      const close = ux != null && dx != null && Math.abs(ux - dx) < 150;
+      if (ux != null) marker(svg, ux, y + 12, C.up, "▲ UP ask " + cents(b.Up.ask), 1, edgeAnchor(ux));
+      if (dx != null) marker(svg, dx, y + 12, C.down, "▼ DOWN ask " + cents(b.Down.ask), close ? 2 : 1, edgeAnchor(dx));
+      if (!b) {
+        const t = el("text", { x: W / 2, y: y + 36, "text-anchor": "middle", fill: C.muted, "font-size": 11.5 }, svg);
+        t.textContent = "Order book dibaca saat zona trading dimulai (T−" + mmss(state.config.max_seconds_left) + ")";
+      }
+    }
+    // edges
+    const need = state.config.min_edge;
+    $("edge-need").textContent = "butuh ≥ " + need.toFixed(2);
+    edgeBar($("edge-up"), view.edges ? view.edges.Up : null, C.up, need);
+    edgeBar($("edge-down"), view.edges ? view.edges.Down : null, C.down, need);
+    const ev = (e) => e == null ? "—" : `<b>${signed(e)}</b>` + (e >= need ? ' <span class="go">✓ TEMBAK</span>' : "");
+    $("edge-up-v").innerHTML = ev(view.edges && view.edges.Up);
+    $("edge-down-v").innerHTML = ev(view.edges && view.edges.Down);
+    $("kv-spot").textContent = price(view.spot);
+    $("kv-strike").textContent = price(view.strike);
+    $("kv-vol").textContent = view.vol_annual ? pct(view.vol_annual) : "—";
+    const age = view.feed_age;
+    const kf = $("kv-feed");
+    kf.textContent = age == null ? "—" : age < 3 ? "✓ " + age.toFixed(1) + "s" : "⚠ " + age.toFixed(0) + "s";
+    kf.style.color = age == null ? "" : age < 3 ? C.good : C.warn;
+    const sl = view.seconds_left, cfg = state.config;
+    $("sig-sub").textContent = sl > cfg.max_seconds_left ? "scanning · zona trading dalam " + mmss(sl - cfg.max_seconds_left)
+      : sl >= cfg.min_seconds_left ? "zona trading aktif · " + mmss(sl) + " lagi" : "terkunci · menunggu settlement";
+    const why = view.skip_reason || view.why || "menunggu zona trading…";
+    $("terminal").innerHTML = '<span class="prompt">radar&gt;</span> ' + esc(why) + '<span class="cursor"></span>';
+  }
+
+  function marker(svg, x, y, color, text, row, anchor) {
+    const g = el("g", {}, svg);
+    el("path", { d: `M${x} ${y} l-6 9 h12 z`, fill: color, stroke: C.panel, "stroke-width": 2 }, g);
+    const ty = y + 12 + row * 14;
+    const t = el("text", { x: anchor === "end" ? x + 6 : anchor === "start" ? x - 6 : x, y: ty, "text-anchor": anchor, fill: C.text2, "font-size": 11, "font-family": "var(--mono)" }, g);
+    t.textContent = text;
+  }
+
+  function edgeBar(svg, e, color, need) {
+    svg.innerHTML = "";
+    const W = 200, lim = 0.2, X = (v) => W / 2 + (W / 2 - 2) * Math.max(-1, Math.min(1, v / lim));
+    el("rect", { x: 0, y: 7, width: W, height: 8, rx: 4, fill: "#ffffff", "fill-opacity": 0.05 }, svg);
+    if (e != null) {
+      const a = X(0), bx = X(e);
+      el("rect", { x: Math.min(a, bx), y: 7, width: Math.max(2, Math.abs(bx - a)), height: 8, rx: 3, fill: color, "fill-opacity": e >= need ? 1 : 0.45 }, svg);
+    }
+    el("line", { x1: X(0), y1: 3, x2: X(0), y2: 19, stroke: C.text2, "stroke-opacity": 0.5 }, svg);
+    el("line", { x1: X(need), y1: 2, x2: X(need), y2: 20, stroke: C.good, "stroke-width": 1.5 }, svg);
+  }
+
+  // --- price track: spot vs strike across the 5 minutes, with fills
+  let trackGeo = null;
+  function renderTrack() {
+    const svg = $("track"); svg.innerHTML = ""; trackGeo = null;
+    const H = 260, W = fit(svg, H), L = 70, R = 84, T = 14, B = 30;
+    const tr = view.track || [], start = view.window_start, ws = state.window_seconds, cfg = state.config;
+    const X = (t) => L + (W - L - R) * ((t - start) / ws);
+    // trade zone
+    el("rect", { x: X(start + ws - cfg.max_seconds_left), y: T, width: X(start + ws - cfg.min_seconds_left) - X(start + ws - cfg.max_seconds_left), height: H - T - B, fill: C.phos, "fill-opacity": 0.05 }, svg);
+    for (let m = 0; m <= 5; m++) {
+      const x = X(start + m * 60);
+      el("line", { x1: x, y1: T, x2: x, y2: H - B, stroke: C.grid }, svg);
+      const t = el("text", { x, y: H - 10, "text-anchor": "middle", fill: C.muted, "font-size": 11, "font-family": "var(--mono)" }, svg);
+      t.textContent = m + ":00";
+    }
+    if (!view.strike || tr.length < 2) {
+      const t = el("text", { x: (W - R + L) / 2, y: H / 2, "text-anchor": "middle", fill: C.text2, "font-size": 13 }, svg);
+      t.textContent = view.skip_reason ? "Window ini dilewati (bot mulai di tengah window)" : "Mengumpulkan harga…";
+      $("track-sub").textContent = "—";
+      return;
+    }
+    const ps = tr.map((p) => p[1]).concat([view.strike]);
+    let lo = Math.min(...ps), hi = Math.max(...ps);
+    const pad = Math.max((hi - lo) * 0.15, view.strike * 0.0002);
+    lo -= pad; hi += pad;
+    const Y = (p) => T + (H - T - B) * (1 - (p - lo) / (hi - lo));
+    // y grid (4 ticks)
+    for (let i = 0; i <= 3; i++) {
+      const p = lo + (hi - lo) * (i / 3), y = Y(p);
+      el("line", { x1: L, y1: y, x2: W - R, y2: y, stroke: C.grid }, svg);
+      const t = el("text", { x: L - 8, y: y + 4, "text-anchor": "end", fill: C.muted, "font-size": 11, "font-family": "var(--mono)" }, svg);
+      t.textContent = price(p);
+    }
+    // strike
+    const ys = Y(view.strike);
+    el("line", { x1: L, y1: ys, x2: W - R, y2: ys, stroke: C.phos, "stroke-opacity": 0.6, "stroke-width": 1.5 }, svg);
+    const stT = el("text", { x: W - R + 8, y: ys + 4, fill: C.phos, "font-size": 11, "font-weight": 700 }, svg);
+    stT.textContent = "STRIKE";
+    // area tint above / below strike
+    const pts = tr.map((p) => [X(p[0]), Y(p[1])]);
+    const lineD = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+    const defs = el("defs", {}, svg);
+    const clipUp = el("clipPath", { id: "clip-up" }, defs); el("rect", { x: 0, y: 0, width: W, height: ys }, clipUp);
+    const clipDn = el("clipPath", { id: "clip-dn" }, defs); el("rect", { x: 0, y: ys, width: W, height: H }, clipDn);
+    const areaD = lineD + ` L${pts[pts.length - 1][0].toFixed(1)} ${ys} L${pts[0][0].toFixed(1)} ${ys} Z`;
+    el("path", { d: areaD, fill: C.up, "fill-opacity": 0.18, "clip-path": "url(#clip-up)" }, svg);
+    el("path", { d: areaD, fill: C.down, "fill-opacity": 0.18, "clip-path": "url(#clip-dn)" }, svg);
+    el("path", { d: lineD, fill: "none", stroke: C.text, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+    // fills
+    for (const f of view.fills || []) {
+      const near = tr.reduce((best, p) => Math.abs(p[0] - f.ts) < Math.abs(best[0] - f.ts) ? p : best, tr[0]);
+      const x = X(f.ts), y = Y(near[1]), c = f.outcome === "Up" ? C.up : C.down;
+      el("path", { d: `M${x} ${y - 7} L${x + 7} ${y} L${x} ${y + 7} L${x - 7} ${y} Z`, fill: f.kind === "BUY" ? c : C.panel, stroke: f.kind === "BUY" ? C.panel : c, "stroke-width": 2 }, svg);
+    }
+    // endpoint + direct label
+    const last = tr[tr.length - 1], lx = X(last[0]), ly = Y(last[1]);
+    const above = last[1] >= view.strike, c = above ? C.up : C.down;
+    el("circle", { cx: lx, cy: ly, r: 5, fill: c, stroke: C.panel, "stroke-width": 2 }, svg);
+    const d = last[1] - view.strike;
+    const lt = el("text", { x: W - R + 8, y: Math.min(H - B, Math.max(T + 10, ly + (Math.abs(ly - ys) < 16 ? (above ? -12 : 16) : 4))), fill: C.text, "font-size": 12, "font-family": "var(--mono)" }, svg);
+    lt.textContent = (above ? "▲ " : "▼ ") + (d >= 0 ? "+" : "−") + Math.abs(d).toFixed(2);
+    $("track-sub").textContent = "spot " + price(last[1]) + " · strike " + price(view.strike);
+    // hover layer
+    const cross = el("line", { x1: 0, y1: T, x2: 0, y2: H - B, stroke: C.text2, "stroke-opacity": 0, "stroke-width": 1 }, svg);
+    const hit = el("rect", { x: L, y: T, width: W - L - R, height: H - T - B, fill: "transparent" }, svg);
+    trackGeo = { svg, cross, hit, tr, X, W, start, strike: view.strike };
+    hit.addEventListener("mousemove", onTrackMove);
+    hit.addEventListener("mouseleave", () => { cross.setAttribute("stroke-opacity", 0); hideTip(); });
+  }
+  function onTrackMove(ev) {
+    if (!trackGeo) return;
+    const { svg, cross, tr, X, W, start, strike } = trackGeo;
+    const r = svg.getBoundingClientRect();
+    const sx = (ev.clientX - r.left) * (W / r.width);
+    let best = tr[0];
+    for (const p of tr) if (Math.abs(X(p[0]) - sx) < Math.abs(X(best[0]) - sx)) best = p;
+    cross.setAttribute("x1", X(best[0])); cross.setAttribute("x2", X(best[0])); cross.setAttribute("stroke-opacity", 0.5);
+    const d = best[1] - strike;
+    showTip(`<div class="t-title">T+${mmss(best[0] - start)}</div>Spot <b>${price(best[1])}</b><br>vs strike <b>${(d >= 0 ? "+" : "−") + Math.abs(d).toFixed(2)}</b> ${d >= 0 ? "▲" : "▼"}`, ev.clientX, ev.clientY);
+  }
+
+  // --- cumulative P&L per settled window
+  let pnlGeo = null;
+  function renderPnl() {
+    const svg = $("pnl"); svg.innerHTML = ""; pnlGeo = null;
+    const H = 260, W = fit(svg, H), L = 62, R = 70, T = 14, B = 30;
+    const rows = (state.recent_windows || []).filter((w) => w.cum_pnl != null);
+    if (rows.length < 1) {
+      const t = el("text", { x: W / 2, y: H / 2, "text-anchor": "middle", fill: C.text2, "font-size": 13 }, svg);
+      t.textContent = "Belum ada window yang selesai di-trade";
+      $("pnl-sub").textContent = "—";
+      return;
+    }
+    const pts = [{ cum: 0, w: null }].concat(rows.map((w) => ({ cum: w.cum_pnl, w })));
+    const vals = pts.map((p) => p.cum);
+    let lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
+    const pad = Math.max((hi - lo) * 0.12, 1); lo -= pad; hi += pad;
+    const X = (i) => L + (W - L - R) * (pts.length === 1 ? 1 : i / (pts.length - 1));
+    const Y = (v) => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+    for (let i = 0; i <= 3; i++) {
+      const v = lo + (hi - lo) * (i / 3), y = Y(v);
+      el("line", { x1: L, y1: y, x2: W - R, y2: y, stroke: C.grid }, svg);
+      const t = el("text", { x: L - 8, y: y + 4, "text-anchor": "end", fill: C.muted, "font-size": 11, "font-family": "var(--mono)" }, svg);
+      t.textContent = usd(v);
+    }
+    el("line", { x1: L, y1: Y(0), x2: W - R, y2: Y(0), stroke: C.text2, "stroke-opacity": 0.45 }, svg);
+    const d = pts.map((p, i) => (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(p.cum).toFixed(1)).join(" ");
+    const defs = el("defs", {}, svg);
+    const gr = el("linearGradient", { id: "pnl-g", x1: 0, y1: 0, x2: 0, y2: 1 }, defs);
+    el("stop", { offset: "0%", "stop-color": C.phos, "stop-opacity": 0.28 }, gr);
+    el("stop", { offset: "100%", "stop-color": C.phos, "stop-opacity": 0 }, gr);
+    el("path", { d: d + ` L${X(pts.length - 1)} ${Y(0)} L${X(0)} ${Y(0)} Z`, fill: "url(#pnl-g)" }, svg);
+    el("path", { d, fill: "none", stroke: C.phos, "stroke-width": 2, "stroke-linejoin": "round" }, svg);
+    const lastV = vals[vals.length - 1], lx = X(pts.length - 1), ly = Y(lastV);
+    el("circle", { cx: lx, cy: ly, r: 4.5, fill: C.phos, stroke: C.panel, "stroke-width": 2 }, svg);
+    const lt = el("text", { x: lx + 9, y: ly + 4, fill: C.text, "font-size": 12, "font-family": "var(--mono)" }, svg);
+    lt.textContent = usd(lastV, true);
+    const t0 = el("text", { x: L, y: H - 10, fill: C.muted, "font-size": 11, "font-family": "var(--mono)" }, svg);
+    t0.textContent = rows[0] ? hhmm(rows[0].start) : "";
+    const t1 = el("text", { x: W - R, y: H - 10, "text-anchor": "end", fill: C.muted, "font-size": 11, "font-family": "var(--mono)" }, svg);
+    t1.textContent = hhmm(rows[rows.length - 1].start);
+    $("pnl-sub").textContent = rows.length + " window di-trade (sesi ini)";
+    const cross = el("line", { x1: 0, y1: T, x2: 0, y2: H - B, stroke: C.text2, "stroke-opacity": 0 }, svg);
+    const dot = el("circle", { r: 5, fill: C.phos, stroke: C.panel, "stroke-width": 2, opacity: 0 }, svg);
+    const hit = el("rect", { x: L, y: T, width: W - L - R, height: H - T - B, fill: "transparent" }, svg);
+    pnlGeo = { svg, pts, X, Y, W };
+    hit.addEventListener("mousemove", (ev) => {
+      const r = svg.getBoundingClientRect(), sx = (ev.clientX - r.left) * (W / r.width);
+      let bi = 0; pts.forEach((_, i) => { if (Math.abs(X(i) - sx) < Math.abs(X(bi) - sx)) bi = i; });
+      const p = pts[bi];
+      cross.setAttribute("x1", X(bi)); cross.setAttribute("x2", X(bi)); cross.setAttribute("stroke-opacity", 0.5);
+      dot.setAttribute("cx", X(bi)); dot.setAttribute("cy", Y(p.cum)); dot.setAttribute("opacity", 1);
+      if (!p.w) { showTip(`<div class="t-title">AWAL SESI</div>P&amp;L <b>$0.00</b>`, ev.clientX, ev.clientY); return; }
+      showTip(`<div class="t-title">WINDOW ${hhmm(p.w.start)}</div>Hasil <b>${usd(p.w.pnl, true)}</b> ${p.w.pnl > 0 ? "✓" : p.w.pnl < 0 ? "✕" : "="}<br>Kumulatif <b>${usd(p.cum, true)}</b><br>Beli <b>${(p.w.sides || []).join(", ") || "—"}</b> · menang <b>${p.w.winner || "—"}</b>`, ev.clientX, ev.clientY);
+    });
+    hit.addEventListener("mouseleave", () => { cross.setAttribute("stroke-opacity", 0); dot.setAttribute("opacity", 0); hideTip(); });
+  }
+
+  // --- window history strip
+  function renderStrip() {
+    const strip = $("strip");
+    const rows = (state.recent_windows || []).filter((w) => w.asset === view.asset).slice(-48);
+    const cells = [];
+    for (let i = 0; i < 48 - rows.length; i++) cells.push('<div class="cell empty" aria-hidden="true"></div>');
+    rows.forEach((w, i) => {
+      const cls = w.result, sym = { win: "✓", loss: "✕", flat: "=", idle: "·", skip: "–" }[w.result] || "·";
+      const label = { win: "Menang", loss: "Kalah", flat: "Impas", idle: "Tanpa trade", skip: "Dilewati" }[w.result];
+      cells.push(`<div class="cell ${cls}" tabindex="0" data-i="${i}" aria-label="${hhmm(w.start)} ${label} ${usd(w.pnl, true)}">${sym}</div>`);
+    });
+    strip.innerHTML = cells.join("");
+    strip.querySelectorAll(".cell[data-i]").forEach((c) => {
+      const w = rows[+c.dataset.i];
+      const label = { win: "MENANG", loss: "KALAH", flat: "IMPAS", idle: "TANPA TRADE", skip: "DILEWATI" }[w.result];
+      const html = `<div class="t-title">${hhmm(w.start)} UTC · ${label}</div>P&amp;L <b>${usd(w.pnl, true)}</b>` + (w.note ? `<br><span style="color:var(--text-muted)">${esc(w.note).slice(0, 90)}</span>` : "");
+      const show = (ev) => { const r = c.getBoundingClientRect(); showTip(html, ev.clientX || r.right, ev.clientY || r.bottom); };
+      c.addEventListener("mousemove", show); c.addEventListener("focus", show);
+      c.addEventListener("mouseleave", hideTip); c.addEventListener("blur", hideTip);
+    });
+    const traded = rows.filter((w) => w.result === "win" || w.result === "loss" || w.result === "flat").length;
+    $("hist-sub").textContent = `${rows.length} window terakhir · ${traded} di-trade`;
+  }
+
+  function renderRisk() {
+    const r = state.risk;
+    const box = $("risk-status");
+    let cls = "armed", label = "✓ SIAP", note = "semua batas aman";
+    if (!r.can_trade && r.reason.includes("daily")) { cls = "stop"; label = "✕ STOP HARIAN"; note = "berhenti sampai 00:00 UTC"; }
+    else if (!r.can_trade) { cls = "hold"; label = "⚠ ISTIRAHAT"; note = "cooldown " + mmss(r.cooldown_left); }
+    box.innerHTML = `<span class="badge ${cls}">${label}</span><small>${note}</small>`;
+    const used = Math.max(0, -r.today_pnl), frac = r.daily_limit ? Math.min(1, used / r.daily_limit) : 0;
+    $("loss-v").textContent = usd(used) + " / " + usd(r.daily_limit);
+    const bar = $("loss-bar"); bar.style.width = (frac * 100).toFixed(1) + "%";
+    bar.style.background = frac < 0.5 ? C.good : frac < 0.85 ? C.warn : C.bad;
+    $("streak-v").textContent = r.consecutive_losses + " / " + r.max_consecutive_losses;
+    $("pips").innerHTML = Array.from({ length: r.max_consecutive_losses }, (_, i) => `<div class="pip ${i < r.consecutive_losses ? "on" : ""}"></div>`).join("");
+    $("expo-v").textContent = usd(r.open_exposure);
+    const pos = view.position;
+    if (pos && (pos.shares.Up > 0 || pos.shares.Down > 0)) {
+      const side = pos.shares.Up > 0 ? "Up" : "Down";
+      $("pos-v").innerHTML = `<span style="color:${side === "Up" ? C.up : C.down}">${side === "Up" ? "▲" : "▼"} ${pos.shares[side].toFixed(2)} ${side}</span> · ${usd(pos.cost_usd)}`;
+    } else $("pos-v").textContent = "tidak ada";
+    $("risk-sub").textContent = "maks/bet " + usd(state.config.max_bet_usd);
+  }
+
+  function renderLog() {
+    const ev = (state.events || []).slice().reverse();
+    $("log-empty").style.display = ev.length ? "none" : "block";
+    $("log-body").innerHTML = ev.map((e) => {
+      const c = e.outcome === "Up" ? C.up : e.outcome === "Down" ? C.down : C.text2;
+      const side = e.outcome ? `<span class="tag"><i style="background:${c}"></i>${e.outcome.toUpperCase()}</span>` : "—";
+      if (e.kind === "SETTLE") {
+        const res = e.pnl > 0 ? '<span class="good-ico">✓</span>' : e.pnl < 0 ? '<span class="bad-ico">✕</span>' : "=";
+        return `<tr><td>${hhmmss(e.ts)}</td><td><span class="tag">${res} SETTLE</span></td><td>${side}</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">${usd(e.pnl, true)}</td><td class="reason">${esc(e.reason)}</td></tr>`;
+      }
+      return `<tr><td>${hhmmss(e.ts)}</td><td><span class="tag">${e.kind === "BUY" ? "◆ BELI" : "◇ JUAL"}</span></td><td>${side}</td><td class="num">${e.shares.toFixed(2)}</td><td class="num">${e.price.toFixed(3)}</td><td class="num">${e.fair.toFixed(3)}</td><td class="num">${usd(e.usd + (e.kind === "BUY" ? e.fee : -e.fee))}</td><td class="reason">${esc(e.reason)}</td></tr>`;
+    }).join("");
+  }
+
+  // ---------- radar scope (canvas, animated) ----------
+  const canvas = $("scope"), ctx = canvas.getContext("2d");
+  let S = 0, dpr = 1, scopeHit = [];
+  function resize() {
+    const r = canvas.getBoundingClientRect();
+    dpr = window.devicePixelRatio || 1;
+    S = Math.min(r.width, r.height);
+    canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr);
+  }
+  new ResizeObserver(resize).observe(canvas);
+  resize();
+
+  function drawScope(ms) {
+    requestAnimationFrame(drawScope);
+    if (!S) return;
+    const w = canvas.width / dpr, h = canvas.height / dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    const cx = w / 2, cy = h / 2, R = Math.min(w, h) / 2 - 30;
+    const ws = state ? state.window_seconds : 300;
+    const now = botNow();
+    const v = view;
+    const start = v ? v.window_start : Math.floor(now / ws) * ws;
+    const elapsed = Math.max(0, Math.min(ws, now - start));
+    const ang = (el) => -Math.PI / 2 + (el / ws) * Math.PI * 2;
+    const r0 = R * 0.52;
+
+    // backdrop glow
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
+    g.addColorStop(0, "rgba(40,120,80,0.28)"); g.addColorStop(0.7, "rgba(15,50,34,0.18)"); g.addColorStop(1, "rgba(5,20,12,0.05)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+    // up/down regions (outside/inside the strike ring)
+    ctx.fillStyle = hexA(C.up, 0.05); ctx.beginPath(); ctx.arc(cx, cy, R * 0.97, 0, Math.PI * 2); ctx.arc(cx, cy, r0, 0, Math.PI * 2, true); ctx.fill();
+    ctx.fillStyle = hexA(C.down, 0.05); ctx.beginPath(); ctx.arc(cx, cy, r0, 0, Math.PI * 2); ctx.fill();
+
+    // rings + spokes
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(120,255,190,0.12)";
+    for (const k of [0.25, 0.75, 1]) { ctx.beginPath(); ctx.arc(cx, cy, R * k, 0, Math.PI * 2); ctx.stroke(); }
+    for (let s = 0; s < ws; s += 30) {
+      const a = ang(s);
+      ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * R * 0.08, cy + Math.sin(a) * R * 0.08); ctx.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); ctx.stroke();
+    }
+    // rim ticks + minute labels
+    for (let s = 0; s < ws; s += 5) {
+      const a = ang(s), big = s % 60 === 0, mid = s % 30 === 0;
+      const r1 = R, r2 = R + (big ? 9 : mid ? 6 : 3);
+      ctx.strokeStyle = big ? "rgba(120,255,190,0.55)" : "rgba(120,255,190,0.22)";
+      ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1); ctx.lineTo(cx + Math.cos(a) * r2, cy + Math.sin(a) * r2); ctx.stroke();
+      if (big) {
+        ctx.fillStyle = C.muted; ctx.font = "11px " + css("--mono"); ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(Math.floor(s / 60) + ":00", cx + Math.cos(a) * (R + 20), cy + Math.sin(a) * (R + 20));
+      }
+    }
+    // trading zone band on the rim
+    if (state) {
+      const a1 = ang(ws - state.config.max_seconds_left), a2 = ang(ws - state.config.min_seconds_left);
+      ctx.fillStyle = "rgba(77,255,171,0.16)";
+      ctx.beginPath(); ctx.arc(cx, cy, R, a1, a2); ctx.arc(cx, cy, R * 0.93, a2, a1, true); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = "rgba(77,255,171,0.5)";
+      for (const a of [a1, a2]) { ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * R * 0.93, cy + Math.sin(a) * R * 0.93); ctx.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); ctx.stroke(); }
+    }
+    // strike ring
+    ctx.strokeStyle = "rgba(77,255,171,0.55)"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(cx, cy, r0, 0, Math.PI * 2); ctx.stroke();
+    // Labels ride ahead of the sweep, over time this window hasn't reached
+    // yet, so neither the track nor the live blip ever sits under them.
+    const opp = ang(ws - elapsed > 50 ? (elapsed + ws) / 2 : elapsed + 25);
+    const lab = (text, r, color) => {
+      const x = cx + Math.cos(opp) * r, y = cy + Math.sin(opp) * r;
+      ctx.font = "700 10px " + css("--sans"); ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      const w = ctx.measureText(text).width + 10;
+      ctx.fillStyle = "rgba(4,12,9,0.8)"; ctx.fillRect(x - w / 2, y - 7, w, 14);
+      ctx.fillStyle = color; ctx.fillText(text, x, y);
+    };
+    lab("UP ▲", (r0 + R) / 2 + R * 0.08, hexA(C.up, 0.95));
+    lab("STRIKE", r0, "rgba(77,255,171,0.9)");
+    lab("DOWN ▼", r0 * 0.66, hexA(C.down, 0.95));
+
+    // sweep with phosphor trail
+    const a = ang(elapsed);
+    const trail = Math.PI / 3;
+    const steps = 36;
+    for (let i = 0; i < steps; i++) {
+      const aa = a - (trail * i) / steps, ab = a - (trail * (i + 1)) / steps;
+      ctx.fillStyle = `rgba(77,255,171,${0.22 * (1 - i / steps) ** 2})`;
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, R, ab, aa); ctx.closePath(); ctx.fill();
+    }
+    ctx.save();
+    ctx.shadowColor = C.phos; ctx.shadowBlur = 12;
+    ctx.strokeStyle = "rgba(160,255,210,0.95)"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); ctx.stroke();
+    ctx.restore();
+
+    scopeHit = [];
+    if (v && v.strike && v.track && v.track.length) {
+      const unit = Math.max(v.sigma * Math.sqrt(ws), 1e-6);
+      const rad = (p) => Math.max(R * 0.1, Math.min(R * 0.96, r0 + (Math.log(p / v.strike) / unit) * (R * 0.42 / 2.2)));
+      const pos = (t, p) => { const aa = ang(t - start), rr = rad(p); return [cx + Math.cos(aa) * rr, cy + Math.sin(aa) * rr]; };
+      // track (older points dimmer, like phosphor decay)
+      const tr = v.track;
+      ctx.lineWidth = 1.5;
+      for (let i = 1; i < tr.length; i++) {
+        const [x1, y1] = pos(tr[i - 1][0], tr[i - 1][1]), [x2, y2] = pos(tr[i][0], tr[i][1]);
+        const age = (tr[tr.length - 1][0] - tr[i][0]) / ws;
+        ctx.strokeStyle = hexA(tr[i][1] >= v.strike ? C.up : C.down, 0.25 + 0.7 * (1 - age));
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      }
+      for (let i = 0; i < tr.length; i += 3) {
+        const [x, y] = pos(tr[i][0], tr[i][1]);
+        scopeHit.push({ x, y, t: tr[i][0], p: tr[i][1] });
+      }
+      // fills
+      for (const f of v.fills || []) {
+        const near = tr.reduce((b, p) => Math.abs(p[0] - f.ts) < Math.abs(b[0] - f.ts) ? p : b, tr[0]);
+        const [x, y] = pos(f.ts, near[1]);
+        const c = f.outcome === "Up" ? C.up : C.down;
+        ctx.save(); ctx.translate(x, y); ctx.rotate(Math.PI / 4);
+        ctx.fillStyle = f.kind === "BUY" ? c : C.panel; ctx.strokeStyle = f.kind === "BUY" ? C.panel : c; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.rect(-5, -5, 10, 10); ctx.fill(); ctx.stroke(); ctx.restore();
+        scopeHit.push({ x, y, t: f.ts, p: near[1], fill: f });
+      }
+      // live blip
+      const last = tr[tr.length - 1];
+      const [bx, by] = pos(last[0], last[1]);
+      const bc = last[1] >= v.strike ? C.up : C.down;
+      const pulse = reduceMotion ? 0.5 : (ms % 1600) / 1600;
+      ctx.strokeStyle = hexA(bc, 0.6 * (1 - pulse)); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(bx, by, 6 + pulse * 16, 0, Math.PI * 2); ctx.stroke();
+      ctx.save(); ctx.shadowColor = bc; ctx.shadowBlur = 14;
+      ctx.fillStyle = bc; ctx.beginPath(); ctx.arc(bx, by, 5.5, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+      ctx.strokeStyle = C.panel; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(bx, by, 5.5, 0, Math.PI * 2); ctx.stroke();
+    }
+
+    // center readout
+    const cr = R * 0.27;
+    ctx.fillStyle = "rgba(4,12,9,0.88)"; ctx.beginPath(); ctx.arc(cx, cy, cr, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgba(77,255,171,0.35)"; ctx.lineWidth = 1; ctx.stroke();
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const left = Math.max(0, start + ws - now);
+    if (v && v.p_up != null) {
+      ctx.fillStyle = C.text; ctx.font = `650 ${Math.round(cr * 0.5)}px ` + css("--sans");
+      ctx.fillText(prob(v.p_up), cx, cy - cr * 0.12);
+      ctx.fillStyle = C.muted; ctx.font = "700 " + Math.max(9, Math.round(cr * 0.13)) + "px " + css("--sans");
+      ctx.fillText("P(UP)", cx, cy - cr * 0.55);
+    } else {
+      ctx.fillStyle = C.text2; ctx.font = "700 " + Math.max(10, Math.round(cr * 0.14)) + "px " + css("--sans");
+      ctx.fillText(v && v.skip_reason ? "MENUNGGU" : "SCANNING", cx, cy - cr * 0.18);
+      ctx.fillText(v && v.skip_reason ? "WINDOW BARU" : "…", cx, cy + cr * 0.02);
+    }
+    ctx.fillStyle = C.phos; ctx.font = `500 ${Math.max(11, Math.round(cr * 0.2))}px ` + css("--mono");
+    ctx.fillText(mmss(left), cx, cy + cr * 0.38);
+    ctx.fillStyle = C.muted; ctx.font = "700 " + Math.max(8, Math.round(cr * 0.1)) + "px " + css("--sans");
+    ctx.fillText("SISA WAKTU", cx, cy + cr * 0.62);
+  }
+  requestAnimationFrame(drawScope);
+
+  canvas.addEventListener("mousemove", (ev) => {
+    const r = canvas.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
+    let best = null, bd = 18 * 18;
+    for (const h of scopeHit) { const d = (h.x - x) ** 2 + (h.y - y) ** 2; if (d < bd || (h.fill && d < 20 * 20)) { if (!best || !best.fill || h.fill) { best = h; bd = d; } } }
+    if (!best || !view) { hideTip(); return; }
+    const d = best.p - view.strike;
+    let html = `<div class="t-title">T+${mmss(best.t - view.window_start)}</div>Spot <b>${price(best.p)}</b><br>vs strike <b>${(d >= 0 ? "+" : "−") + Math.abs(d).toFixed(2)}</b> ${d >= 0 ? "▲" : "▼"}`;
+    if (best.fill) html += `<br>${best.fill.kind === "BUY" ? "◆ Beli" : "◇ Jual"} <b>${best.fill.shares.toFixed(2)} ${best.fill.outcome}</b> @ <b>${best.fill.price.toFixed(3)}</b><br>fair <b>${best.fill.fair.toFixed(3)}</b>`;
+    showTip(html, ev.clientX, ev.clientY);
+  });
+  canvas.addEventListener("mouseleave", hideTip);
+
+  function hexA(hex, a) {
+    const n = parseInt(hex.replace("#", ""), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+})();
+</script>
+</body>
+</html>

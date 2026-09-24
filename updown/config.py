@@ -94,6 +94,8 @@ class UpDownSettings:
     tick_seconds: float = 1.0
     gamma_host: str = "https://gamma-api.polymarket.com"
     journal_path: str = "data/trades.csv"
+    # Live snapshot for the radar dashboard (scripts/updown_dashboard.py).
+    state_path: str = "data/updown_state.json"
     model: ModelConfig = field(default_factory=ModelConfig)
     fees: FeeConfig = field(default_factory=FeeConfig)
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
@@ -157,6 +159,7 @@ def load_updown_settings(config_path: str | None = None, env_path: str | None = 
         tick_seconds=float(raw.get("tick_seconds", 1.0)),
         gamma_host=str(raw.get("gamma_host", "https://gamma-api.polymarket.com")),
         journal_path=str(raw.get("journal_path", "data/trades.csv")),
+        state_path=str(raw.get("state_path", "data/updown_state.json")),
         model=_section(ModelConfig, raw.get("model")),
         fees=_section(FeeConfig, raw.get("fees")),
         strategy=_section(StrategyConfig, raw.get("strategy")),
