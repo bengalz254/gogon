@@ -27,7 +27,7 @@ def run_live(settings, logger) -> None:
     from bot.journal import TradeJournal
     from updown.broker import LiveBroker, PaperBroker
     from updown.engine import UpDownEngine
-    from updown.feeds import BinanceFeed, PriceHistory
+    from updown.feeds import PriceHistory, build_feeds
     from updown.markets import PolymarketGateway
     from updown.state import build_state, write_state
 
@@ -44,13 +44,14 @@ def run_live(settings, logger) -> None:
     gateway = PolymarketGateway(settings.gamma_host, settings.wallet.clob_host, settings.slug_template, settings.window_seconds)
     engine = UpDownEngine(settings, gateway, broker, history, TradeJournal(settings.journal_path))
 
-    feed = BinanceFeed(settings.assets, settings.feed, history, on_tick=engine.on_price)
+    feeds = build_feeds(settings.assets, settings.feed, history, on_tick=engine.on_price)
     for asset in settings.assets:
-        sigma = feed.seed_sigma(asset)
+        sigma = feeds[asset].seed_sigma(asset)
         if sigma:
             engine.vol[asset].seed(sigma)
             logger.info("[%s] seeded volatility %.2e per sqrt(s) (~%.0f%% annualized)", asset, sigma, sigma * (365 * 86400) ** 0.5 * 100)
-    feed.start()
+    for feed in set(feeds.values()):
+        feed.start()
 
     signal_module.signal(signal_module.SIGINT, _request_stop)
     signal_module.signal(signal_module.SIGTERM, _request_stop)
@@ -65,7 +66,8 @@ def run_live(settings, logger) -> None:
             logger.exception("Could not write dashboard state")
         time.sleep(max(0.0, settings.tick_seconds - (time.time() - started)))
 
-    feed.stop()
+    for feed in set(feeds.values()):
+        feed.stop()
     st = engine.stats
     logger.info(
         "Stopped. %d windows traded (%dW/%dL), P&L $%+.2f, fees $%.2f. Open positions are still on Polymarket and settle on their own.",

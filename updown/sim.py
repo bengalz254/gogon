@@ -121,3 +121,49 @@ def run_simulation(engine, world: SimWorld, history, windows: int, asset: str = 
         history.add(asset, float(t), price)
         engine.on_price(asset, float(t), price)
         engine.tick(float(t))
+
+
+# Rough starting prices and per-second vols, so the demo looks like each coin.
+SIM_COINS = {
+    "btc": (100_000.0, 9e-5),
+    "eth": (3_500.0, 1.2e-4),
+    "sol": (180.0, 1.6e-4),
+    "xrp": (2.5, 1.5e-4),
+    "bnb": (650.0, 1.0e-4),
+    "doge": (0.25, 1.8e-4),
+    "hype": (40.0, 2.0e-4),
+}
+
+
+class MultiSimGateway:
+    """One SimWorld per coin behind a single gateway, like Polymarket's one API."""
+
+    def __init__(self, assets: list[str], seed: int = 7, lag_s: float = 1.5, mm_noise: float = 0.01):
+        self.worlds = {}
+        self.gateways = {}
+        for i, a in enumerate(assets):
+            price, sigma = SIM_COINS.get(a, (100.0, 1.2e-4))
+            self.worlds[a] = SimWorld(seed=seed + i * 101, start_price=price, sigma=sigma, lag_s=lag_s, mm_noise=mm_noise)
+            self.gateways[a] = SimGateway(self.worlds[a])
+
+    def step(self, t: int) -> dict[str, float]:
+        return {a: w.step(t) for a, w in self.worlds.items()}
+
+    def discover(self, asset: str, start: int):
+        return self.gateways[asset].discover(asset, start)
+
+    def book(self, token_id: str) -> Book:
+        return self.gateways[token_id.split("-", 1)[0]].book(token_id)
+
+    def books(self, token_ids: list[str]) -> dict[str, Book]:
+        return {t: self.book(t) for t in token_ids}
+
+    def resolution(self, wm: WindowMarket) -> str | None:
+        return self.gateways[wm.asset].resolution(wm)
+
+
+def step_multi(engine, sim: MultiSimGateway, history, t: int) -> None:
+    for asset, price in sim.step(t).items():
+        history.add(asset, float(t), price)
+        engine.on_price(asset, float(t), price)
+    engine.tick(float(t))

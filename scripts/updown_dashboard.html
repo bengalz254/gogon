@@ -79,6 +79,34 @@
   .clock { font-family: var(--mono); color: var(--text-secondary); font-size: 12px; }
   @keyframes blink { 50% { opacity: 0.35; } }
 
+  /* ---------- coin tabs ---------- */
+  .coins {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 10px;
+    padding: 16px 24px 0; max-width: 1560px; margin: 0 auto;
+  }
+  .coin {
+    appearance: none; text-align: left; cursor: pointer; font: inherit; color: inherit;
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; position: relative;
+    transition: border-color 0.15s, transform 0.15s;
+  }
+  .coin:hover { border-color: var(--line-strong); transform: translateY(-1px); }
+  .coin:focus-visible { outline: 2px solid var(--phosphor-dim); outline-offset: 2px; }
+  .coin.active { border-color: var(--phosphor); box-shadow: 0 0 0 1px rgba(77,255,171,0.25), 0 0 24px rgba(77,255,171,0.08); }
+  .coin .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .coin .tk { font-weight: 800; letter-spacing: 0.12em; font-size: 13px; }
+  .coin .st { font-size: 9.5px; font-weight: 700; letter-spacing: 0.12em; padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
+  .st.scan { color: var(--text-muted); background: rgba(255,255,255,0.04); }
+  .st.zone { color: var(--phosphor); background: rgba(77,255,171,0.08); }
+  .st.fire { color: #04130c; background: var(--good); }
+  .st.hold { color: #fff; background: rgba(33,150,212,0.55); }
+  .st.wait { color: var(--warning); background: rgba(232,179,57,0.1); }
+  .coin .p { font-size: 20px; font-weight: 650; margin-top: 6px; }
+  .coin .p small { font-size: 11px; font-weight: 600; color: var(--text-muted); margin-left: 4px; letter-spacing: 0.08em; }
+  .coin .m { display: flex; justify-content: space-between; margin-top: 2px; font-size: 11.5px; color: var(--text-secondary); font-family: var(--mono); }
+  .coin .bar { position: absolute; left: 12px; right: 12px; bottom: 0; height: 2px; border-radius: 2px; overflow: hidden; background: rgba(255,255,255,0.04); }
+  .coin .bar i { display: block; height: 100%; background: var(--phosphor); opacity: 0.6; }
+
   .banner {
     display: none; margin: 16px 24px 0; padding: 12px 16px; border-radius: 10px;
     border: 1px solid rgba(232, 179, 57, 0.35); background: rgba(232, 179, 57, 0.07); color: var(--text-secondary);
@@ -206,6 +234,14 @@
     .topbar { padding: 12px 16px; }
     main { padding: 12px 16px 24px; gap: 12px; }
     .banner { margin: 12px 16px 0; }
+    .coins {
+      padding: 12px 16px 4px; gap: 8px; grid-template-columns: none;
+      grid-auto-flow: column; grid-auto-columns: 132px; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-left: 16px;
+      scrollbar-width: none;
+    }
+    .coins::-webkit-scrollbar { display: none; }
+    .coin { scroll-snap-align: start; }
+    .coin .p { font-size: 17px; }
     .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .signal-grid { grid-template-columns: minmax(0, 1fr); }
     .kv { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -233,13 +269,14 @@
     </div>
   </div>
   <div class="top-right">
-    <span class="pill" id="asset-pill">BTC</span>
+    <span class="pill" id="asset-pill">— COIN</span>
     <span class="pill" id="mode-pill">—</span>
     <span class="pill" id="link-pill"><span class="dot"></span><span id="link-text">CONNECTING</span></span>
     <span class="clock" id="clock">--:--:-- UTC</span>
   </div>
 </header>
 
+<nav class="coins" id="coins" aria-label="Coins"></nav>
 <div class="banner" id="banner"></div>
 
 <main>
@@ -259,7 +296,7 @@
   <!-- RIGHT COLUMN -->
   <div class="right-col">
     <div class="tiles">
-      <div class="card tile"><div class="label">P&amp;L sesi</div><div class="value" id="t-pnl">—</div><div class="meta" id="t-pnl-meta">—</div></div>
+      <div class="card tile"><div class="label">P&amp;L · semua coin</div><div class="value" id="t-pnl">—</div><div class="meta" id="t-pnl-meta">—</div></div>
       <div class="card tile"><div class="label">Win rate</div><div class="value" id="t-win">—</div><div class="meta" id="t-win-meta">—</div></div>
       <div class="card tile"><div class="label">Bankroll</div><div class="value" id="t-bank">—</div><div class="meta" id="t-bank-meta">—</div></div>
       <div class="card tile"><div class="label">Fee dibayar</div><div class="value" id="t-fee">—</div><div class="meta" id="t-fee-meta">—</div></div>
@@ -328,7 +365,7 @@
     <div class="card-h"><h2>Log kejadian</h2><span class="sub" id="log-sub">order &amp; settlement terbaru</span></div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>WAKTU</th><th>AKSI</th><th>SISI</th><th class="num">SAHAM</th><th class="num">HARGA</th><th class="num">FAIR</th><th class="num">USD / P&amp;L</th><th>ALASAN</th></tr></thead>
+        <thead><tr><th>WAKTU</th><th>KOIN</th><th>AKSI</th><th>SISI</th><th class="num">SAHAM</th><th class="num">HARGA</th><th class="num">FAIR</th><th class="num">USD / P&amp;L</th><th>ALASAN</th></tr></thead>
         <tbody id="log-body"></tbody>
       </table>
       <div class="empty-note" id="log-empty">Belum ada order. Bot hanya menembak saat edge ≥ batas.</div>
@@ -351,7 +388,9 @@
   const SVGNS = "http://www.w3.org/2000/svg";
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  let payload = null, state = null, view = null, recvPerf = 0, assetIdx = 0;
+  let payload = null, state = null, view = null, recvPerf = 0;
+  let selected = null;
+  try { selected = localStorage.getItem("gogon-radar-coin"); } catch (e) { /* storage blocked: fine */ }
 
   // ---------- formatting ----------
   const usd = (x, sign = false) => {
@@ -359,7 +398,10 @@
     const s = Math.abs(x).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     return (x < 0 ? "−$" : sign && x > 0 ? "+$" : "$") + s;
   };
-  const price = (x) => x == null ? "—" : x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // Enough decimals for the coin: BTC 2, SOL 3, XRP/DOGE 5.
+  const decimals = (x) => { const m = Math.abs(x); return m >= 1000 ? 2 : m >= 10 ? 3 : m >= 1 ? 4 : 5; };
+  const price = (x) => x == null ? "—" : x.toLocaleString("en-US", { minimumFractionDigits: decimals(x), maximumFractionDigits: decimals(x) });
+  const delta = (d, ref) => (d >= 0 ? "+" : "−") + Math.abs(d).toFixed(decimals(ref));
   const pct = (x, d = 0) => x == null ? "—" : (x * 100).toFixed(d) + "%";
   // A probability is never 0 or 100%: say so instead of rounding into certainty.
   const prob = (x, d = 0) => x == null ? "—" : x > 1 - 0.5 * 10 ** -(d + 2) ? ">" + (100 - 10 ** -d).toFixed(d) + "%"
@@ -450,15 +492,56 @@
   function render() {
     renderLink();
     if (!state) return;
-    view = state.assets[Math.min(assetIdx, state.assets.length - 1)];
+    view = state.assets.find((a) => a.asset === selected) || state.assets[0];
+    selected = view.asset;
     const mode = payload.demo ? "demo" : state.mode;
     const mp = $("mode-pill");
     mp.className = "pill mode-" + mode;
     mp.textContent = mode === "live" ? "● LIVE · UANG ASLI" : mode === "demo" ? "DEMO · SIMULATOR" : "PAPER · SIMULASI";
-    $("asset-pill").textContent = view.asset.toUpperCase() + " · 5M";
+    $("asset-pill").textContent = state.assets.length + " COIN · 5M";
     $("clock").textContent = hhmmss(state.now) + " UTC";
     $("slug").textContent = view.slug || (view.skip_reason ? "window dilewati" : "mencari market…");
-    renderTiles(); renderSignal(); renderTrack(); renderPnl(); renderStrip(); renderRisk(); renderLog();
+    renderCoins(); renderTiles(); renderSignal(); renderTrack(); renderPnl(); renderStrip(); renderRisk(); renderLog();
+  }
+
+  function coinStatus(a) {
+    const cfg = state.config, need = cfg.min_edge;
+    const pos = a.position && (a.position.shares.Up > 0 || a.position.shares.Down > 0);
+    if (a.skip_reason || !a.market_found) return ["wait", a.skip_reason ? "TUNGGU" : "CARI"];
+    if (pos) return ["hold", "POSISI"];
+    const e = a.edges ? Math.max(a.edges.Up ?? -1, a.edges.Down ?? -1) : null;
+    if (e != null && e >= need) return ["fire", "SINYAL"];
+    if (a.seconds_left <= cfg.max_seconds_left && a.seconds_left >= cfg.min_seconds_left) return ["zone", "ZONA"];
+    return ["scan", "SCAN"];
+  }
+
+  const coinsEl = $("coins");
+  coinsEl.addEventListener("click", (ev) => {
+    const b = ev.target.closest(".coin");
+    if (!b) return;
+    selected = b.dataset.asset;
+    try { localStorage.setItem("gogon-radar-coin", selected); } catch (e) { /* ignore */ }
+    render();
+  });
+  function renderCoins() {
+    const stats = state.asset_stats || {};
+    coinsEl.innerHTML = state.assets.map((a) => {
+      const [cls, label] = coinStatus(a);
+      const st = stats[a.asset] || { pnl_usd: 0, wins: 0, losses: 0 };
+      const frac = Math.max(0, Math.min(1, 1 - a.seconds_left / state.window_seconds));
+      const p = a.p_up == null ? "—" : prob(a.p_up);
+      return `<button class="coin ${a.asset === selected ? "active" : ""}" data-asset="${a.asset}" aria-pressed="${a.asset === selected}">
+        <div class="row"><span class="tk">${a.asset.toUpperCase()}</span><span class="st ${cls}">${label}</span></div>
+        <div class="p">${p}<small>P(UP)</small></div>
+        <div class="m"><span>${usd(st.pnl_usd, true)}</span><span>${st.wins}M/${st.losses}K</span></div>
+        <div class="bar"><i style="width:${(frac * 100).toFixed(1)}%"></i></div>
+      </button>`;
+    }).join("");
+    const act = coinsEl.querySelector(".coin.active");
+    if (act && coinsEl.scrollWidth > coinsEl.clientWidth && !coinsEl.dataset.scrolled) {
+      coinsEl.dataset.scrolled = "1";
+      act.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
   }
 
   function renderTiles() {
@@ -615,7 +698,7 @@
     el("circle", { cx: lx, cy: ly, r: 5, fill: c, stroke: C.panel, "stroke-width": 2 }, svg);
     const d = last[1] - view.strike;
     const lt = el("text", { x: W - R + 8, y: Math.min(H - B, Math.max(T + 10, ly + (Math.abs(ly - ys) < 16 ? (above ? -12 : 16) : 4))), fill: C.text, "font-size": 12, "font-family": "var(--mono)" }, svg);
-    lt.textContent = (above ? "▲ " : "▼ ") + (d >= 0 ? "+" : "−") + Math.abs(d).toFixed(2);
+    lt.textContent = (above ? "▲ " : "▼ ") + delta(d, view.strike);
     $("track-sub").textContent = "spot " + price(last[1]) + " · strike " + price(view.strike);
     // hover layer
     const cross = el("line", { x1: 0, y1: T, x2: 0, y2: H - B, stroke: C.text2, "stroke-opacity": 0, "stroke-width": 1 }, svg);
@@ -633,7 +716,7 @@
     for (const p of tr) if (Math.abs(X(p[0]) - sx) < Math.abs(X(best[0]) - sx)) best = p;
     cross.setAttribute("x1", X(best[0])); cross.setAttribute("x2", X(best[0])); cross.setAttribute("stroke-opacity", 0.5);
     const d = best[1] - strike;
-    showTip(`<div class="t-title">T+${mmss(best[0] - start)}</div>Spot <b>${price(best[1])}</b><br>vs strike <b>${(d >= 0 ? "+" : "−") + Math.abs(d).toFixed(2)}</b> ${d >= 0 ? "▲" : "▼"}`, ev.clientX, ev.clientY);
+    showTip(`<div class="t-title">T+${mmss(best[0] - start)}</div>Spot <b>${price(best[1])}</b><br>vs strike <b>${delta(d, strike)}</b> ${d >= 0 ? "▲" : "▼"}`, ev.clientX, ev.clientY);
   }
 
   // --- cumulative P&L per settled window
@@ -747,9 +830,9 @@
       const side = e.outcome ? `<span class="tag"><i style="background:${c}"></i>${e.outcome.toUpperCase()}</span>` : "—";
       if (e.kind === "SETTLE") {
         const res = e.pnl > 0 ? '<span class="good-ico">✓</span>' : e.pnl < 0 ? '<span class="bad-ico">✕</span>' : "=";
-        return `<tr><td>${hhmmss(e.ts)}</td><td><span class="tag">${res} SETTLE</span></td><td>${side}</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">${usd(e.pnl, true)}</td><td class="reason">${esc(e.reason)}</td></tr>`;
+        return `<tr><td>${hhmmss(e.ts)}</td><td>${e.asset.toUpperCase()}</td><td><span class="tag">${res} SETTLE</span></td><td>${side}</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">${usd(e.pnl, true)}</td><td class="reason">${esc(e.reason)}</td></tr>`;
       }
-      return `<tr><td>${hhmmss(e.ts)}</td><td><span class="tag">${e.kind === "BUY" ? "◆ BELI" : "◇ JUAL"}</span></td><td>${side}</td><td class="num">${e.shares.toFixed(2)}</td><td class="num">${e.price.toFixed(3)}</td><td class="num">${e.fair.toFixed(3)}</td><td class="num">${usd(e.usd + (e.kind === "BUY" ? e.fee : -e.fee))}</td><td class="reason">${esc(e.reason)}</td></tr>`;
+      return `<tr><td>${hhmmss(e.ts)}</td><td>${e.asset.toUpperCase()}</td><td><span class="tag">${e.kind === "BUY" ? "◆ BELI" : "◇ JUAL"}</span></td><td>${side}</td><td class="num">${e.shares.toFixed(2)}</td><td class="num">${e.price.toFixed(3)}</td><td class="num">${e.fair.toFixed(3)}</td><td class="num">${usd(e.usd + (e.kind === "BUY" ? e.fee : -e.fee))}</td><td class="reason">${esc(e.reason)}</td></tr>`;
     }).join("");
   }
 
@@ -830,7 +913,7 @@
     };
     lab("UP ▲", (r0 + R) / 2 + R * 0.08, hexA(C.up, 0.95));
     lab("STRIKE", r0, "rgba(77,255,171,0.9)");
-    lab("DOWN ▼", r0 * 0.66, hexA(C.down, 0.95));
+    lab("DOWN ▼", (r0 + R * 0.27) / 2, hexA(C.down, 0.95));  // between the center readout and the strike ring
 
     // sweep with phosphor trail
     const a = ang(elapsed);
@@ -916,7 +999,7 @@
     for (const h of scopeHit) { const d = (h.x - x) ** 2 + (h.y - y) ** 2; if (d < bd || (h.fill && d < 20 * 20)) { if (!best || !best.fill || h.fill) { best = h; bd = d; } } }
     if (!best || !view) { hideTip(); return; }
     const d = best.p - view.strike;
-    let html = `<div class="t-title">T+${mmss(best.t - view.window_start)}</div>Spot <b>${price(best.p)}</b><br>vs strike <b>${(d >= 0 ? "+" : "−") + Math.abs(d).toFixed(2)}</b> ${d >= 0 ? "▲" : "▼"}`;
+    let html = `<div class="t-title">T+${mmss(best.t - view.window_start)}</div>Spot <b>${price(best.p)}</b><br>vs strike <b>${delta(d, view.strike)}</b> ${d >= 0 ? "▲" : "▼"}`;
     if (best.fill) html += `<br>${best.fill.kind === "BUY" ? "◆ Beli" : "◇ Jual"} <b>${best.fill.shares.toFixed(2)} ${best.fill.outcome}</b> @ <b>${best.fill.price.toFixed(3)}</b><br>fair <b>${best.fill.fair.toFixed(3)}</b>`;
     showTip(html, ev.clientX, ev.clientY);
   });

@@ -60,22 +60,20 @@ def run_demo(source: StateSource, speed: float, warmup_windows: int, seed: int) 
     from updown.engine import UpDownEngine
     from updown.feeds import PriceHistory
     from updown.markets import window_start
-    from updown.sim import SimGateway, SimWorld
+    from updown.sim import SIM_COINS, MultiSimGateway, step_multi
     from updown.state import build_state
 
     logging.getLogger("polybot").setLevel(logging.WARNING)
     settings = load_updown_settings(os.path.join(_ROOT, "config", "updown.yaml"))
-    settings.assets = ["btc"]
-    world = SimWorld(seed=seed, lag_s=1.5, mm_noise=0.01)
+    settings.assets = [a for a in settings.assets if a in SIM_COINS] or ["btc"]
+    sim = MultiSimGateway(settings.assets, seed=seed, lag_s=1.5, mm_noise=0.01)
     history = PriceHistory(maxlen=4000)
-    engine = UpDownEngine(settings, SimGateway(world), PaperBroker(), history, journal=None)
-    engine.vol["btc"].seed(world.sigma)
+    engine = UpDownEngine(settings, sim, PaperBroker(), history, journal=None)
+    for a in settings.assets:
+        engine.vol[a].seed(sim.worlds[a].sigma)
 
     def step(t: int) -> None:
-        price = world.step(t)
-        history.add("btc", float(t), price)
-        engine.on_price("btc", float(t), price)
-        engine.tick(float(t))
+        step_multi(engine, sim, history, t)
 
     # Fast-forward some history so the page isn't empty, then go real time,
     # landing a little way into a fresh window.
@@ -125,7 +123,7 @@ def main() -> None:
     ap.add_argument("--state", default=os.path.join(_ROOT, "data", "updown_state.json"))
     ap.add_argument("--demo", action="store_true", help="run the simulator instead of watching the bot")
     ap.add_argument("--speed", type=float, default=1.0, help="demo: simulated seconds per real second")
-    ap.add_argument("--warmup", type=int, default=24, help="demo: windows of history to pre-simulate")
+    ap.add_argument("--warmup", type=int, default=12, help="demo: windows of history to pre-simulate")
     ap.add_argument("--seed", type=int, default=11)
     ap.add_argument("--no-browser", action="store_true")
     args = ap.parse_args()

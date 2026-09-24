@@ -1,8 +1,9 @@
 # Configuration for the 5-minute "Up or Down" bot (python -m updown.main).
 # Secrets (private key, wallet) stay in .env, shared with the main bot.
 
-# Which 5-minute markets to trade: btc, eth, sol, xrp.
-assets: [btc]
+# Which 5-minute markets to trade: btc, eth, sol, xrp, bnb, doge, hype.
+# Prices: Binance spot, except hype (Hyperliquid). Remove any you don't want.
+assets: [btc, eth, sol, xrp, bnb, doge, hype]
 
 # Gamma slug of the market for a window opening at unix time {start}.
 # Check one on polymarket.com (the URL ends with the slug) and fix this if

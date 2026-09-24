@@ -79,6 +79,7 @@ class RiskLimitsConfig:
 class FeedConfig:
     # Binance public REST host. US users: https://api.binance.us
     binance_host: str = "https://api.binance.com"
+    hyperliquid_host: str = "https://api.hyperliquid.xyz"
     poll_seconds: float = 1.0
     # Refuse to trade on a price older than this.
     max_age_s: float = 3.0
@@ -104,7 +105,14 @@ class UpDownSettings:
     feed: FeedConfig = field(default_factory=FeedConfig)
 
 
-BINANCE_SYMBOLS = {"btc": "BTCUSDT", "eth": "ETHUSDT", "sol": "SOLUSDT", "xrp": "XRPUSDT"}
+# Where each asset's live price comes from. Binance spot where it's listed;
+# Hyperliquid (its home venue) for HYPE, which Binance spot doesn't list.
+BINANCE_SYMBOLS = {
+    "btc": "BTCUSDT", "eth": "ETHUSDT", "sol": "SOLUSDT", "xrp": "XRPUSDT",
+    "bnb": "BNBUSDT", "doge": "DOGEUSDT",
+}
+HYPERLIQUID_COINS = {"hype": "HYPE"}
+SUPPORTED_ASSETS = {**BINANCE_SYMBOLS, **HYPERLIQUID_COINS}
 
 
 def _section(cls, raw: dict | None):
@@ -147,9 +155,11 @@ def load_updown_settings(config_path: str | None = None, env_path: str | None = 
         raw = yaml.safe_load(f) or {}
 
     assets = [str(a).lower() for a in raw.get("assets", ["btc"])]
-    unsupported = [a for a in assets if a not in BINANCE_SYMBOLS]
+    unsupported = [a for a in assets if a not in SUPPORTED_ASSETS]
     if unsupported:
-        raise ValueError(f"Unsupported assets {unsupported}; supported: {sorted(BINANCE_SYMBOLS)}")
+        raise ValueError(f"Unsupported assets {unsupported}; supported: {sorted(SUPPORTED_ASSETS)}")
+    if len(set(assets)) != len(assets):
+        raise ValueError("assets: each coin may appear only once")
 
     settings = UpDownSettings(
         wallet=load_wallet_from_env(),

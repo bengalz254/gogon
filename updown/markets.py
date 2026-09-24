@@ -153,6 +153,18 @@ class PolymarketGateway:
     def book(self, token_id: str) -> Book:
         return parse_book(self._get(f"{self.clob_host}/book", token_id=token_id))
 
+    def books(self, token_ids: list[str]) -> dict[str, Book]:
+        """All the books in one request (POST /books): 7 coins x 2 sides every
+        second would otherwise be 14 requests a second."""
+        resp = self.session.post(f"{self.clob_host}/books", json=[{"token_id": t} for t in token_ids], timeout=4)
+        resp.raise_for_status()
+        out = {}
+        for raw in resp.json() or []:
+            tid = str(raw.get("asset_id") or raw.get("token_id") or "")
+            if tid:
+                out[tid] = parse_book(raw)
+        return out
+
     def resolution(self, wm: WindowMarket) -> str | None:
         market, _ = self._fetch_market(wm.slug)
         return parse_resolution(market) if market else None

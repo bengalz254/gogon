@@ -92,6 +92,22 @@ harganya **telat `lag` detik**. Rata-rata dari 6 seed, masing-masing 288 window 
   mengambil harga murah yang sama, jadi fill kamu akan lebih sedikit.
 - Jawaban yang sebenarnya hanya didapat dari **paper trading di market asli**.
 
+## Coin yang diikuti
+
+Default-nya 7 coin: **BTC, ETH, SOL, XRP, BNB, DOGE, HYPE**. Semua berjalan
+bersamaan, masing-masing dengan window, strike, dan volatilitasnya sendiri.
+- Harga diambil dari Binance spot. Khusus HYPE diambil dari Hyperliquid,
+  karena HYPE tidak ada di Binance spot.
+- Order book ketujuh coin diambil dalam **satu request** per detik, supaya
+  tidak kena rate limit Polymarket.
+- Batas risiko (rugi harian, kalah beruntun, eksposur) berlaku untuk **total
+  semua coin**. Dengan 7 coin, jatah $20 per hari lebih cepat terpakai.
+  Naikkan `bankroll_usd` dan `max_daily_loss_usd` kalau modalmu lebih besar.
+- Mau coin tertentu saja? Edit baris `assets:` di `config/updown.yaml`.
+- Cek slug tiap coin di polymarket.com (misalnya `doge-updown-5m-...`).
+  Kalau market coin tertentu tidak ditemukan, log akan memberi peringatan
+  dan coin itu dilewati, sementara coin lain tetap jalan.
+
 ## Cara pakai
 
 ```bash
@@ -164,7 +180,7 @@ Semua trade (paper maupun live) dicatat di `data/trades.csv` dengan strategi
 | `updown/strategy.py` | Keputusan beli/jual per detik (murni logika, mudah dites) |
 | `updown/engine.py` | Siklus window: cari market, catat strike, trading, settlement |
 | `updown/markets.py` | Gamma API (cari market) dan CLOB API (order book) |
-| `updown/feeds.py` | Feed harga Binance di thread terpisah |
+| `updown/feeds.py` | Feed harga (Binance spot, Hyperliquid untuk HYPE) di thread terpisah |
 | `updown/broker.py` | Paper fill / order FAK live |
 | `updown/risk.py` | Batas rugi harian dan cooldown |
 | `updown/sim.py` | Simulator offline |

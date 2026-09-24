@@ -87,7 +87,8 @@ class UpDownEngine:
         self.stats = Stats()
         self.mode = "live" if broker.live else "paper"
         self.started_at: float | None = None
-        self.recent_windows: deque[dict] = deque(maxlen=96)  # finished windows, newest last
+        self.recent_windows: deque[dict] = deque(maxlen=64 * max(1, len(settings.assets)))  # newest last
+        self.asset_stats: dict[str, Stats] = {a: Stats() for a in settings.assets}
         self.events: deque[dict] = deque(maxlen=60)  # fills and settlements, newest last
 
     # -- inputs ---------------------------------------------------------
@@ -98,19 +99,50 @@ class UpDownEngine:
     def tick(self, now: float) -> None:
         if self.started_at is None:
             self.started_at = now
+        states = []
         for asset in self.s.assets:
             start = window_start(now, self.s.window_seconds)
             key = (asset, start)
             if key not in self.windows:
                 self.windows[key] = WindowState(asset, start, start + self.s.window_seconds)
-            state = self.windows[key]
+            st = self.windows[key]
             try:
-                self._prepare(state, now)
-                self._trade(state, now)
-                self._record_track(state, now)
+                self._prepare(st, now)
+                states.append(st)
             except Exception:
-                logger.exception("[%s] error while trading window %d", asset, start)
+                logger.exception("[%s] error preparing window %d", asset, start)
+        books = self._fetch_books([st for st in states if self._wants_books(st, now)])
+        for st in states:
+            try:
+                self._trade(st, now, books)
+                self._record_track(st, now)
+            except Exception:
+                logger.exception("[%s] error while trading window %d", st.asset, st.start)
         self._settle(now)
+
+    def _wants_books(self, st: WindowState, now: float) -> bool:
+        if st.market is None or st.strike is None:
+            return False
+        seconds_left = st.end - now
+        # Before the trading slice there's nothing to do; don't spend API calls.
+        return 0 < seconds_left and (seconds_left <= self.s.strategy.max_seconds_left or st.has_position)
+
+    def _fetch_books(self, states: list[WindowState]) -> dict:
+        tokens = [st.market.tokens[o] for st in states for o in (UP, DOWN)]
+        if not tokens:
+            return {}
+        if hasattr(self.gateway, "books"):
+            try:
+                return self.gateway.books(tokens)
+            except Exception as exc:
+                logger.warning("Batch order-book fetch failed (%s); falling back to one request per book", exc)
+        out = {}
+        for t in tokens:
+            try:
+                out[t] = self.gateway.book(t)
+            except Exception as exc:
+                logger.warning("Order book fetch failed for %s: %s", t, exc)
+        return out
 
     def _prepare(self, st: WindowState, now: float) -> None:
         if st.strike is None and not st.skip_reason:
@@ -150,14 +182,10 @@ class UpDownEngine:
     def _open_exposure(self) -> float:
         return sum(w.pos.total_cost_usd for w in self.windows.values() if not w.settled and w.has_position)
 
-    def _trade(self, st: WindowState, now: float) -> None:
-        if st.market is None or st.strike is None:
+    def _trade(self, st: WindowState, now: float, all_books: dict) -> None:
+        if not self._wants_books(st, now):
             return
         seconds_left = st.end - now
-        if seconds_left <= 0:
-            return
-        if seconds_left > self.s.strategy.max_seconds_left and not st.has_position:
-            return  # nothing to do yet; don't spend API calls
         latest = self.history.latest(st.asset)
         if latest is None or now - latest[0] > self.s.feed.max_age_s:
             st.why = "price feed stale; not trading"
@@ -169,7 +197,10 @@ class UpDownEngine:
         allowed, why_not = self.risk.can_trade(now)
         room = max(0.0, self.risk.room_usd(now) - self._open_exposure()) if allowed else 0.0
 
-        books = {o: self.gateway.book(st.market.tokens[o]) for o in (UP, DOWN)}
+        books = {o: all_books.get(st.market.tokens[o]) for o in (UP, DOWN)}
+        if books[UP] is None or books[DOWN] is None:
+            st.why = "order book unavailable this tick"
+            return
         snap = Snapshot(spot=latest[1], strike=st.strike, seconds_left=seconds_left, sigma=self.vol[st.asset].sigma, books=books)
         decision, why = self.strategy.decide(snap, st.pos, room)
         st.books = books
@@ -191,6 +222,7 @@ class UpDownEngine:
         filled = fill.shares > 0
         if filled:
             self.stats.orders += 1
+            self.asset_stats[st.asset].orders += 1
             st.fees_usd += fill.fee_usd
             if decision.side == "BUY":
                 st.pos.shares[decision.outcome] += fill.shares
@@ -271,13 +303,14 @@ class UpDownEngine:
 
     def _book(self, st: WindowState, now: float, pnl: float, note: str, winner: str | None) -> None:
         self.risk.record_window(now, pnl)
-        self.stats.windows_traded += 1
-        self.stats.pnl_usd += pnl
-        self.stats.fees_usd += st.fees_usd
-        if pnl > 0:
-            self.stats.wins += 1
-        elif pnl < 0:
-            self.stats.losses += 1
+        for stats in (self.stats, self.asset_stats[st.asset]):
+            stats.windows_traded += 1
+            stats.pnl_usd += pnl
+            stats.fees_usd += st.fees_usd
+            if pnl > 0:
+                stats.wins += 1
+            elif pnl < 0:
+                stats.losses += 1
         self.sizing.bankroll_usd = max(0.0, self.s.sizing.bankroll_usd + self.stats.pnl_usd)
         sides = sorted({f["outcome"] for f in st.fills if f["kind"] == "BUY"})
         result = "win" if pnl > 0 else "loss" if pnl < 0 else "flat"

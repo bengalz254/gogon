@@ -128,6 +128,10 @@ def build_state(engine, now: float) -> dict:
             "fees_usd": st.fees_usd,
             "orders": st.orders,
         },
+        "asset_stats": {
+            a: {"windows_traded": x.windows_traded, "wins": x.wins, "losses": x.losses, "pnl_usd": x.pnl_usd, "orders": x.orders}
+            for a, x in engine.asset_stats.items()
+        },
         "bankroll": engine.sizing.bankroll_usd,
         "recent_windows": list(engine.recent_windows),
         "events": list(engine.events)[-30:],
