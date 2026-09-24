@@ -50,6 +50,11 @@ class StrategyConfig:
     # If the market disagrees with the model by more than this, assume our
     # data is wrong (stale feed, wrong strike) rather than the market's.
     max_model_market_gap: float = 0.30
+    # How much to trust the market's own price over our model (0 = ignore the
+    # market, 1 = never trade). Other bots may see the settlement price
+    # sooner than we do; when our model disagrees with them it's often our
+    # data that's late. Blending means only large disagreements get traded.
+    market_weight: float = 0.5
     # Sell an open position early when the bid (after fees) beats the model by this much.
     exit_margin: float = 0.06
     max_entries_per_window: int = 2

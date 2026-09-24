@@ -35,6 +35,7 @@ strategy:
   min_price: 0.08          # never buy below 8c...
   max_price: 0.92          # ...or above 92c
   max_model_market_gap: 0.30
+  market_weight: 0.5       # blend model with market price (0 = model only)
   exit_margin: 0.06        # sell early if the bid beats fair value by 6c
   max_entries_per_window: 2
   min_seconds_between_entries: 20   # wait before adding to a position

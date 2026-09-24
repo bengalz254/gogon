@@ -59,3 +59,4 @@ def test_report_summarises_journal(tmp_path, capsys, monkeypatch):
     total = [l for l in out.splitlines() if l.startswith("TOTAL")][0].split()
     assert total[1:4] == ["1", "1", "0"]
     assert float(total[5]) == pytest.approx(engine.stats.pnl_usd, abs=0.01)
+    assert float(total[6]) > 0  # model expected a profit on these entries

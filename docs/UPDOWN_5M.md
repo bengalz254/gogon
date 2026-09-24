@@ -55,6 +55,14 @@ dibatasi `max_bet_usd`, batas per window, dan sisa jatah rugi harian. Order
 bertipe **FAK** (fill-and-kill): ambil likuiditas yang ada sampai harga
 limit, sisanya dibatalkan. Tidak ada order yang menggantung.
 
+### Menghormati harga pasar
+Nilai wajar yang dipakai untuk masuk adalah **campuran 50% model + 50% harga
+pasar** (`market_weight`). Bot lain mungkin melihat harga settlement lebih
+cepat; kalau model berbeda jauh dari pasar, sering kali data kita yang
+terlambat. Dengan campuran ini hanya selisih yang benar-benar besar yang
+di-trade. Laporan (`scripts/updown_report.py`) menampilkan kolom EXPECTED
+(untung menurut model) di samping P&L nyata untuk mengecek hal ini.
+
 ### Aturan keluar
 Posisi biasanya ditahan sampai settlement. Tapi kalau ada yang menawar
 (bid) **lebih tinggi dari nilai wajar + 6c** setelah fee, saham dijual ke

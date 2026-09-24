@@ -5,6 +5,7 @@ from updown.strategy import DOWN, UP, Book, Snapshot, UpDownStrategy, WindowPosi
 
 
 def make_strategy(**strategy_overrides):
+    strategy_overrides.setdefault("market_weight", 0.0)  # pure model unless a test says otherwise
     return UpDownStrategy(
         StrategyConfig(**strategy_overrides),
         ModelConfig(vol_multiplier=1.0, basis_sd=0.0),
@@ -139,3 +140,15 @@ def test_waits_between_entries():
     d, why = s.decide(snap(), pos, 100, seconds_since_entry=5)
     assert d is None and "waiting" in why
     assert s.decide(snap(), pos, 100, seconds_since_entry=25)[0] is not None
+
+
+def test_market_weight_shrinks_edges_toward_the_market():
+    # Model says Up ~0.9, market mid ~0.61. Pure model: big edge at 0.62.
+    assert make_strategy(market_weight=0.0).decide(snap(), WindowPosition(), 100)[0] is not None
+    # Trusting the market fully: fair value = market mid, never worth buying the ask.
+    d, why = make_strategy(market_weight=1.0).decide(snap(), WindowPosition(), 100)
+    assert d is None and "edge" in why
+    # Half and half: fair ~0.75, still worth 0.62 but with a smaller edge.
+    half, _ = make_strategy(market_weight=0.5).decide(snap(), WindowPosition(), 100)
+    full, _ = make_strategy(market_weight=0.0).decide(snap(), WindowPosition(), 100)
+    assert half is not None and half.fair_prob < full.fair_prob

@@ -181,6 +181,8 @@ class UpDownStrategy:
         mid = book.mid
         if mid is not None and abs(q - mid) > self.cfg.max_model_market_gap:
             return None, f"model {q:.2f} vs market {mid:.2f} too far apart; distrusting our data"
+        if mid is not None and self.cfg.market_weight > 0:
+            q = (1 - self.cfg.market_weight) * q + self.cfg.market_weight * mid
 
         # Kelly stake from the best price we could get; later levels are worse,
         # so this is the most we'd ever want.
