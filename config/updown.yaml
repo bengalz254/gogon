@@ -1,0 +1,53 @@
+# Configuration for the 5-minute "Up or Down" bot (python -m updown.main).
+# Secrets (private key, wallet) stay in .env, shared with the main bot.
+
+# Which 5-minute markets to trade: btc, eth, sol, xrp.
+assets: [btc]
+
+# Gamma slug of the market for a window opening at unix time {start}.
+# Check one on polymarket.com (the URL ends with the slug) and fix this if
+# Polymarket changes its naming.
+slug_template: "{asset}-updown-5m-{start}"
+window_seconds: 300
+tick_seconds: 1.0
+
+model:
+  vol_halflife_s: 180      # how fast the live volatility estimate adapts
+  vol_floor: 0.00004       # clamp on volatility per sqrt(second)
+  vol_cap: 0.0006
+  vol_multiplier: 1.0      # >1 widens the distribution for fat tails
+  vol_uncertainty: 0.3     # entries must keep their edge if vol is +-30% off
+  basis_sd: 0.00015        # feed-vs-oracle uncertainty (log return, 0.015%)
+
+fees:
+  # Taker fee per share = fee_rate * (p * (1 - p)) ** fee_exponent.
+  # VERIFY against Polymarket's current fee docs before trading live.
+  fee_rate: 0.25
+  fee_exponent: 2.0
+
+strategy:
+  max_seconds_left: 240    # skip the first minute of each window
+  min_seconds_left: 8      # and the last few seconds
+  min_edge: 0.04           # min expected profit per $1 share, after fees
+  min_price: 0.08          # never buy below 8c...
+  max_price: 0.92          # ...or above 92c
+  max_model_market_gap: 0.30
+  exit_margin: 0.06        # sell early if the bid beats fair value by 6c
+  max_entries_per_window: 2
+
+sizing:
+  bankroll_usd: 100        # capital set aside for this bot
+  kelly_fraction: 0.15     # fraction of full Kelly per bet
+  max_bet_usd: 5
+  max_window_exposure_usd: 10
+  min_order_usd: 1
+
+risk:
+  max_daily_loss_usd: 20
+  max_consecutive_losses: 4
+  cooldown_minutes: 30
+
+feed:
+  binance_host: "https://api.binance.com"   # US: https://api.binance.us
+  poll_seconds: 1.0
+  max_age_s: 3.0

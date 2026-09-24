@@ -95,6 +95,24 @@ python scripts/dashboard.py
 It opens `http://127.0.0.1:8765` in your browser automatically and
 refreshes every 5 seconds.
 
+## 5-minute "Up or Down" bot
+
+A second, separate bot for Polymarket's 5-minute crypto Up/Down markets
+lives in `updown/`. It prices each window with a volatility model
+(spot vs. the window's opening price, time left, live volatility) and
+only buys shares the market is selling below fair value after taker fees,
+with a robustness check so a mere disagreement about volatility never
+counts as edge. Paper mode is the default here too.
+
+```bash
+python -m updown.main --simulate          # offline simulator
+python scripts/updown_calibrate.py        # check the model on real BTC history
+python -m updown.main                     # paper trading on the live market
+```
+
+Full guide (Bahasa Indonesia): [docs/UPDOWN_5M.md](docs/UPDOWN_5M.md).
+Settings: `config/updown.yaml`.
+
 ## Running tests
 
 ```bash
