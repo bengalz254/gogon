@@ -39,14 +39,14 @@ strategy:
   max_entries_per_window: 2
 
 sizing:
-  bankroll_usd: 100        # capital set aside for this bot
+  bankroll_usd: 1000       # capital set aside for this bot
   kelly_fraction: 0.15     # fraction of full Kelly per bet
   max_bet_usd: 5
   max_window_exposure_usd: 10
   min_order_usd: 1
 
 risk:
-  max_daily_loss_usd: 20
+  max_daily_loss_usd: 250
   max_consecutive_losses: 4
   cooldown_minutes: 30
 
