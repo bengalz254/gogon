@@ -67,6 +67,17 @@ ssh -L 8766:127.0.0.1:8766 root@IP_SERVER
 Biarkan jendela itu terbuka, lalu buka **http://127.0.0.1:8766** di browser.
 Tutup jendelanya kalau sudah selesai; bot di server tetap jalan.
 
+## 6b. Buka dashboard dari HP (Tailscale)
+Di server:
+```bash
+sudo bash /opt/gogon/deploy/phone.sh
+```
+Skrip menampilkan link login Tailscale; buka link itu dan login (misalnya
+pakai akun Google). Di HP: pasang aplikasi **Tailscale**, login dengan akun
+yang **sama**, nyalakan, lalu buka alamat yang dicetak skrip
+(`http://100.x.x.x:8766`) di browser HP. Dashboard tetap tertutup untuk
+internet; hanya perangkat di akun Tailscale kamu yang bisa membukanya.
+
 ## 7. Jangan lupa matikan bot di PC
 Setelah server jalan, stop bot di PC (`Ctrl+C`) supaya tidak ada dua bot.
 Riwayat trade di PC (`data/trades.csv`) tidak ikut pindah; server mulai

@@ -119,6 +119,11 @@ def make_handler(source: StateSource):
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Radar dashboard for the 5-minute Up/Down bot")
+    ap.add_argument(
+        "--host", action="append",
+        help="address to listen on (repeatable). Default 127.0.0.1 only. Add a private "
+        "address such as your Tailscale IP to open it from your phone; never 0.0.0.0 on a public server.",
+    )
     ap.add_argument("--port", type=int, default=int(os.environ.get("UPDOWN_DASHBOARD_PORT", "8766")))
     ap.add_argument("--state", default=os.path.join(_ROOT, "data", "updown_state.json"))
     ap.add_argument("--demo", action="store_true", help="run the simulator instead of watching the bot")
@@ -133,18 +138,23 @@ def main() -> None:
         source.demo = True
         threading.Thread(target=run_demo, args=(source, args.speed, args.warmup, args.seed), daemon=True).start()
 
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(source))
+    hosts = args.host or ["127.0.0.1"]
+    servers = [ThreadingHTTPServer((h, args.port), make_handler(source)) for h in hosts]
+    for srv in servers[1:]:
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{args.port}"
-    print(f"Radar dashboard: {url}  ({'DEMO / simulator' if args.demo else 'watching ' + args.state})")
+    print(f"Radar dashboard: {', '.join(f'http://{h}:{args.port}' for h in hosts)}  "
+          f"({'DEMO / simulator' if args.demo else 'watching ' + args.state})")
     print("Ctrl+C to stop.")
     if not args.no_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     try:
-        server.serve_forever()
+        servers[0].serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        server.server_close()
+        for srv in servers:
+            srv.server_close()
 
 
 if __name__ == "__main__":
