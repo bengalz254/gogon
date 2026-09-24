@@ -1,0 +1,13 @@
+[Unit]
+Description=Gogon radar dashboard (127.0.0.1:8766, reach it through an SSH tunnel)
+After=network-online.target
+
+[Service]
+User=@APP_USER@
+WorkingDirectory=@APP_DIR@
+ExecStart=@APP_DIR@/venv/bin/python scripts/updown_dashboard.py --no-browser
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

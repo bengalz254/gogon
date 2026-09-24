@@ -111,6 +111,8 @@ python -m updown.main                     # paper trading on the live market
 python scripts/updown_dashboard.py        # radar dashboard (add --demo to preview)
 ```
 
+Running it on a server (Vultr etc.): see [docs/DEPLOY_VULTR.md](docs/DEPLOY_VULTR.md).
+
 Full guide (Bahasa Indonesia): [docs/UPDOWN_5M.md](docs/UPDOWN_5M.md).
 Settings: `config/updown.yaml`.
 

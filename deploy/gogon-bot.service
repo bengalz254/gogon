@@ -1,0 +1,18 @@
+[Unit]
+Description=Gogon 5-minute Up/Down bot (Polymarket)
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+User=@APP_USER@
+WorkingDirectory=@APP_DIR@
+ExecStart=@APP_DIR@/venv/bin/python -m updown.main
+Restart=always
+RestartSec=5
+# Ctrl+C equivalent, so the bot logs its summary before stopping
+KillSignal=SIGINT
+TimeoutStopSec=15
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
