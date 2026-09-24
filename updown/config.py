@@ -53,6 +53,9 @@ class StrategyConfig:
     # Sell an open position early when the bid (after fees) beats the model by this much.
     exit_margin: float = 0.06
     max_entries_per_window: int = 2
+    # Wait this long before adding to a position: a second entry should come
+    # from new information, not re-hit the same asks a second later.
+    min_seconds_between_entries: float = 20.0
 
 
 @dataclass
@@ -63,6 +66,9 @@ class SizingConfig:
     kelly_fraction: float = 0.15
     max_bet_usd: float = 5.0
     max_window_exposure_usd: float = 10.0
+    # Coins move together: seven "Down" bets in the same minute are really one
+    # big bet on the market falling. Cap open cost on each side across coins.
+    max_same_direction_usd: float = 20.0
     min_order_usd: float = 1.0
 
 

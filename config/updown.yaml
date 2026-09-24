@@ -37,12 +37,14 @@ strategy:
   max_model_market_gap: 0.30
   exit_margin: 0.06        # sell early if the bid beats fair value by 6c
   max_entries_per_window: 2
+  min_seconds_between_entries: 20   # wait before adding to a position
 
 sizing:
   bankroll_usd: 1000       # capital set aside for this bot
   kelly_fraction: 0.15     # fraction of full Kelly per bet
   max_bet_usd: 5
   max_window_exposure_usd: 10
+  max_same_direction_usd: 20   # all coins together, per side (coins move together)
   min_order_usd: 1
 
 risk:

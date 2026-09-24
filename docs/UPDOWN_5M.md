@@ -73,6 +73,15 @@ saat bot dinyalakan akan dilewati.
 - Rugi harian maksimal `max_daily_loss_usd`. Setelah itu bot berhenti sampai tengah malam UTC.
 - Setelah kalah 4 window berturut-turut, bot istirahat 30 menit.
 - Kalau harga feed lebih tua dari 3 detik, bot tidak trading.
+- **Batas searah untuk semua coin** (`max_same_direction_usd`, default $20).
+  Crypto biasanya bergerak bersamaan, jadi 7 taruhan "Down" di menit yang
+  sama sebenarnya satu taruhan besar bahwa pasar turun. Total posisi terbuka
+  di satu sisi dibatasi untuk semua coin sekaligus.
+- **Jeda antar entry** (`min_seconds_between_entries`, default 20 detik).
+  Entry kedua harus berdasarkan informasi baru, bukan mengulang pembelian di
+  harga yang sama satu detik kemudian.
+- Kalau feed tersendat tepat saat window dibuka, bot memakai harga pertama
+  dalam 4 detik setelah pembukaan, supaya satu window tidak hilang percuma.
 
 ## Hasil simulator (jujur)
 

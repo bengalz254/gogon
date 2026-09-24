@@ -31,6 +31,8 @@ logger = logging.getLogger("polybot.updown.engine")
 STRATEGY_NAME = "updown_5m"
 DISCOVERY_RETRY_S = 5.0
 STRIKE_TOLERANCE_S = 2.0
+# If no tick landed just before the open, accept the first one this soon after.
+STRIKE_LATE_S = 4.0
 STATUS_LOG_EVERY_S = 30.0
 
 
@@ -55,6 +57,7 @@ class WindowState:
     books: dict | None = None
     why: str = ""
     fills: list[dict] = field(default_factory=list)
+    last_entry_ts: float | None = None
 
     @property
     def has_position(self) -> bool:
@@ -150,7 +153,7 @@ class UpDownEngine:
             # "price to beat": settlement compares oracle-end vs oracle-start,
             # so comparing feed-now vs feed-start cancels the constant gap
             # between the two sources. Mixing sources would bake it in.
-            st.strike = self.history.price_at(st.asset, st.start, STRIKE_TOLERANCE_S)
+            st.strike = self.history.price_near(st.asset, st.start, STRIKE_TOLERANCE_S, STRIKE_LATE_S)
             if st.strike is None:
                 st.skip_reason = "no feed price at window open (bot started mid-window?)"
                 logger.info("[%s] skipping window %d: %s", st.asset, st.start, st.skip_reason)
@@ -179,6 +182,15 @@ class UpDownEngine:
         if not st.track or latest[0] > st.track[-1][0]:
             st.track.append((latest[0], latest[1]))
 
+    def _side_exposure(self) -> dict[str, float]:
+        """Open cost on each side, summed across every coin's unsettled window."""
+        out = {UP: 0.0, DOWN: 0.0}
+        for w in self.windows.values():
+            if not w.settled:
+                for o in (UP, DOWN):
+                    out[o] += w.pos.cost_usd[o]
+        return out
+
     def _open_exposure(self) -> float:
         return sum(w.pos.total_cost_usd for w in self.windows.values() if not w.settled and w.has_position)
 
@@ -202,7 +214,11 @@ class UpDownEngine:
             st.why = "order book unavailable this tick"
             return
         snap = Snapshot(spot=latest[1], strike=st.strike, seconds_left=seconds_left, sigma=self.vol[st.asset].sigma, books=books)
-        decision, why = self.strategy.decide(snap, st.pos, room)
+        side = self._side_exposure()
+        cap = self.s.sizing.max_same_direction_usd
+        side_room = {o: max(0.0, cap - side[o]) for o in (UP, DOWN)}
+        since = now - st.last_entry_ts if st.last_entry_ts is not None else None
+        decision, why = self.strategy.decide(snap, st.pos, room, side_room, since)
         st.books = books
         st.why = why_not or why
 
@@ -228,6 +244,7 @@ class UpDownEngine:
                 st.pos.shares[decision.outcome] += fill.shares
                 st.pos.cost_usd[decision.outcome] += fill.usd + fill.fee_usd
                 st.pos.entries += 1
+                st.last_entry_ts = now
                 st.cash_usd -= fill.usd + fill.fee_usd
             else:
                 held = st.pos.shares[decision.outcome]
@@ -281,7 +298,7 @@ class UpDownEngine:
                 logger.warning("[%s] resolution lookup failed for %s: %s", st.asset, st.market.slug, exc)
             source = "polymarket"
             if outcome is None and now - st.end >= self.settle_fallback_s:
-                end_price = self.history.price_at(st.asset, st.end, STRIKE_TOLERANCE_S)
+                end_price = self.history.price_near(st.asset, st.end, STRIKE_TOLERANCE_S, STRIKE_LATE_S)
                 if end_price is None:
                     continue
                 outcome = UP if end_price >= st.strike else DOWN

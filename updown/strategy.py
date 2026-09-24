@@ -116,9 +116,19 @@ class UpDownStrategy:
         return {UP: min(ups), DOWN: 1.0 - max(ups)}
 
     def decide(
-        self, snap: Snapshot, pos: WindowPosition, room_usd: float
+        self,
+        snap: Snapshot,
+        pos: WindowPosition,
+        room_usd: float,
+        side_room: dict[str, float] | None = None,
+        seconds_since_entry: float | None = None,
     ) -> tuple[Decision | None, str]:
-        """Return (decision, why). `room_usd` is how much more risk may open now."""
+        """Return (decision, why).
+
+        room_usd: how much more risk may open now, overall.
+        side_room: how much more may open on each side across all coins.
+        seconds_since_entry: time since this window's last entry, if any.
+        """
         if snap.seconds_left < self.cfg.min_seconds_left:
             return None, f"too close to expiry ({snap.seconds_left:.0f}s left)"
 
@@ -133,6 +143,8 @@ class UpDownStrategy:
             return None, f"too early in window ({snap.seconds_left:.0f}s left)"
         if pos.entries >= self.cfg.max_entries_per_window:
             return None, "max entries for this window reached"
+        if seconds_since_entry is not None and seconds_since_entry < self.cfg.min_seconds_between_entries:
+            return None, f"just entered; waiting {self.cfg.min_seconds_between_entries - seconds_since_entry:.0f}s before adding"
 
         window_room = self.sizing.max_window_exposure_usd - pos.total_cost_usd
         budget_cap = min(self.sizing.max_bet_usd, window_room, room_usd)
@@ -147,7 +159,11 @@ class UpDownStrategy:
             if pos.shares[other] > 0:
                 reasons.append(f"{outcome}: already hold {other}")
                 continue
-            decision, why = self._entry(outcome, entry_probs[outcome], snap.books.get(outcome), budget_cap)
+            cap = budget_cap if side_room is None else min(budget_cap, side_room.get(outcome, 0.0))
+            if cap < self.sizing.min_order_usd:
+                reasons.append(f"{outcome}: same-direction limit across coins reached")
+                continue
+            decision, why = self._entry(outcome, entry_probs[outcome], snap.books.get(outcome), cap)
             reasons.append(f"{outcome}: {why}")
             if decision and (best is None or self._edge(decision) > self._edge(best)):
                 best = decision

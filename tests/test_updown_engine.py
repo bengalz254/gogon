@@ -137,3 +137,26 @@ def test_does_not_poll_books_before_trading_slice():
     engine, history = make(gw)
     run(engine, history, lambda t: 100.0, T0 - 5, T0 + 55)
     assert gw.book_calls == 0
+
+
+def test_strike_survives_a_feed_hiccup_at_the_open():
+    engine, history = make(FakeGateway())
+    # last tick 10s before the open, then nothing until 3s after it
+    history.add("btc", float(T0 - 10), 99.0)
+    history.add("btc", float(T0 + 3), 100.0)
+    engine.tick(float(T0 + 3))
+    assert engine.windows[("btc", T0)].strike == 100.0
+
+    engine2, history2 = make(FakeGateway())
+    history2.add("btc", float(T0 - 10), 99.0)
+    history2.add("btc", float(T0 + 6), 100.0)  # too late to trust as the open
+    engine2.tick(float(T0 + 6))
+    assert engine2.windows[("btc", T0)].skip_reason
+
+
+def test_entries_in_a_window_are_spaced_out():
+    engine, history = make(FakeGateway())
+    run(engine, history, price_path, T0 - 5, T0 + 300 + 20)
+    buys = [e["ts"] for e in engine.events if e["kind"] == "BUY" and e["window"] == T0]
+    assert len(buys) == 2
+    assert buys[1] - buys[0] >= engine.s.strategy.min_seconds_between_entries

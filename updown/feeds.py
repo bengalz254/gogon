@@ -35,6 +35,21 @@ class PriceHistory:
             q = self._samples.get(asset)
             return q[-1] if q else None
 
+    def price_near(self, asset: str, ts: float, before_s: float, after_s: float) -> float | None:
+        """Last price at/before `ts` (within before_s); failing that, the first
+        one after it (within after_s). A feed that hiccups right at a window's
+        open still yields a strike instead of costing the whole window."""
+        p = self.price_at(asset, ts, before_s)
+        if p is not None:
+            return p
+        with self._lock:
+            q = self._samples.get(asset)
+            samples = list(q) if q else []
+        i = bisect.bisect_right([s[0] for s in samples], ts)
+        if i < len(samples) and samples[i][0] - ts <= after_s:
+            return samples[i][1]
+        return None
+
     def price_at(self, asset: str, ts: float, tolerance_s: float) -> float | None:
         """Last price at or before `ts`, if one exists within `tolerance_s`."""
         with self._lock:

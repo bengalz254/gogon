@@ -121,3 +121,21 @@ def test_vol_disagreement_alone_is_not_an_edge():
         DOWN: Book.from_raw([(1 - market_p - 0.005, 100)], [(1 - market_p + 0.005, 100)]),
     }
     assert s.decide(base, WindowPosition(), 100)[0] is None
+
+
+def test_same_direction_room_across_coins_caps_or_blocks_entries():
+    s = make_strategy()
+    d, why = s.decide(snap(), WindowPosition(), room_usd=100, side_room={UP: 0.0, DOWN: 50.0})
+    assert d is None and "same-direction" in why
+    d, _ = s.decide(snap(), WindowPosition(), room_usd=100, side_room={UP: 3.0, DOWN: 50.0})
+    assert d.outcome == UP and d.usd + d.fee_usd <= 3.0 + 1e-9
+
+
+def test_waits_between_entries():
+    s = make_strategy()
+    pos = WindowPosition(entries=1)
+    pos.shares[UP] = 5
+    pos.cost_usd[UP] = 3
+    d, why = s.decide(snap(), pos, 100, seconds_since_entry=5)
+    assert d is None and "waiting" in why
+    assert s.decide(snap(), pos, 100, seconds_since_entry=25)[0] is not None
