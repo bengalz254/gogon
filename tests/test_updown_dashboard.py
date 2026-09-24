@@ -1,3 +1,4 @@
+import pytest
 import json
 
 from scripts.updown_dashboard import StateSource
@@ -41,3 +42,20 @@ def test_dashboard_reads_state_file(tmp_path):
     write_state(path, build_state(engine, float(T0 + 100)))
     p = src.payload()
     assert p["status"] == "online" and p["state"]["assets"][0]["strike"] == 100.0
+
+
+def test_report_summarises_journal(tmp_path, capsys, monkeypatch):
+    import scripts.updown_report as report
+    from bot.journal import TradeJournal
+
+    engine, history = make(FakeGateway())
+    engine.journal = TradeJournal(str(tmp_path / "trades.csv"))
+    run(engine, history, price_path, T0 - 5, T0 + 300 + 20)
+    monkeypatch.setattr(report, "TRADES", str(tmp_path / "trades.csv"))
+    monkeypatch.setattr(report, "LOG", str(tmp_path / "none.log"))
+    monkeypatch.setattr("sys.argv", ["updown_report.py"])
+    report.main()
+    out = capsys.readouterr().out
+    total = [l for l in out.splitlines() if l.startswith("TOTAL")][0].split()
+    assert total[1:4] == ["1", "1", "0"]
+    assert float(total[5]) == pytest.approx(engine.stats.pnl_usd, abs=0.01)
