@@ -7,5 +7,6 @@ echo.
 echo Versi sekarang:
 git log --oneline -1
 echo.
-echo Kalau bot sedang jalan, tutup dulu jendela bot lalu buka lagi start_bot.bat.
+echo Bot di laptop ini: tutup jendela bot, lalu klik dua kali start_bot lagi.
+echo Bot di VPS: file di laptop sudah baru; untuk botnya, masuk ke VPS lalu ketik updown-update.
 pause
