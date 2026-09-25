@@ -36,11 +36,14 @@ def load_trades() -> list[dict]:
 
 def build_summary(rows: list[dict]) -> dict:
     filled_rows = [r for r in rows if r.get("filled", "").strip().lower() == "true"]
+    # SETTLE (market resolved at $1/$0) and ADJUST (settlement correction) rows
+    # close positions / move P&L but are not trading volume.
+    trade_rows = [r for r in filled_rows if r["side"] in ("BUY", "SELL")]
 
-    total_volume_usd = sum(float(r["size_usd"]) for r in filled_rows)
+    total_volume_usd = sum(float(r["size_usd"]) for r in trade_rows)
 
     by_strategy: dict[str, dict] = defaultdict(lambda: {"count": 0, "volume_usd": 0.0})
-    for r in filled_rows:
+    for r in trade_rows:
         s = by_strategy[r["strategy"]]
         s["count"] += 1
         s["volume_usd"] += float(r["size_usd"])
@@ -66,7 +69,7 @@ def build_summary(rows: list[dict]) -> dict:
         if r["side"] == "BUY":
             pos["size"] += size
             pos["cost_usd"] += usd
-        else:  # SELL
+        else:  # SELL, SETTLE or ADJUST (ADJUST has size 0: a pure P&L correction)
             sell_size = min(size, pos["size"])
             avg_price = pos["cost_usd"] / pos["size"] if pos["size"] else 0.0
             cost_basis = avg_price * sell_size
@@ -74,8 +77,9 @@ def build_summary(rows: list[dict]) -> dict:
             pos["size"] -= sell_size
             pos["cost_usd"] -= cost_basis
 
-        running_volume += usd
-        timeline.append({"t": r["timestamp"], "cum_volume": round(running_volume, 4)})
+        if r["side"] in ("BUY", "SELL"):
+            running_volume += usd
+            timeline.append({"t": r["timestamp"], "cum_volume": round(running_volume, 4)})
 
     open_positions = [
         {"token_id": tid, **p} for tid, p in positions.items() if p["size"] > 1e-9
@@ -220,6 +224,7 @@ INDEX_HTML = """<!doctype html>
   }
   .badge.buy { background: rgba(34,195,166,0.15); color: var(--accent-2); }
   .badge.sell { background: rgba(242,84,91,0.15); color: var(--bad); }
+  .badge.settle { background: rgba(232,179,57,0.18); color: var(--warn); }
   .badge.paper { background: rgba(91,141,239,0.15); color: var(--accent); }
   .badge.live { background: rgba(232,179,57,0.18); color: var(--warn); }
   .badge.filled-yes { background: rgba(34,195,166,0.15); color: var(--accent-2); }
@@ -290,7 +295,8 @@ INDEX_HTML = """<!doctype html>
         <tbody></tbody>
       </table>
       <div class="empty" id="empty-trades" hidden>
-        Belum ada aktivitas trading. Jalankan bot dengan <code>python -m bot.main</code> lalu tunggu beberapa siklus.
+        Belum ada aktivitas trading. Jalankan bot dengan <code>python -m bot.main</code> atau
+        <code>python -m bot.updown</code> lalu tunggu beberapa siklus.
       </div>
     </div>
   </div>
@@ -302,7 +308,7 @@ INDEX_HTML = """<!doctype html>
 const fmtUsd = (n) => '$' + Number(n).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
 const fmtNum = (n) => Number(n).toLocaleString('en-US', {maximumFractionDigits: 4});
 
-const STRATEGY_COLORS = ['#5b8def', '#22c3a6', '#e8b339', '#f2545b'];
+const STRATEGY_COLORS = ['#5b8def', '#22c3a6', '#e8b339', '#f2545b', '#a78bfa', '#38bdf8', '#fb923c'];
 
 function renderKpis(d) {
   document.getElementById('k-signals').textContent = d.total_signals;
@@ -394,7 +400,7 @@ function renderTrades(rows) {
     <tr>
       <td>${new Date(r.timestamp).toLocaleTimeString('id-ID')}</td>
       <td><span class="badge ${r.mode}">${r.mode}</span></td>
-      <td><span class="badge ${r.side === 'BUY' ? 'buy' : 'sell'}">${r.side}</span></td>
+      <td><span class="badge ${r.side === 'BUY' ? 'buy' : (r.side === 'SELL' ? 'sell' : 'settle')}">${r.side}</span></td>
       <td>${r.outcome}</td>
       <td class="num">${Number(r.price).toFixed(3)}</td>
       <td class="num">${fmtUsd(r.size_usd)}</td>

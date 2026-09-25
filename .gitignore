@@ -8,4 +8,9 @@ venv/
 logs/*.log
 data/*.csv
 data/*.sqlite3
+data/*.jsonl
+data/*.csv.bak.*
+data/recordings/
+data/backtest/
+data/sim/
 .DS_Store
