@@ -106,6 +106,17 @@
   .coin .m { display: flex; justify-content: space-between; margin-top: 2px; font-size: 11.5px; color: var(--text-secondary); font-family: var(--mono); }
   .coin .bar { position: absolute; left: 12px; right: 12px; bottom: 0; height: 2px; border-radius: 2px; overflow: hidden; background: rgba(255,255,255,0.04); }
   .coin .bar i { display: block; height: 100%; background: var(--phosphor); opacity: 0.6; }
+  /* Unpaired shares (only Up or only Down filled): an open bet, flagged in red. */
+  .coin.unpaired { border-color: var(--critical); box-shadow: 0 0 0 1px rgba(239,83,80,0.35), 0 0 18px rgba(239,83,80,0.12); }
+  .coin.unpaired.active { border-color: var(--critical); box-shadow: 0 0 0 2px rgba(239,83,80,0.55), 0 0 24px rgba(239,83,80,0.18); }
+  .coin .flag {
+    position: absolute; top: -8px; right: -8px; width: 22px; height: 22px; border-radius: 50%;
+    display: grid; place-items: center; font-size: 13px; font-weight: 900; line-height: 1;
+    color: #fff; background: var(--critical); box-shadow: 0 0 0 2px var(--bg, #05090a);
+  }
+  .coin .unp, .coin .prd { margin-top: 3px; font-size: 10.5px; letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .coin .unp { font-weight: 700; color: var(--critical); }
+  .coin .prd { font-weight: 600; color: var(--good); }
 
   .banner {
     display: none; margin: 16px 24px 0; padding: 12px 16px; border-radius: 10px;
@@ -236,12 +247,13 @@
     .banner { margin: 12px 16px 0; }
     .coins {
       padding: 12px 16px 4px; gap: 8px; grid-template-columns: none;
-      grid-auto-flow: column; grid-auto-columns: 132px; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-left: 16px;
+      grid-auto-flow: column; grid-auto-columns: 144px; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-left: 16px;
       scrollbar-width: none;
     }
     .coins::-webkit-scrollbar { display: none; }
     .coin { scroll-snap-align: start; }
     .coin .p { font-size: 17px; }
+    .coin .unp, .coin .prd { font-size: 9.5px; letter-spacing: 0; }
     .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .signal-grid { grid-template-columns: minmax(0, 1fr); }
     .kv { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -529,6 +541,7 @@
     try { localStorage.setItem("gogon-radar-coin", selected); } catch (e) { /* ignore */ }
     render();
   });
+  const fmtSh = (n) => (Math.round(n * 100) / 100).toString();
   function renderCoins() {
     const stats = state.asset_stats || {};
     coinsEl.innerHTML = state.assets.map((a) => {
@@ -536,9 +549,19 @@
       const st = stats[a.asset] || { pnl_usd: 0, wins: 0, losses: 0 };
       const frac = Math.max(0, Math.min(1, 1 - a.seconds_left / state.window_seconds));
       const p = a.p_up == null ? "—" : prob(a.p_up);
-      return `<button class="coin ${a.asset === selected ? "active" : ""}" data-asset="${a.asset}" aria-pressed="${a.asset === selected}">
+      const sh = (a.position && a.position.shares) || { Up: 0, Down: 0 };
+      const up = sh.Up || 0, dn = sh.Down || 0, pairs = Math.min(up, dn);
+      const open = Math.abs(up - dn) >= 0.01;
+      const side = up > dn ? "▲ UP" : "▼ DOWN";
+      const unp = open
+        ? `<div class="unp">${side} ${fmtSh(Math.abs(up - dn))} belum pair</div>`
+        : pairs > 0 ? `<div class="prd">✓ ${fmtSh(pairs)} pair lengkap</div>` : "";
+      const tip = open ? ` title="${side} ${fmtSh(Math.abs(up - dn))} saham belum berpasangan: taruhan satu arah sampai settle"` : "";
+      return `<button class="coin ${a.asset === selected ? "active" : ""} ${open ? "unpaired" : ""}" data-asset="${a.asset}" aria-pressed="${a.asset === selected}"${tip}>
+        ${open ? '<span class="flag" aria-label="belum berpasangan">✓</span>' : ""}
         <div class="row"><span class="tk">${a.asset.toUpperCase()}</span><span class="st ${cls}">${label}</span></div>
         <div class="p">${p}<small>P(UP)</small></div>
+        ${unp}
         <div class="m"><span>${usd(st.pnl_usd, true)}</span><span>${st.wins}M/${st.losses}K</span></div>
         <div class="bar"><i style="width:${(frac * 100).toFixed(1)}%"></i></div>
       </button>`;
