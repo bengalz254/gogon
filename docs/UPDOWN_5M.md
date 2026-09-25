@@ -9,6 +9,28 @@ Saham yang menang dibayar $1, yang kalah $0.
 > mode paper (simulasi). Jalankan paper minimal beberapa hari dulu. Tidak ada
 > jaminan profit, dan ini bukan nasihat keuangan.
 
+## Settlement memakai TWAP Chainlink (sejak Agustus 2026)
+
+Polymarket tidak lagi memakai harga di satu detik. Market 5 menit memakai
+**TWAP 60 detik** dari Chainlink (sejak 14 Agustus 2026):
+- **Price to beat** = rata-rata harga 60 detik **sebelum** window dibuka.
+- **Harga penutupan** = rata-rata 60 detik **terakhir** window.
+
+Bot mengikuti aturan ini (`model.twap_window_s: 60`):
+- Strike dibangun dari rata-rata feed kita selama 60 detik sebelum window
+  dibuka. Karena itu bot perlu **minimal 60 detik riwayat** sebelum window
+  pertama; window yang dimulai kurang dari 60 detik setelah bot menyala
+  dilewati.
+- Peluang dihitung untuk rata-rata penutupan, bukan harga terakhir: sebelum
+  menit terakhir variansnya σ²·(τ − 40), dan di menit terakhir rata-rata yang
+  sudah terjadi ikut dihitung. Model ini diuji dengan simulasi Monte Carlo.
+- Konsekuensi penting: di menit terakhir, kalau harga dekat strike, peluang
+  bergerak **~1,7× lebih cepat** daripada di sistem lama. Itu sebabnya market
+  maker menarik semua bid 60 detik sebelum tutup.
+- Feed TWAP resmi Polymarket (RTDS WebSocket) belum dipakai. Jalankan
+  `venv/bin/python scripts/probe_rtds.py` di server dan kirim hasilnya supaya
+  bisa disambungkan.
+
 ## Mode default: market maker
 
 Setelah 231 window paper trading, strategi "taker" di bawah terbukti **tidak

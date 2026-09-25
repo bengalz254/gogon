@@ -8,7 +8,7 @@ def make_strategy(**strategy_overrides):
     strategy_overrides.setdefault("market_weight", 0.0)  # pure model unless a test says otherwise
     return UpDownStrategy(
         StrategyConfig(**strategy_overrides),
-        ModelConfig(vol_multiplier=1.0, basis_sd=0.0),
+        ModelConfig(vol_multiplier=1.0, basis_sd=0.0, twap_window_s=0),  # these tests are about strategy mechanics
         FeeConfig(fee_rate=0.25, fee_exponent=2.0),
         SizingConfig(bankroll_usd=1000, kelly_fraction=0.25, max_bet_usd=50, max_window_exposure_usd=80, min_order_usd=1),
     )
@@ -109,7 +109,7 @@ def test_vol_disagreement_alone_is_not_an_edge():
     """A market pricing with 25% higher vol than ours isn't wrong, just different."""
     s = UpDownStrategy(
         StrategyConfig(),
-        ModelConfig(vol_multiplier=1.0, basis_sd=0.0, vol_uncertainty=0.3),
+        ModelConfig(vol_multiplier=1.0, basis_sd=0.0, vol_uncertainty=0.3, twap_window_s=0),
         FeeConfig(fee_rate=0.0),
         SizingConfig(bankroll_usd=1000, kelly_fraction=0.25, max_bet_usd=50),
     )

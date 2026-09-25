@@ -47,6 +47,81 @@ def fair_prob_up(
     return norm_cdf(log_move / total_sd)
 
 
+def twap_distribution(
+    spot: float,
+    seconds_left: float,
+    sigma_per_sqrt_s: float,
+    window_s: float,
+    observed_avg: float | None = None,
+) -> tuple[float, float, float]:
+    """Where the closing TWAP will land: (expected TWAP, sd as a log return,
+    weight of the current spot in that expectation).
+
+    Since Aug 2026 these markets settle on a Chainlink TWAP: the close is the
+    average price over the last `window_s` seconds. Averaging damps the
+    noise, so relative to a single end price:
+      - more than a window away: variance sigma^2 * (tau - 2W/3) instead of
+        sigma^2 * tau (the average of a random walk over W has variance W/3);
+      - inside the final window: part of the average is already known
+        (`observed_avg` over the first W - tau seconds); only the rest moves,
+        with sd sigma * sqrt(tau / 3) * tau / W.
+    """
+    tau = max(0.0, seconds_left)
+    w = window_s
+    if w <= 0:  # plain snapshot settlement
+        return spot, sigma_per_sqrt_s * math.sqrt(tau), 1.0
+    if tau >= w:
+        return spot, sigma_per_sqrt_s * math.sqrt(tau - 2.0 * w / 3.0), 1.0
+    known = observed_avg if observed_avg and observed_avg > 0 else spot
+    weight = tau / w
+    expected = (1.0 - weight) * known + weight * spot
+    sd = sigma_per_sqrt_s * math.sqrt(tau / 3.0) * weight
+    return expected, sd, weight
+
+
+def fair_prob_up_twap(
+    spot: float,
+    strike: float,
+    seconds_left: float,
+    sigma_per_sqrt_s: float,
+    window_s: float,
+    observed_avg: float | None = None,
+    basis_sd: float = 0.0,
+    vol_multiplier: float = 1.0,
+) -> float:
+    """P(closing TWAP >= strike), where strike is itself the TWAP at the open."""
+    if spot <= 0 or strike <= 0:
+        raise ValueError("spot and strike must be positive")
+    expected, sd, _ = twap_distribution(spot, seconds_left, sigma_per_sqrt_s * vol_multiplier, window_s, observed_avg)
+    total_sd = math.sqrt(sd * sd + basis_sd * basis_sd)
+    move = math.log(expected / strike)
+    if total_sd <= 0.0:
+        return 1.0 if move >= 0 else 0.0
+    return norm_cdf(move / total_sd)
+
+
+def twap_prob_vol_1s(
+    spot: float, strike: float, seconds_left: float, sigma_per_sqrt_s: float, window_s: float,
+    observed_avg: float | None = None, basis_sd: float = 0.0,
+) -> float:
+    """How much P(Up) moves (1 sd) in one second under TWAP settlement.
+
+    dP = pdf(z) / total_sd * weight * dln(S), and ln(S) moves sigma per
+    sqrt(second). Inside the final window the spot's weight shrinks, but the
+    remaining uncertainty shrinks faster: near the strike P(Up) moves about
+    sqrt(3) times FASTER than under single-price settlement. The last minute
+    of a TWAP market is the most dangerous time to have quotes out.
+    """
+    if spot <= 0 or strike <= 0 or sigma_per_sqrt_s <= 0:
+        return 0.0
+    expected, sd, weight = twap_distribution(spot, seconds_left, sigma_per_sqrt_s, window_s, observed_avg)
+    total_sd = math.sqrt(sd * sd + basis_sd * basis_sd)
+    if total_sd <= 0:
+        return 0.0
+    z = math.log(expected / strike) / total_sd
+    return math.exp(-0.5 * z * z) / math.sqrt(2 * math.pi) / total_sd * weight * sigma_per_sqrt_s
+
+
 def prob_vol_1s(spot: float, strike: float, seconds_left: float, sigma_per_sqrt_s: float) -> float:
     """How much P(Up) moves (1 sd) in one second.
 

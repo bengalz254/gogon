@@ -14,7 +14,7 @@ import math
 import random
 
 from updown.markets import WindowMarket, window_start
-from updown.model import fair_prob_up
+from updown.model import fair_prob_up, fair_prob_up_twap
 from updown.strategy import DOWN, UP, Book
 
 
@@ -30,7 +30,9 @@ class SimWorld:
         feed_basis: float = 0.0004,
         window_seconds: int = 300,
         noise_flow: float = 0.3,
+        twap_window: int = 60,
     ):
+        self.twap_window = twap_window
         self.noise_flow = noise_flow  # chance per second per token of an uninformed trade
         self.rng = random.Random(seed)
         self.sigma = sigma
@@ -60,13 +62,27 @@ class SimWorld:
         self.now = t
         return self.oracle[t] * (1 + self.feed_basis)
 
+    def twap(self, t: int) -> float | None:
+        """The oracle's TWAP at second t: average over the last twap_window seconds
+        (the settlement rule since Aug 2026). With twap_window 0, the price at t."""
+        w = self.twap_window
+        if w <= 0:
+            return self.oracle.get(t)
+        pts = [self.oracle[s] for s in range(t - w + 1, t + 1) if s in self.oracle]
+        return sum(pts) / len(pts) if pts else None
+
     def market_prob_up(self, start: int) -> float:
         """Market maker's quote for Up: fair value computed from a stale price, plus noise.
         Cached per second so both books agree within a tick."""
         key = (start, int(self.now))
         if key not in self._mm_quote:
             stale_t = max(start, int(self.now - self.lag_s))
-            p = fair_prob_up(self.oracle[stale_t], self.oracle[start], start + self.window_seconds - self.now, self.sigma)
+            end = start + self.window_seconds
+            left = end - self.now
+            w = self.twap_window
+            seen = [self.oracle[s] for s in range(end - w + 1, stale_t + 1) if s in self.oracle] if w > 0 else []
+            p = fair_prob_up_twap(self.oracle[stale_t], self.twap(start), left, self.sigma, w,
+                                  observed_avg=sum(seen) / len(seen) if seen else None)
             p += self.rng.gauss(0, self.mm_noise)
             self._mm_quote[key] = min(0.98, max(0.02, p))
         return self._mm_quote[key]
@@ -85,7 +101,7 @@ class SimGateway:
             slug=f"{asset}-updown-5m-{start}",
             condition_id=f"sim-{asset}-{start}",
             tokens={UP: f"{asset}-{start}-up", DOWN: f"{asset}-{start}-down"},
-            price_to_beat=self.world.oracle.get(start),
+            price_to_beat=self.world.twap(start) if start in self.world.oracle else None,
         )
         self._markets[wm.tokens[UP]] = wm
         self._markets[wm.tokens[DOWN]] = wm
@@ -128,16 +144,15 @@ class SimGateway:
         return out
 
     def resolution(self, wm: WindowMarket) -> str | None:
-        end_price = self.world.oracle.get(wm.end)
-        if end_price is None:
+        if wm.end not in self.world.oracle:
             return None
-        return UP if end_price >= self.world.oracle[wm.start] else DOWN
+        return UP if self.world.twap(wm.end) >= self.world.twap(wm.start) else DOWN
 
 
 def run_simulation(engine, world: SimWorld, history, windows: int, asset: str = "btc", t0: int = 1_800_000_000) -> None:
     """Drive the engine second by second through `windows` windows (no sleeping)."""
-    start = window_start(t0, world.window_seconds) - 30
-    end = start + 30 + windows * world.window_seconds + 30
+    start = window_start(t0, world.window_seconds) - 90  # room for the opening 60s TWAP
+    end = start + 90 + windows * world.window_seconds + 30
     for t in range(start, end):
         price = world.step(t)
         history.add(asset, float(t), price)

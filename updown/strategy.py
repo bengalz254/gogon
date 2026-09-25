@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from updown.config import FeeConfig, ModelConfig, SizingConfig, StrategyConfig
-from updown.model import fair_prob_up, kelly_fraction, taker_fee_per_share
+from updown.model import fair_prob_up, fair_prob_up_twap, kelly_fraction, taker_fee_per_share
 
 UP = "Up"
 DOWN = "Down"
@@ -59,6 +59,8 @@ class Snapshot:
     seconds_left: float
     sigma: float
     books: dict[str, Book]  # keyed by UP / DOWN
+    # Average price so far inside the closing TWAP window (None before it starts).
+    twap_so_far: float | None = None
 
 
 @dataclass
@@ -95,6 +97,17 @@ class UpDownStrategy:
         return taker_fee_per_share(price, self.fees.fee_rate, self.fees.fee_exponent)
 
     def prob_up(self, snap: Snapshot, sigma_scale: float = 1.0) -> float:
+        if self.model.twap_window_s > 0:
+            return fair_prob_up_twap(
+                snap.spot,
+                snap.strike,
+                snap.seconds_left,
+                snap.sigma * sigma_scale,
+                self.model.twap_window_s,
+                observed_avg=snap.twap_so_far,
+                basis_sd=self.model.basis_sd,
+                vol_multiplier=self.model.vol_multiplier,
+            )
         return fair_prob_up(
             snap.spot,
             snap.strike,

@@ -25,6 +25,10 @@ class ModelConfig:
     vol_uncertainty: float = 0.3
     # Uncertainty (as a log return) between our feed and the settling oracle.
     basis_sd: float = 0.00015
+    # Settlement is a Chainlink TWAP over this many seconds, at the open (the
+    # price to beat) and at the close. 60 for 5-minute markets since
+    # 14 Aug 2026. 0 = old single-price settlement.
+    twap_window_s: float = 60.0
 
 
 @dataclass

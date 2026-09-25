@@ -35,6 +35,31 @@ class PriceHistory:
             q = self._samples.get(asset)
             return q[-1] if q else None
 
+    def twap(self, asset: str, t0: float, t1: float, min_coverage: float = 0.8) -> float | None:
+        """Time-weighted average price over [t0, t1] (each sample holds until
+        the next). None if our samples cover less than `min_coverage` of it."""
+        if t1 <= t0:
+            return None
+        with self._lock:
+            q = self._samples.get(asset)
+            samples = list(q) if q else []
+        if not samples:
+            return None
+        i = max(0, bisect.bisect_right([s[0] for s in samples], t0) - 1)
+        total = covered = 0.0
+        for j in range(i, len(samples)):
+            ts, price = samples[j]
+            nxt = samples[j + 1][0] if j + 1 < len(samples) else t1
+            a, b = max(ts, t0), min(nxt, t1)
+            if b > a:
+                total += price * (b - a)
+                covered += b - a
+            if ts >= t1:
+                break
+        if covered < min_coverage * (t1 - t0):
+            return None
+        return total / covered
+
     def price_near(self, asset: str, ts: float, before_s: float, after_s: float) -> float | None:
         """Last price at/before `ts` (within before_s); failing that, the first
         one after it (within after_s). A feed that hiccups right at a window's

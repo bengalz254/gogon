@@ -128,7 +128,7 @@ def run_maker(winner):
     history = PriceHistory()
     engine = UpDownEngine(s, gw, PaperBroker(), history, journal=None, settle_fallback_s=30)
     engine.vol["btc"].seed(1e-4)
-    for t in range(T0 - 5, T0 + 300 + 20):
+    for t in range(T0 - 65, T0 + 300 + 20):
         gw.now = t
         history.add("btc", float(t), 100.0)
         engine.tick(float(t))
@@ -208,7 +208,7 @@ def test_report_splits_maker_pnl_into_pairs_and_unpaired(tmp_path, capsys, monke
     history = PriceHistory()
     engine = UpDownEngine(s, gw, PaperBroker(), history, TradeJournal(str(tmp_path / "t.csv")), settle_fallback_s=30)
     engine.vol["btc"].seed(1e-4)
-    for t in range(T0 - 5, T0 + 300 + 20):
+    for t in range(T0 - 65, T0 + 300 + 20):
         gw.now = t
         history.add("btc", float(t), 100.0)
         engine.tick(float(t))

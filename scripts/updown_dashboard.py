@@ -78,7 +78,7 @@ def run_demo(source: StateSource, speed: float, warmup_windows: int, seed: int) 
     # Fast-forward some history so the page isn't empty, then go real time,
     # landing a little way into a fresh window.
     now = int(time.time())
-    t = window_start(now, 300) - warmup_windows * 300 - 5
+    t = window_start(now, 300) - warmup_windows * 300 - 65
     target = window_start(now, 300) + 20
     while t < target:
         step(t)

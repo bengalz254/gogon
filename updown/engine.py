@@ -23,7 +23,7 @@ from updown.config import UpDownSettings
 from updown.feeds import PriceHistory
 from updown.maker import FastMoveGuard, MakerQuoter, PaperMakerBroker
 from updown.markets import WindowMarket, window_start
-from updown.model import VolEstimator, prob_vol_1s
+from updown.model import VolEstimator, prob_vol_1s, twap_prob_vol_1s
 from updown.risk import UpDownRisk
 from updown.strategy import DOWN, UP, Snapshot, UpDownStrategy, WindowPosition
 
@@ -168,9 +168,18 @@ class UpDownEngine:
             # "price to beat": settlement compares oracle-end vs oracle-start,
             # so comparing feed-now vs feed-start cancels the constant gap
             # between the two sources. Mixing sources would bake it in.
-            st.strike = self.history.price_near(st.asset, st.start, STRIKE_TOLERANCE_S, STRIKE_LATE_S)
+            w = self.s.model.twap_window_s
+            if w > 0:
+                # The price to beat is the Chainlink TWAP at the open: the
+                # average over the W seconds before it. Rebuild it from our feed.
+                st.strike = self.history.twap(st.asset, st.start - w, st.start)
+            else:
+                st.strike = self.history.price_near(st.asset, st.start, STRIKE_TOLERANCE_S, STRIKE_LATE_S)
             if st.strike is None:
-                st.skip_reason = "no feed price at window open (bot started mid-window?)"
+                st.skip_reason = (
+                    f"not enough feed history for the opening {w:.0f}s TWAP (bot started recently?)" if w > 0
+                    else "no feed price at window open (bot started mid-window?)"
+                )
                 logger.info("[%s] skipping window %d: %s", st.asset, st.start, st.skip_reason)
         if st.market is None and not st.skip_reason and now - st.last_discovery_try >= DISCOVERY_RETRY_S:
             st.last_discovery_try = now
@@ -195,6 +204,20 @@ class UpDownEngine:
                     st.asset, st.start, st.market.slug, st.strike,
                     f" | polymarket price_to_beat={ptb:.2f} (gap {ptb - st.strike:+.2f})" if ptb else "",
                 )
+
+    def twap_so_far(self, st: WindowState, now: float) -> float | None:
+        """Average price so far inside the closing TWAP window, once it has started."""
+        w = self.s.model.twap_window_s
+        opens = st.end - w
+        if w <= 0 or now <= opens + 1:
+            return None
+        return self.history.twap(st.asset, opens, min(now, st.end), min_coverage=0.5)
+
+    def snapshot(self, st: WindowState, now: float, spot: float, books: dict) -> Snapshot:
+        return Snapshot(
+            spot=spot, strike=st.strike, seconds_left=st.end - now, sigma=self.vol[st.asset].sigma,
+            books=books, twap_so_far=self.twap_so_far(st, now),
+        )
 
     def _record_track(self, st: WindowState, now: float) -> None:
         latest = self.history.latest(st.asset)
@@ -234,7 +257,7 @@ class UpDownEngine:
         if books[UP] is None or books[DOWN] is None:
             st.why = "order book unavailable this tick"
             return
-        snap = Snapshot(spot=latest[1], strike=st.strike, seconds_left=seconds_left, sigma=self.vol[st.asset].sigma, books=books)
+        snap = self.snapshot(st, now, latest[1], books)
         side = self._side_exposure()
         cap = self.s.sizing.max_same_direction_usd
         side_room = {o: max(0.0, cap - side[o]) for o in (UP, DOWN)}
@@ -344,8 +367,12 @@ class UpDownEngine:
             st.why = reason
             return
 
-        snap = Snapshot(spot=latest[1], strike=st.strike, seconds_left=seconds_left, sigma=self.vol[st.asset].sigma, books=books)
-        pv = prob_vol_1s(latest[1], st.strike, seconds_left, self.vol[st.asset].sigma)
+        snap = self.snapshot(st, now, latest[1], books)
+        m = self.s.model
+        if m.twap_window_s > 0:
+            pv = twap_prob_vol_1s(latest[1], st.strike, seconds_left, self.vol[st.asset].sigma, m.twap_window_s, snap.twap_so_far, m.basis_sd)
+        else:
+            pv = prob_vol_1s(latest[1], st.strike, seconds_left, self.vol[st.asset].sigma)
         targets, why = self.quoter.targets(books, st.pos, self.strategy.prob_up(snap), pv)
         for o in (UP, DOWN):
             mb.sync(tokens[o], o, targets[o], now)
@@ -404,7 +431,9 @@ class UpDownEngine:
                 logger.warning("[%s] resolution lookup failed for %s: %s", st.asset, st.market.slug, exc)
             source = "polymarket"
             if outcome is None and now - st.end >= self.settle_fallback_s:
-                end_price = self.history.price_near(st.asset, st.end, STRIKE_TOLERANCE_S, STRIKE_LATE_S)
+                w = self.s.model.twap_window_s
+                end_price = (self.history.twap(st.asset, st.end - w, st.end) if w > 0
+                             else self.history.price_near(st.asset, st.end, STRIKE_TOLERANCE_S, STRIKE_LATE_S))
                 if end_price is None:
                     continue
                 outcome = UP if end_price >= st.strike else DOWN

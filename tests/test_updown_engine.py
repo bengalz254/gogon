@@ -69,8 +69,13 @@ def make(gateway, tmp_path=None, **sizing):
 
 
 def price_path(t):
-    # Flat at 100 until 150s into the window, then +0.1%: Up becomes ~90% likely.
-    return 100.0 if (t - T0) % 300 < 150 else 100.1
+    # A staircase: each window sits at its base for 150s, then steps up 0.1
+    # (+0.1%, Up becomes ~90% likely) and stays there. The next window's
+    # base is that top, so its opening TWAP (the strike) equals its base:
+    # window T0 has strike 100.0, window T0+300 has 100.1, and so on.
+    k = (t - T0) // 300
+    base = 100.0 + 0.1 * k
+    return base if (t - T0) % 300 < 150 else base + 0.1
 
 
 def test_skips_window_it_joined_midway_and_trades_the_next(tmp_path):
@@ -80,12 +85,12 @@ def test_skips_window_it_joined_midway_and_trades_the_next(tmp_path):
     first = engine.windows[("btc", T0)]
     second = engine.windows[("btc", T0 + 300)]
     assert first.skip_reason and first.pos.entries == 0
-    assert second.strike == 100.0 and second.pos.entries >= 1
+    assert second.strike == pytest.approx(100.1) and second.pos.entries >= 1
 
 
 def test_winning_window_pnl_and_journal_match_dashboard(tmp_path):
     engine, history = make(FakeGateway(winner=UP), tmp_path)
-    run(engine, history, price_path, T0 - 5, T0 + 300 + 20)
+    run(engine, history, price_path, T0 - 65, T0 + 300 + 20)
     st = engine.stats
     assert st.windows_traded == 1 and st.wins == 1
     w = engine.windows[("btc", T0)]
@@ -104,7 +109,7 @@ def test_losing_window_and_daily_loss_stop(tmp_path):
     gw = FakeGateway(winner=DOWN)
     engine, history = make(gw)
     engine.risk = UpDownRisk(RiskLimitsConfig(max_daily_loss_usd=6, max_consecutive_losses=99))
-    run(engine, history, price_path, T0 - 5, T0 + 3 * 300 + 20)
+    run(engine, history, price_path, T0 - 65, T0 + 3 * 300 + 20)
     assert engine.stats.losses >= 1
     assert engine.stats.pnl_usd < 0
     # Never lose more than the daily limit plus one window's max exposure.
@@ -116,7 +121,7 @@ def test_losing_window_and_daily_loss_stop(tmp_path):
 
 def test_settles_from_own_feed_when_polymarket_is_slow():
     engine, history = make(FakeGateway(resolved=False))
-    run(engine, history, price_path, T0 - 5, T0 + 300 + 10)
+    run(engine, history, price_path, T0 - 65, T0 + 300 + 10)
     assert engine.stats.windows_traded == 0  # still waiting for Polymarket
     run(engine, history, price_path, T0 + 300 + 10, T0 + 300 + 45)
     assert engine.stats.windows_traded == 1 and engine.stats.wins == 1
@@ -135,12 +140,28 @@ def test_stale_feed_blocks_trading():
 def test_does_not_poll_books_before_trading_slice():
     gw = FakeGateway()
     engine, history = make(gw)
-    run(engine, history, lambda t: 100.0, T0 - 5, T0 + 55)
+    run(engine, history, lambda t: 100.0, T0 - 65, T0 + 55)
     assert gw.book_calls == 0
 
 
-def test_strike_survives_a_feed_hiccup_at_the_open():
+def test_strike_is_the_twap_of_the_minute_before_the_open():
     engine, history = make(FakeGateway())
+    for t in range(T0 - 60, T0):
+        history.add("btc", float(t), 100.0 if t < T0 - 30 else 102.0)  # half at 100, half at 102
+    engine.tick(float(T0 + 1))
+    assert engine.windows[("btc", T0)].strike == pytest.approx(101.0)
+
+    engine2, history2 = make(FakeGateway())
+    for t in range(T0 - 20, T0):  # only 20s of history: can't rebuild a 60s TWAP
+        history2.add("btc", float(t), 100.0)
+    engine2.tick(float(T0 + 1))
+    assert engine2.windows[("btc", T0)].skip_reason
+
+
+def test_strike_survives_a_feed_hiccup_at_the_open():
+    # Snapshot settlement (twap_window_s = 0): first tick shortly after the open is fine.
+    engine, history = make(FakeGateway())
+    engine.s.model.twap_window_s = 0
     # last tick 10s before the open, then nothing until 3s after it
     history.add("btc", float(T0 - 10), 99.0)
     history.add("btc", float(T0 + 3), 100.0)
@@ -148,6 +169,7 @@ def test_strike_survives_a_feed_hiccup_at_the_open():
     assert engine.windows[("btc", T0)].strike == 100.0
 
     engine2, history2 = make(FakeGateway())
+    engine2.s.model.twap_window_s = 0
     history2.add("btc", float(T0 - 10), 99.0)
     history2.add("btc", float(T0 + 6), 100.0)  # too late to trust as the open
     engine2.tick(float(T0 + 6))
@@ -156,7 +178,7 @@ def test_strike_survives_a_feed_hiccup_at_the_open():
 
 def test_entries_in_a_window_are_spaced_out():
     engine, history = make(FakeGateway())
-    run(engine, history, price_path, T0 - 5, T0 + 300 + 20)
+    run(engine, history, price_path, T0 - 65, T0 + 300 + 20)
     buys = [e["ts"] for e in engine.events if e["kind"] == "BUY" and e["window"] == T0]
     assert len(buys) == 2
     assert buys[1] - buys[0] >= engine.s.strategy.min_seconds_between_entries
@@ -173,6 +195,6 @@ def test_market_lookup_errors_do_not_stop_the_bot():
             return super().discover(asset, start)
 
     engine, history = make(Flaky())
-    run(engine, history, price_path, T0 - 5, T0 + 300 + 20)
+    run(engine, history, price_path, T0 - 65, T0 + 300 + 20)
     assert engine.windows[("btc", T0)].market is not None
     assert engine.stats.windows_traded == 1

@@ -72,7 +72,7 @@ def test_seven_coins_trade_independently_with_one_book_request_per_tick():
         engine.vol[a].seed(sim.worlds[a].sigma)
     t0 = window_start(1_800_000_000, 300)
     ticks_in_zone = 0
-    for t in range(t0 - 5, t0 + 3 * 300 + 30):
+    for t in range(t0 - 65, t0 + 3 * 300 + 30):
         step_multi(engine, sim, history, t)
         if 60 <= (t - t0) % 300 < 300 and t >= t0:
             ticks_in_zone += 1

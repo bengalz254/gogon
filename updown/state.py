@@ -73,7 +73,7 @@ def _asset_view(engine, asset: str, now: float) -> dict:
     view["track"] = [[round(t, 2), p] for t, p in track]
 
     if st.strike and latest and view["seconds_left"] > 0:
-        snap = Snapshot(spot=latest[1], strike=st.strike, seconds_left=view["seconds_left"], sigma=sigma, books=st.books or {})
+        snap = engine.snapshot(st, now, latest[1], st.books or {})
         strat = engine.strategy
         view["p_up"] = strat.prob_up(snap)
         cons = strat.conservative_probs(snap)
