@@ -171,6 +171,21 @@ network you trust.
 The older `python scripts/dashboard.py` still shows the engine's fills and
 settlements too.
 
+### Windows: double-click instead of typing
+
+The repo root has four launchers. Each opens its own window and uses the
+`venv` folder when it exists:
+
+| File | What it does |
+|---|---|
+| `update.bat` | `git pull`, then shows the current version |
+| `start_bot.bat` | runs `python -m bot.updown --record` |
+| `start_dashboard.bat` | runs the live dashboard (http://127.0.0.1:8766) |
+| `check_log.bat` | shows the recent connection events from `logs/bot.log` and copies them to the clipboard |
+
+Stop the bot with `Ctrl+C` in its window (answer `Y` if Windows asks
+"Terminate batch job?").
+
 **Going live needs two opt-ins:** `LIVE_TRADING=true` in `.env` *and*
 `execution.allow_live: true` in `config/updown.yaml`. Don't do it until
 `updown_report.py` shows, over at least a few hundred paper windows, that
