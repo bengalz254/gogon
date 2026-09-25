@@ -63,14 +63,14 @@ fees:
   maker_rate: 0.0
 
 risk:
-  bankroll_usd: 200                 # sizing base (grows/shrinks with realized P&L)
+  bankroll_usd: 500                 # sizing base (grows/shrinks with realized P&L)
   kelly_fraction: 0.15              # fraction of full Kelly
   max_usd_per_trade: 10
   max_usd_per_window: 20
   max_total_exposure_usd: 80
   max_slot_direction_usd: 40        # same direction across coins in one slot (correlation!)
   max_open_windows: 8
-  max_daily_loss_usd: 30            # kill switch until UTC midnight
+  max_daily_loss_usd: 250           # kill switch until UTC midnight
   max_consecutive_losses: 4         # per strategy -> cooldown
   cooldown_s_after_streak: 900
   loss_streak_decay: 0.75           # size x0.75 per consecutive loss. Never > 1 (no martingale).
