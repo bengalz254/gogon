@@ -64,6 +64,53 @@ class StrategyConfig:
 
 
 @dataclass
+class MakerConfig:
+    """Market-making mode: rest post-only bids on BOTH Up and Down.
+
+    One Up + one Down always pays exactly $1, so a filled pair bought for
+    less than $1 is locked-in profit whatever happens. The risk is filling
+    only one side while the price runs; everything below limits that.
+    """
+
+    # Quote from this many seconds after the open...
+    quote_start_s: float = 15.0
+    # ...until this many seconds are left. Late in the window the outcome is
+    # nearly decided and whoever trades with us usually knows more.
+    stop_quoting_s: float = 60.0
+    # Bid this far below the market's fair price on each side.
+    half_spread: float = 0.03
+    tick: float = 0.01
+    quote_shares: float = 10.0
+    # Inventory limits per window.
+    max_side_shares: float = 40.0
+    max_imbalance_shares: float = 10.0
+    # Lean quotes toward completing pairs: per share of imbalance, lower the
+    # heavy side's bid and raise the light side's by this much.
+    skew_per_share: float = 0.002
+    # Widen the spread with how fast the probability moves: at least
+    # vol_spread_mult x (1-second probability move) x sqrt(reaction_s).
+    vol_spread_mult: float = 2.5
+    # Seconds between a price move and our quote catching up (tick + API).
+    reaction_s: float = 2.0
+    # A bid that completes a pair must leave at least this profit per pair.
+    pair_margin: float = 0.02
+    min_price: float = 0.15
+    max_price: float = 0.85
+    # Don't churn orders: move a quote at most this often, and only if the
+    # target moved by at least this many ticks.
+    requote_s: float = 3.0
+    requote_ticks: int = 1
+    # Pull all quotes on a coin for a while after a sharp move in its price
+    # (|move| over fast_move_window_s bigger than fast_move_z sigmas).
+    fast_move_z: float = 3.0
+    fast_move_window_s: float = 5.0
+    fast_move_cooldown_s: float = 15.0
+    # Our model vs the market's price: if they disagree by more than this,
+    # something is off (or the market knows something), so stay out.
+    max_model_gap: float = 0.25
+
+
+@dataclass
 class SizingConfig:
     bankroll_usd: float = 100.0
     # Fraction of full Kelly to bet. Full Kelly is too aggressive for a model
@@ -114,6 +161,10 @@ class UpDownSettings:
     sizing: SizingConfig = field(default_factory=SizingConfig)
     risk: RiskLimitsConfig = field(default_factory=RiskLimitsConfig)
     feed: FeedConfig = field(default_factory=FeedConfig)
+    # "maker": rest bids on both sides (see MakerConfig). "taker": buy
+    # mispriced asks outright (the original strategy).
+    mode: str = "maker"
+    maker: MakerConfig = field(default_factory=MakerConfig)
 
 
 # Where each asset's live price comes from. Binance spot where it's listed;
@@ -187,7 +238,11 @@ def load_updown_settings(config_path: str | None = None, env_path: str | None = 
         sizing=_section(SizingConfig, raw.get("sizing")),
         risk=_section(RiskLimitsConfig, raw.get("risk")),
         feed=_section(FeedConfig, raw.get("feed")),
+        mode=str(raw.get("mode", "maker")).lower(),
+        maker=_section(MakerConfig, raw.get("maker")),
     )
+    if settings.mode not in ("maker", "taker"):
+        raise ValueError("mode must be 'maker' or 'taker'")
     s = settings.strategy
     if not (0 <= s.min_seconds_left < s.max_seconds_left <= settings.window_seconds):
         raise ValueError("strategy: need 0 <= min_seconds_left < max_seconds_left <= window_seconds")

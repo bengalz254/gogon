@@ -57,3 +57,32 @@ feed:
   binance_host: "https://api.binance.com"   # US: https://api.binance.us
   poll_seconds: 1.0
   max_age_s: 3.0
+
+# ---------------------------------------------------------------------------
+# Strategy mode.
+#   maker: rest post-only bids on BOTH Up and Down; a filled pair (1 Up +
+#          1 Down) always pays $1, so pairs bought under $1 are locked profit.
+#          Makers pay no fee. (default)
+#   taker: the original fair-value strategy (buys mispriced asks, pays fees).
+mode: maker
+
+maker:
+  quote_start_s: 15        # start quoting this long after the window opens
+  stop_quoting_s: 60       # pull all bids with this many seconds left
+  half_spread: 0.03        # minimum distance below fair price, each side
+  vol_spread_mult: 2.5     # ...widened with how fast the probability moves
+  reaction_s: 2.0          # our reaction time used for that widening
+  tick: 0.01
+  quote_shares: 10         # shares per bid
+  max_side_shares: 40      # per window, per side
+  max_imbalance_shares: 10 # max unpaired shares (Up - Down or Down - Up)
+  skew_per_share: 0.002    # lean bids toward completing pairs
+  pair_margin: 0.02        # a pair must cost at most 1 - this
+  min_price: 0.15         # only quote while the market is still undecided
+  max_price: 0.85
+  requote_s: 3             # raise a bid at most this often (lowering is instant)
+  requote_ticks: 1
+  fast_move_z: 3.0         # pull bids after a move this many sigmas...
+  fast_move_window_s: 5    # ...within this many seconds...
+  fast_move_cooldown_s: 15 # ...for this long
+  max_model_gap: 0.25      # stay out if our model and the market disagree this much

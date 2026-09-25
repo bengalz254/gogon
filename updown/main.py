@@ -31,18 +31,23 @@ def run_live(settings, logger) -> None:
     from updown.markets import PolymarketGateway
     from updown.state import build_state, write_state
 
+    from updown.maker import LiveMakerBroker, PaperMakerBroker
+
     live = settings.wallet.live_trading
-    logger.info("Starting 5-minute Up/Down bot | assets=%s | live_trading=%s", settings.assets, live)
+    logger.info("Starting 5-minute Up/Down bot | mode=%s | assets=%s | live_trading=%s", settings.mode, settings.assets, live)
     if live:
         logger.warning("*** LIVE TRADING ENABLED *** Real orders with real funds. Ctrl+C to stop.")
-        broker = LiveBroker(build_client(settings.wallet))
+        client = build_client(settings.wallet)
+        broker = LiveBroker(client)
+        maker_broker = LiveMakerBroker(settings.maker, client)
     else:
         logger.info("PAPER mode: real prices and order books, simulated fills. No orders are sent.")
         broker = PaperBroker()
+        maker_broker = PaperMakerBroker(settings.maker)
 
     history = PriceHistory()
     gateway = PolymarketGateway(settings.gamma_host, settings.wallet.clob_host, settings.slug_template, settings.window_seconds)
-    engine = UpDownEngine(settings, gateway, broker, history, TradeJournal(settings.journal_path))
+    engine = UpDownEngine(settings, gateway, broker, history, TradeJournal(settings.journal_path), maker_broker=maker_broker)
 
     feeds = build_feeds(settings.assets, settings.feed, history, on_tick=engine.on_price)
     for asset in settings.assets:
@@ -68,6 +73,9 @@ def run_live(settings, logger) -> None:
 
     for feed in set(feeds.values()):
         feed.stop()
+    if maker_broker.orders:
+        logger.info("Cancelling %d resting order(s) before exit", len(maker_broker.orders))
+        maker_broker.cancel_all(list(maker_broker.orders))
     st = engine.stats
     logger.info(
         "Stopped. %d windows traded (%dW/%dL), P&L $%+.2f, fees $%.2f. Open positions are still on Polymarket and settle on their own.",

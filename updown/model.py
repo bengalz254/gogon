@@ -47,6 +47,20 @@ def fair_prob_up(
     return norm_cdf(log_move / total_sd)
 
 
+def prob_vol_1s(spot: float, strike: float, seconds_left: float, sigma_per_sqrt_s: float) -> float:
+    """How much P(Up) moves (1 sd) in one second.
+
+    dP/dln(S) = pdf(z) / (sigma * sqrt(tau)), and ln(S) moves sigma per
+    sqrt(second), so one second moves P by pdf(z) / sqrt(tau): largest near
+    the strike and near the close.
+    """
+    tau = max(seconds_left, 1.0)
+    if spot <= 0 or strike <= 0 or sigma_per_sqrt_s <= 0:
+        return 0.0
+    z = math.log(spot / strike) / (sigma_per_sqrt_s * math.sqrt(tau))
+    return math.exp(-0.5 * z * z) / math.sqrt(2 * math.pi) / math.sqrt(tau)
+
+
 def taker_fee_per_share(price: float, fee_rate: float, fee_exponent: float) -> float:
     """Taker fee in USDC per share bought or sold at `price`.
 

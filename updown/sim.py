@@ -29,7 +29,9 @@ class SimWorld:
         half_spread: float = 0.01,
         feed_basis: float = 0.0004,
         window_seconds: int = 300,
+        noise_flow: float = 0.3,
     ):
+        self.noise_flow = noise_flow  # chance per second per token of an uninformed trade
         self.rng = random.Random(seed)
         self.sigma = sigma
         self.lag_s = lag_s
@@ -105,6 +107,26 @@ class SimGateway:
                 asks.append((ask, rng.uniform(20, 150)))
         return Book.from_raw(bids, asks)
 
+    def trades(self, condition_id: str) -> list:
+        """Uninformed takers: now and then someone sells into the best bid or
+        buys the best ask, for no reason related to the price. This is the
+        flow a market maker earns on. How much of it the real market has is
+        exactly what paper trading has to measure; here it's a guess."""
+        from updown.markets import TradePrint
+
+        wm = next((m for m in self._markets.values() if m.condition_id == condition_id), None)
+        if wm is None:
+            return []
+        rng, out = self.world.rng, []
+        for token in wm.tokens.values():
+            if rng.random() < self.world.noise_flow:
+                book = self.book(token)
+                side = "SELL" if rng.random() < 0.5 else "BUY"
+                px = book.best_bid if side == "SELL" else book.best_ask
+                if px is not None:
+                    out.append(TradePrint(token, side, px, rng.uniform(5, 40), self.world.now, f"{token}:{self.world.now}:{side}"))
+        return out
+
     def resolution(self, wm: WindowMarket) -> str | None:
         end_price = self.world.oracle.get(wm.end)
         if end_price is None:
@@ -157,6 +179,11 @@ class MultiSimGateway:
 
     def books(self, token_ids: list[str]) -> dict[str, Book]:
         return {t: self.book(t) for t in token_ids}
+
+    def trades(self, condition_id: str) -> list:
+        asset = condition_id.split("-")[1] if condition_id.startswith("sim-") else ""
+        gw = self.gateways.get(asset)
+        return gw.trades(condition_id) if gw else []
 
     def resolution(self, wm: WindowMarket) -> str | None:
         return self.gateways[wm.asset].resolution(wm)

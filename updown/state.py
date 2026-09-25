@@ -60,6 +60,9 @@ def _asset_view(engine, asset: str, now: float) -> dict:
     if not st:
         return view
 
+    mb = getattr(engine, "maker_broker", None)
+    if mb is not None and st.market:
+        view["quotes"] = {o: (mb.orders[st.market.tokens[o]].price if st.market.tokens[o] in mb.orders else None) for o in (UP, DOWN)}
     held = {o: st.pos.shares[o] for o in (UP, DOWN)}
     view["position"] = {"shares": held, "cost_usd": st.pos.total_cost_usd, "entries": st.pos.entries}
     view["fills"] = [{k: f[k] for k in ("ts", "kind", "outcome", "shares", "price", "usd", "fee", "fair")} for f in st.fills]
@@ -97,6 +100,7 @@ def build_state(engine, now: float) -> dict:
         "v": 1,
         "now": now,
         "mode": engine.mode,
+        "strategy_mode": engine.s.mode,
         "started_at": engine.started_at,
         "window_seconds": s.window_seconds,
         "config": {
@@ -108,6 +112,8 @@ def build_state(engine, now: float) -> dict:
             "vol_uncertainty": s.model.vol_uncertainty,
             "bankroll_start": s.sizing.bankroll_usd,
             "max_bet_usd": s.sizing.max_bet_usd,
+            "quote_start_s": s.maker.quote_start_s,
+            "stop_quoting_s": s.maker.stop_quoting_s,
         },
         "assets": [_asset_view(engine, a, now) for a in s.assets],
         "risk": {

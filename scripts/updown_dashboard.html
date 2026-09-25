@@ -309,7 +309,7 @@
           <svg class="axis-svg" id="prob-axis" viewBox="0 0 420 150" role="img" aria-label="Probability axis"></svg>
         </div>
         <div>
-          <div class="meter-label" style="margin-bottom:2px"><span>Edge setelah fee (worst-case vol)</span><b id="edge-need">—</b></div>
+          <div class="meter-label" style="margin-bottom:2px"><span id="edge-title">Edge setelah fee (worst-case vol)</span><b id="edge-need">—</b></div>
           <div class="edge-row"><span class="name" style="color:var(--up)">▲ UP</span><svg class="axis-svg" id="edge-up" viewBox="0 0 200 22"></svg><span class="val" id="edge-up-v">—</span></div>
           <div class="edge-row"><span class="name" style="color:var(--down)">▼ DOWN</span><svg class="axis-svg" id="edge-down" viewBox="0 0 200 22"></svg><span class="val" id="edge-down-v">—</span></div>
           <div class="kv">
@@ -508,6 +508,7 @@
     const cfg = state.config, need = cfg.min_edge;
     const pos = a.position && (a.position.shares.Up > 0 || a.position.shares.Down > 0);
     if (a.skip_reason || !a.market_found) return ["wait", a.skip_reason ? "TUNGGU" : "CARI"];
+    if (a.quotes && (a.quotes.Up != null || a.quotes.Down != null)) return ["zone", "QUOTE"];
     if (pos) return ["hold", "POSISI"];
     const e = a.edges ? Math.max(a.edges.Up ?? -1, a.edges.Down ?? -1) : null;
     if (e != null && e >= need) return ["fire", "SINYAL"];
@@ -591,19 +592,18 @@
       const close = ux != null && dx != null && Math.abs(ux - dx) < 150;
       if (ux != null) marker(svg, ux, y + 12, C.up, "▲ UP ask " + cents(b.Up.ask), 1, edgeAnchor(ux));
       if (dx != null) marker(svg, dx, y + 12, C.down, "▼ DOWN ask " + cents(b.Down.ask), close ? 2 : 1, edgeAnchor(dx));
+      const qs = view.quotes || {};
+      if (qs.Up != null) bidMark(svg, X(qs.Up), y, C.up, "bid Up " + cents(qs.Up), -1);
+      if (qs.Down != null) bidMark(svg, X(1 - qs.Down), y, C.down, "bid Down " + cents(qs.Down), 1);
       if (!b) {
         const t = el("text", { x: W / 2, y: y + 36, "text-anchor": "middle", fill: C.muted, "font-size": 11.5 }, svg);
-        t.textContent = "Order book dibaca saat zona trading dimulai (T−" + mmss(state.config.max_seconds_left) + ")";
+        t.textContent = state.strategy_mode === "maker"
+          ? "Order book dibaca 15 detik setelah window dibuka"
+          : "Order book dibaca saat zona trading dimulai (T−" + mmss(state.config.max_seconds_left) + ")";
       }
     }
-    // edges
-    const need = state.config.min_edge;
-    $("edge-need").textContent = "butuh ≥ " + need.toFixed(2);
-    edgeBar($("edge-up"), view.edges ? view.edges.Up : null, C.up, need);
-    edgeBar($("edge-down"), view.edges ? view.edges.Down : null, C.down, need);
-    const ev = (e) => e == null ? "—" : `<b>${signed(e)}</b>` + (e >= need ? ' <span class="go">✓ TEMBAK</span>' : "");
-    $("edge-up-v").innerHTML = ev(view.edges && view.edges.Up);
-    $("edge-down-v").innerHTML = ev(view.edges && view.edges.Down);
+    const maker = state.strategy_mode === "maker";
+    if (maker) renderMakerPanel(); else renderTakerEdges();
     $("kv-spot").textContent = price(view.spot);
     $("kv-strike").textContent = price(view.strike);
     $("kv-vol").textContent = view.vol_annual ? pct(view.vol_annual) : "—";
@@ -612,10 +612,42 @@
     kf.textContent = age == null ? "—" : age < 3 ? "✓ " + age.toFixed(1) + "s" : "⚠ " + age.toFixed(0) + "s";
     kf.style.color = age == null ? "" : age < 3 ? C.good : C.warn;
     const sl = view.seconds_left, cfg = state.config;
-    $("sig-sub").textContent = sl > cfg.max_seconds_left ? "scanning · zona trading dalam " + mmss(sl - cfg.max_seconds_left)
-      : sl >= cfg.min_seconds_left ? "zona trading aktif · " + mmss(sl) + " lagi" : "terkunci · menunggu settlement";
+    const zoneStart = maker ? state.window_seconds - (cfg.quote_start_s ?? 15) : cfg.max_seconds_left;
+    const zoneEnd = maker ? (cfg.stop_quoting_s ?? 60) : cfg.min_seconds_left;
+    $("sig-sub").textContent = sl > zoneStart ? "scanning · zona " + (maker ? "quote" : "trading") + " dalam " + mmss(sl - zoneStart)
+      : sl >= zoneEnd ? (maker ? "memasang bid · " : "zona trading aktif · ") + mmss(sl) + " lagi"
+      : maker ? "bid ditarik · menunggu settlement" : "terkunci · menunggu settlement";
     const why = view.skip_reason || view.why || "menunggu zona trading…";
     $("terminal").innerHTML = '<span class="prompt">radar&gt;</span> ' + esc(why) + '<span class="cursor"></span>';
+  }
+
+  function renderTakerEdges() {
+    const need = state.config.min_edge;
+    $("edge-title").textContent = "Edge setelah fee (worst-case vol)";
+    $("edge-need").textContent = "butuh ≥ " + need.toFixed(2);
+    edgeBar($("edge-up"), view.edges ? view.edges.Up : null, C.up, need);
+    edgeBar($("edge-down"), view.edges ? view.edges.Down : null, C.down, need);
+    const ev = (e) => e == null ? "—" : `<b>${signed(e)}</b>` + (e >= need ? ' <span class="go">✓ TEMBAK</span>' : "");
+    $("edge-up-v").innerHTML = ev(view.edges && view.edges.Up);
+    $("edge-down-v").innerHTML = ev(view.edges && view.edges.Down);
+  }
+
+  // Maker mode: show our resting bids and what a completed pair would cost.
+  function renderMakerPanel() {
+    const q = view.quotes || {}, pos = view.position || { shares: { Up: 0, Down: 0 } };
+    const pair = q.Up != null && q.Down != null ? q.Up + q.Down : null;
+    $("edge-title").textContent = "Bid kita · untung/pasangan";
+    $("edge-need").textContent = pair != null ? pair.toFixed(2) + " → +" + (1 - pair).toFixed(2) : "—";
+    const bar = (svg, bid, color) => {
+      svg.innerHTML = "";
+      el("rect", { x: 0, y: 7, width: 200, height: 8, rx: 4, fill: "#ffffff", "fill-opacity": 0.05 }, svg);
+      if (bid != null) el("rect", { x: 0, y: 7, width: Math.max(2, 200 * bid), height: 8, rx: 3, fill: color }, svg);
+    };
+    bar($("edge-up"), q.Up, C.up);
+    bar($("edge-down"), q.Down, C.down);
+    const v = (bid, held) => (bid != null ? `<b>${bid.toFixed(2)}</b>` : "—") + ` · ${held.toFixed(0)} sh`;
+    $("edge-up-v").innerHTML = v(q.Up, pos.shares.Up || 0);
+    $("edge-down-v").innerHTML = v(q.Down, pos.shares.Down || 0);
   }
 
   function marker(svg, x, y, color, text, row, anchor) {
@@ -624,6 +656,14 @@
     const ty = y + 12 + row * 14;
     const t = el("text", { x: anchor === "end" ? x + 6 : anchor === "start" ? x - 6 : x, y: ty, "text-anchor": anchor, fill: C.text2, "font-size": 11, "font-family": "var(--mono)" }, g);
     t.textContent = text;
+  }
+
+  // Our resting maker bid: a hollow diamond on the axis, labelled above it.
+  function bidMark(svg, x, y, color, text, dir) {
+    el("path", { d: `M${x} ${y - 6} L${x + 6} ${y} L${x} ${y + 6} L${x - 6} ${y} Z`, fill: C.panel, stroke: color, "stroke-width": 2 }, svg);
+    const W = svg.viewBox.baseVal.width;
+    const t = el("text", { x, y: y - 36 - (dir > 0 ? 12 : 0), "text-anchor": x < W * 0.22 ? "start" : x > W * 0.78 ? "end" : "middle", fill: color, "font-size": 11, "font-family": "var(--mono)" }, svg);
+    t.textContent = "◇ " + text;
   }
 
   function edgeBar(svg, e, color, need) {

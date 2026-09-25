@@ -42,7 +42,7 @@ class FakeGateway:
 
 
 def settings(**sizing):
-    s = UpDownSettings(wallet=None, assets=["btc"])
+    s = UpDownSettings(wallet=None, assets=["btc"], mode="taker")
     s.model.vol_multiplier = 1.0
     s.model.basis_sd = 0.0
     s.sizing = SizingConfig(bankroll_usd=100, kelly_fraction=0.25, max_bet_usd=5, max_window_exposure_usd=10, min_order_usd=1, **sizing)

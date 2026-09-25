@@ -38,12 +38,17 @@ def window_results(rows: list[dict]) -> dict[str, dict]:
         if r.get("strategy") != "updown_5m" or r.get("filled", "").lower() != "true":
             continue
         slug = r.get("group_id") or r.get("market_id")
-        w = out.setdefault(slug, {"coin": slug.split("-", 1)[0].upper(), "cash": 0.0, "bought": 0.0, "shares": 0.0, "settled": False, "expected": 0.0})
+        w = out.setdefault(slug, {"coin": slug.split("-", 1)[0].upper(), "cash": 0.0, "bought": 0.0, "shares": 0.0, "settled": False, "expected": 0.0,
+                                   "maker": False, "by": {"Up": [0.0, 0.0], "Down": [0.0, 0.0]}, "winner": None})
         usd, shares = float(r["size_usd"]), float(r["size_shares"])
         if r["side"] == "BUY":
             w["cash"] -= usd
             w["bought"] += usd
             w["shares"] += shares
+            if r.get("outcome") in w["by"]:
+                w["by"][r["outcome"]][0] += shares
+                w["by"][r["outcome"]][1] += usd
+            w["maker"] |= r.get("reason", "").startswith("maker")
             m = FAIR_RX.search(r.get("reason", ""))
             if m:  # what the model said these shares were worth, minus what they cost
                 w["expected"] += shares * float(m.group(1)) - usd
@@ -52,6 +57,8 @@ def window_results(rows: list[dict]) -> dict[str, dict]:
             w["shares"] -= shares
         if r.get("reason", "").startswith("settled"):
             w["settled"] = True
+            if float(r.get("price") or 0) >= 0.99:
+                w["winner"] = r.get("outcome")
     return out
 
 
@@ -102,6 +109,25 @@ def main() -> None:
                    "edges partly real; model is too optimistic" if ratio > 0.1 else
                    "edges are NOT showing up: the market likely knows something our data doesn't")
         print(f"realised / expected P&L: {ratio:+.0%}  -> {verdict}")
+
+    maker = [w for w in done.values() if w["maker"] and w["settled"] and w["winner"]]
+    if maker:
+        pair_pnl = unpaired_pnl = pairs = unpaired = 0.0
+        for w in maker:
+            (su, cu), (sd, cd) = w["by"]["Up"], w["by"]["Down"]
+            n = min(su, sd)
+            au, ad = (cu / su if su else 0.0), (cd / sd if sd else 0.0)
+            pairs += n
+            pair_pnl += n * (1 - au - ad)
+            heavy, extra, avg = ("Up", su - n, au) if su > sd else ("Down", sd - n, ad)
+            unpaired += extra
+            unpaired_pnl += extra * ((1.0 if w["winner"] == heavy else 0.0) - avg)
+        print(f"\nMAKER breakdown ({len(maker)} settled windows):")
+        print(f"  complete pairs  {pairs:8.0f} shares   P&L {pair_pnl:+9.2f}   (locked in: 1 Up + 1 Down pays $1)")
+        print(f"  unpaired        {unpaired:8.0f} shares   P&L {unpaired_pnl:+9.2f}   (one side filled alone)")
+        if pairs + unpaired > 0:
+            print(f"  paired share of fills: {pairs * 2 / (pairs * 2 + unpaired):.0%}"
+                  + ("  -> unpaired losses are eating the pair profits" if unpaired_pnl < -abs(pair_pnl) * 0.5 else ""))
 
     if os.path.exists(LOG):
         counts = defaultdict(int)

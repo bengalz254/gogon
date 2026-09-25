@@ -21,8 +21,9 @@ from bot.journal import TradeJournal
 from bot.strategies.base import Signal
 from updown.config import UpDownSettings
 from updown.feeds import PriceHistory
+from updown.maker import FastMoveGuard, MakerQuoter, PaperMakerBroker
 from updown.markets import WindowMarket, window_start
-from updown.model import VolEstimator
+from updown.model import VolEstimator, prob_vol_1s
 from updown.risk import UpDownRisk
 from updown.strategy import DOWN, UP, Snapshot, UpDownStrategy, WindowPosition
 
@@ -34,6 +35,7 @@ STRIKE_TOLERANCE_S = 2.0
 # If no tick landed just before the open, accept the first one this soon after.
 STRIKE_LATE_S = 4.0
 STATUS_LOG_EVERY_S = 30.0
+TRADES_POLL_S = 2.0
 
 
 @dataclass
@@ -58,6 +60,8 @@ class WindowState:
     why: str = ""
     fills: list[dict] = field(default_factory=list)
     last_entry_ts: float | None = None
+    trades: list = field(default_factory=list)
+    last_trades_fetch: float = -1e18
 
     @property
     def has_position(self) -> bool:
@@ -75,7 +79,7 @@ class Stats:
 
 
 class UpDownEngine:
-    def __init__(self, settings: UpDownSettings, gateway, broker, history: PriceHistory, journal: TradeJournal | None, settle_fallback_s: float = 600.0):
+    def __init__(self, settings: UpDownSettings, gateway, broker, history: PriceHistory, journal: TradeJournal | None, settle_fallback_s: float = 600.0, maker_broker=None):
         self.s = settings
         self.gateway = gateway
         self.broker = broker
@@ -89,6 +93,10 @@ class UpDownEngine:
         self.windows: dict[tuple[str, int], WindowState] = {}
         self.stats = Stats()
         self.mode = "live" if broker.live else "paper"
+        self.maker_mode = settings.mode == "maker"
+        self.quoter = MakerQuoter(settings.maker)
+        self.maker_broker = maker_broker or PaperMakerBroker(settings.maker)
+        self.fast_guard = FastMoveGuard(settings.maker)
         self.started_at: float | None = None
         self.recent_windows: deque[dict] = deque(maxlen=64 * max(1, len(settings.assets)))  # newest last
         self.asset_stats: dict[str, Stats] = {a: Stats() for a in settings.assets}
@@ -117,7 +125,10 @@ class UpDownEngine:
         books = self._fetch_books([st for st in states if self._wants_books(st, now)])
         for st in states:
             try:
-                self._trade(st, now, books)
+                if self.maker_mode:
+                    self._make(st, now, books)
+                else:
+                    self._trade(st, now, books)
                 self._record_track(st, now)
             except Exception:
                 logger.exception("[%s] error while trading window %d", st.asset, st.start)
@@ -127,6 +138,10 @@ class UpDownEngine:
         if st.market is None or st.strike is None:
             return False
         seconds_left = st.end - now
+        if self.maker_mode:
+            # From quote start until the close: books are needed to quote and,
+            # in paper mode, to see whether resting bids got hit.
+            return 0 < seconds_left and now - st.start >= self.s.maker.quote_start_s
         # Before the trading slice there's nothing to do; don't spend API calls.
         return 0 < seconds_left and (seconds_left <= self.s.strategy.max_seconds_left or st.has_position)
 
@@ -212,8 +227,8 @@ class UpDownEngine:
                 logger.warning("[%s] price feed stale; not trading", st.asset)
             return
 
-        allowed, why_not = self.risk.can_trade(now)
-        room = max(0.0, self.risk.room_usd(now) - self._open_exposure()) if allowed else 0.0
+        allowed, why_not = self.risk.can_trade(now, st.asset)
+        room = max(0.0, self.risk.room_usd(now, st.asset) - self._open_exposure()) if allowed else 0.0
 
         books = {o: all_books.get(st.market.tokens[o]) for o in (UP, DOWN)}
         if books[UP] is None or books[DOWN] is None:
@@ -279,6 +294,91 @@ class UpDownEngine:
         self._journal(st, decision.side, decision.outcome, decision.limit_price,
                       f.shares, f.usd + fee, filled, decision.reason)
 
+    # -- market making ------------------------------------------------------
+    def _make(self, st: WindowState, now: float, all_books: dict) -> None:
+        mb = self.maker_broker
+        tokens = {o: st.market.tokens[o] for o in (UP, DOWN)} if st.market else {}
+        if not tokens:
+            return
+        seconds_left = st.end - now
+        books = {o: all_books.get(tokens[o]) for o in (UP, DOWN)}
+
+        # 1. Fills on the bids we already have out.
+        resting = any(t in mb.orders for t in tokens.values())
+        if resting and not mb.live and hasattr(self.gateway, "trades") and now - st.last_trades_fetch >= TRADES_POLL_S:
+            st.last_trades_fetch = now
+            try:
+                st.trades = self.gateway.trades(st.market.condition_id)
+            except Exception as exc:
+                st.trades = []
+                if now - st.last_status_log >= STATUS_LOG_EVERY_S:
+                    logger.warning("[%s] trade feed unavailable (%s); paper fills from book crossings only", st.asset, _short(exc))
+        for o in (UP, DOWN):
+            for f in mb.fills(tokens[o], books[o], now, st.trades):
+                self._apply_maker_fill(st, now, f, books)
+
+        # 2. Where we want to be now.
+        if not self._wants_books(st, now) or seconds_left < self.s.maker.stop_quoting_s:
+            mb.cancel_all(list(tokens.values()))
+            if 0 < seconds_left < self.s.maker.stop_quoting_s:
+                st.why = f"quotes pulled for the last {self.s.maker.stop_quoting_s:.0f}s; holding to settlement"
+            return
+        latest = self.history.latest(st.asset)
+        reason = ""
+        if latest is None or now - latest[0] > self.s.feed.max_age_s:
+            reason = "price feed stale"
+        elif books[UP] is None or books[DOWN] is None:
+            reason = "order book unavailable"
+        else:
+            allowed, why_not = self.risk.can_trade(now, st.asset)
+            room = max(0.0, self.risk.room_usd(now, st.asset) - self._open_exposure()) if allowed else 0.0
+            then = self.history.price_at(st.asset, latest[0] - self.s.maker.fast_move_window_s, 2.0)
+            if not allowed:
+                reason = why_not
+            elif room < self.s.maker.quote_shares * 0.5:
+                reason = f"no risk room (${room:.2f})"
+            elif self.fast_guard.check(st.asset, now, latest[1], then, self.vol[st.asset].sigma):
+                reason = "sharp move: quotes pulled for a moment"
+        if reason:
+            mb.cancel_all(list(tokens.values()))
+            st.why = reason
+            return
+
+        snap = Snapshot(spot=latest[1], strike=st.strike, seconds_left=seconds_left, sigma=self.vol[st.asset].sigma, books=books)
+        pv = prob_vol_1s(latest[1], st.strike, seconds_left, self.vol[st.asset].sigma)
+        targets, why = self.quoter.targets(books, st.pos, self.strategy.prob_up(snap), pv)
+        for o in (UP, DOWN):
+            mb.sync(tokens[o], o, targets[o], now)
+        st.books = books
+        st.why = why + (f" | holding Up {st.pos.shares[UP]:.0f} / Down {st.pos.shares[DOWN]:.0f}" if st.has_position else "")
+        if now - st.last_status_log >= STATUS_LOG_EVERY_S:
+            st.last_status_log = now
+            logger.info("[%s] %3.0fs left | market P(up)=%.2f | %s", st.asset, seconds_left,
+                        self.quoter.market_fair_up(books) or float("nan"), st.why)
+
+    def _apply_maker_fill(self, st: WindowState, now: float, f, books: dict) -> None:
+        usd = f.price * f.shares  # makers pay no fee
+        st.pos.shares[f.outcome] += f.shares
+        st.pos.cost_usd[f.outcome] += usd
+        st.pos.entries += 1
+        st.last_entry_ts = now
+        st.cash_usd -= usd
+        self.stats.orders += 1
+        self.asset_stats[st.asset].orders += 1
+        mid = books[f.outcome].mid if books.get(f.outcome) else None
+        paired = min(st.pos.shares[UP], st.pos.shares[DOWN])
+        reason = f"maker bid filled @ {f.price:.2f} (mid {mid:.2f})" if mid is not None else f"maker bid filled @ {f.price:.2f}"
+        reason += f"; pairs {paired:.0f}, Up {st.pos.shares[UP]:.0f} / Down {st.pos.shares[DOWN]:.0f}"
+        event = {
+            "ts": now, "asset": st.asset, "window": st.start, "kind": "BUY", "outcome": f.outcome,
+            "shares": f.shares, "price": f.price, "usd": usd, "fee": 0.0, "fair": mid if mid is not None else f.price,
+            "reason": reason,
+        }
+        st.fills.append(event)
+        self.events.append(event)
+        logger.info("[%s][%s] MAKER BUY %.2f %s @ %.2f | %s", self.mode.upper(), st.asset, f.shares, f.outcome, f.price, reason)
+        self._journal(st, "BUY", f.outcome, f.price, f.shares, usd, True, reason)
+
     # -- settlement -------------------------------------------------------
     def _settle(self, now: float) -> None:
         for key, st in list(self.windows.items()):
@@ -325,7 +425,7 @@ class UpDownEngine:
         self._forget_old(now)
 
     def _book(self, st: WindowState, now: float, pnl: float, note: str, winner: str | None) -> None:
-        self.risk.record_window(now, pnl)
+        self.risk.record_window(now, pnl, st.asset)
         for stats in (self.stats, self.asset_stats[st.asset]):
             stats.windows_traded += 1
             stats.pnl_usd += pnl

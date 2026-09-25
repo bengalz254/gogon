@@ -64,7 +64,7 @@ class CountingSim(MultiSimGateway):
 
 
 def test_seven_coins_trade_independently_with_one_book_request_per_tick():
-    s = UpDownSettings(wallet=None, assets=ALL)
+    s = UpDownSettings(wallet=None, assets=ALL, mode="taker")
     sim = CountingSim(ALL, seed=3, lag_s=2.0)
     history = PriceHistory(maxlen=4000)
     engine = UpDownEngine(s, sim, PaperBroker(), history, journal=None)

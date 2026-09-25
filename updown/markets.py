@@ -28,6 +28,42 @@ class WindowMarket:
     price_to_beat: float | None = None  # from Polymarket, when it publishes one
 
 
+@dataclass
+class TradePrint:
+    """One public trade. `side` is the TAKER's side: SELL means someone sold
+    into the bids, which is what fills a resting maker bid."""
+
+    token: str
+    side: str
+    price: float
+    size: float
+    ts: float
+    key: str
+
+
+def parse_trades(rows) -> list[TradePrint]:
+    out = []
+    for r in rows or []:
+        try:
+            ts = float(r.get("timestamp") or r.get("matchTime") or 0)
+            if ts > 1e12:  # milliseconds
+                ts /= 1000
+            t = TradePrint(
+                token=str(r.get("asset") or r.get("asset_id") or r.get("tokenId") or ""),
+                side=str(r.get("side", "")).upper(),
+                price=float(r["price"]),
+                size=float(r["size"]),
+                ts=ts,
+                key="",
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+        t.key = f"{r.get('transactionHash', '')}:{t.token}:{t.side}:{t.price}:{t.size}:{t.ts}"
+        if t.token and t.side in ("BUY", "SELL"):
+            out.append(t)
+    return out
+
+
 def window_start(ts: float, window_seconds: int) -> int:
     return int(ts // window_seconds * window_seconds)
 
@@ -117,7 +153,9 @@ def parse_book(raw: dict) -> Book:
 
 
 class PolymarketGateway:
-    def __init__(self, gamma_host: str, clob_host: str, slug_template: str, window_seconds: int):
+    def __init__(self, gamma_host: str, clob_host: str, slug_template: str, window_seconds: int,
+                 data_host: str = "https://data-api.polymarket.com"):
+        self.data_host = data_host.rstrip("/")
         self.gamma_host = gamma_host.rstrip("/")
         self.clob_host = clob_host.rstrip("/")
         self.slug_template = slug_template
@@ -164,6 +202,10 @@ class PolymarketGateway:
             if tid:
                 out[tid] = parse_book(raw)
         return out
+
+    def trades(self, condition_id: str) -> list[TradePrint]:
+        """Recent public trades in a market (Polymarket's data API, no key needed)."""
+        return parse_trades(self._get(f"{self.data_host}/trades", market=condition_id, limit=200, takerOnly="true"))
 
     def resolution(self, wm: WindowMarket) -> str | None:
         market, _ = self._fetch_market(wm.slug)

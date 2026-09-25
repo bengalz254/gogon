@@ -9,7 +9,32 @@ Saham yang menang dibayar $1, yang kalah $0.
 > mode paper (simulasi). Jalankan paper minimal beberapa hari dulu. Tidak ada
 > jaminan profit, dan ini bukan nasihat keuangan.
 
-## Strateginya: fair value, bukan tebak arah
+## Mode default: market maker
+
+Setelah 231 window paper trading, strategi "taker" di bawah terbukti **tidak
+punya edge** (model menjanjikan +$413, hasil nyata −$4). Karena itu default
+sekarang `mode: maker`:
+
+- Bot memasang **bid post-only di Up DAN Down** di bawah harga pasar.
+  1 Up + 1 Down selalu dibayar $1, jadi pasangan yang terbeli di bawah $1
+  (misalnya 0,47 + 0,49 = 0,96) adalah **untung terkunci**, siapa pun yang
+  menang. Maker tidak membayar fee.
+- Risikonya sisi yang terisi sendirian saat harga bergerak (adverse
+  selection). Pelindungnya: bid condong ke sisi yang melengkapi pasangan,
+  harga pasangan dibatasi `1 − pair_margin`, bid **langsung diturunkan**
+  saat harga bergerak, spread **melebar otomatis** mengikuti seberapa cepat
+  peluang bergerak (di dekat strike bisa ~3 sen per detik), bid ditarik
+  setelah gerakan tajam, dan semua bid ditarik 60 detik sebelum tutup.
+- Paper mode mengisi bid kalau (1) ada transaksi publik di mana seseorang
+  **menjual** di harga ≤ bid kita, atau (2) ask pasar turun ke harga bid kita.
+  Antrian order diabaikan, jadi jumlah fill di paper cenderung optimis.
+
+Di simulator, pasangan lengkap menghasilkan untung dan sisa tak berpasangan
+merugi; hasil bersihnya tipis dan bergantung pada seberapa banyak trader
+"biasa" di pasar. **Hanya paper trading di market asli yang bisa menjawab**
+apakah ini untung. Kembali ke strategi lama: `mode: taker`.
+
+## Strategi taker (lama): fair value, bukan tebak arah
 
 Kebanyakan bot 5 menit mencoba **menebak arah** candle berikutnya pakai
 RSI, MACD, dan sejenisnya. Di horizon 5 menit, hasilnya hampir sama dengan
