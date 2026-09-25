@@ -220,3 +220,36 @@ def test_report_splits_maker_pnl_into_pairs_and_unpaired(tmp_path, capsys, monke
     pairs_line = [l for l in out.splitlines() if "complete pairs" in l][0]
     assert "10 shares" in pairs_line
     assert float(pairs_line.split("P&L")[1].split()[0]) == pytest.approx(engine.stats.pnl_usd, abs=0.01)
+
+
+# -- hedging: completing pairs ------------------------------------------------
+def test_hedge_bids_near_fair_but_never_lock_in_more_than_the_cap():
+    pos = WindowPosition()
+    pos.shares[UP], pos.cost_usd[UP] = 5, 5 * 0.50  # bought Up at 0.50; market now 0.45
+    mkt = books(up=(0.44, 0.46), down=(0.54, 0.56))
+    q, why = quoter(half_spread=0.05, hedge_edge=0.02, pair_margin=0.0).targets(mkt, pos, 0.45)
+    assert q[DOWN].hedge and q[DOWN].price == pytest.approx(0.50)  # fair 0.55 - 0.02 = 0.53, capped at 1 - 0.50
+    assert q[DOWN].shares == 5  # exactly the unpaired amount
+    assert "(hedge)" in why
+    # With the old 4c margin the same hedge had to wait for 0.46.
+    q_old, _ = quoter(half_spread=0.05, hedge_edge=0.02, pair_margin=0.04).targets(mkt, pos, 0.45)
+    assert q_old[DOWN].price == pytest.approx(0.46)
+
+
+def test_no_new_positions_but_hedges_continue():
+    flat, _ = quoter().targets(books(), WindowPosition(), 0.5, allow_new=False)
+    assert flat[UP] is None and flat[DOWN] is None
+    pos = WindowPosition()
+    pos.shares[UP], pos.cost_usd[UP] = 5, 2.35
+    q, why = quoter(hedge_edge=0.02, pair_margin=0.0).targets(books(), pos, 0.5, allow_new=False)
+    assert q[UP] is None and q[DOWN] is not None and q[DOWN].hedge
+    assert "no new positions" in why
+
+
+def test_hedge_allowed_outside_the_price_band_and_despite_model_gap():
+    pos = WindowPosition()
+    pos.shares[UP], pos.cost_usd[UP] = 5, 5 * 0.70  # Up now nearly certain
+    mkt = books(up=(0.89, 0.91), down=(0.09, 0.11))
+    q, _ = quoter(min_price=0.15, hedge_edge=0.02, pair_margin=0.0, max_model_gap=0.05).targets(mkt, pos, 0.6)
+    assert q[UP] is None
+    assert q[DOWN] is not None and q[DOWN].price <= 0.10 + 1e-9  # cheap Down locks a 20c+ pair profit

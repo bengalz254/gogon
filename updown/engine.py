@@ -107,6 +107,8 @@ class UpDownEngine:
         self.lead_guard = LeadGuard(settings.maker)
         # Set from the lead feed's thread to run a tick right away (live only).
         self.wake = threading.Event()
+        self._lead_now: dict[str, bool] = {}
+        self.global_pause_until = 0.0  # no new positions on any coin until then
         # Slow lookups (market discovery, trade prints, resolution) run in the
         # background in the live bot, so they never hold up requoting. Tests
         # and the simulator run them inline for deterministic results.
@@ -137,7 +139,11 @@ class UpDownEngine:
         before = self.lead_guard.trips.get(asset, 0)
         pulled = self.lead_guard.check(self.lead_history, asset, now, self.vol[asset].sigma)
         if self.lead_guard.trips.get(asset, 0) > before:
-            logger.info("[%s] early warning: sharp move on the lead venue; bids pulled for %.0fs", asset, self.s.maker.lead_cooldown_s)
+            c = self.s.maker
+            if c.lead_global:
+                self.global_pause_until = max(self.global_pause_until, now + c.lead_cooldown_s)
+            logger.info("[%s] early warning: sharp move on the lead venue; bids pulled for %.0fs%s", asset, c.lead_cooldown_s,
+                        " (no new positions on any coin meanwhile)" if c.lead_global else "")
         return pulled
 
     def _io(self, st: WindowState, key: str, fn, *args):
@@ -177,6 +183,9 @@ class UpDownEngine:
                 states.append(st)
             except Exception:
                 logger.exception("[%s] error preparing window %d", asset, start)
+        if self.maker_mode:
+            # Every coin's early warning first: one coin's crash pauses all of them.
+            self._lead_now = {a: self._lead_pulled(a, now) for a in self.s.assets}
         books = self._fetch_books([st for st in states if self._wants_books(st, now)])
         for st in states:
             try:
@@ -386,7 +395,7 @@ class UpDownEngine:
 
         # 0. Early warning: the leading venue is moving fast, so cancel before
         #    counting fills (the cancel went out when we saw the move).
-        lead_pulled = self._lead_pulled(st.asset, now)
+        lead_pulled = self._lead_now.get(st.asset, False)
         if lead_pulled:
             mb.cancel_all(list(tokens.values()))
 
@@ -412,6 +421,8 @@ class UpDownEngine:
             if 0 < seconds_left < self.s.maker.stop_quoting_s:
                 st.why = f"quotes pulled for the last {self.s.maker.stop_quoting_s:.0f}s; holding to settlement"
             return
+        # Hard stops pull every bid. Soft ones only block NEW positions:
+        # bids that complete pairs (hedges) keep going, they reduce risk.
         latest = self.history.latest(st.asset)
         reason = ""
         if latest is None or now - latest[0] > self.s.feed.max_age_s:
@@ -419,14 +430,8 @@ class UpDownEngine:
         elif books[UP] is None or books[DOWN] is None:
             reason = "order book unavailable"
         else:
-            allowed, why_not = self.risk.can_trade(now, st.asset)
-            room = max(0.0, self.risk.room_usd(now, st.asset) - self._open_exposure()) if allowed else 0.0
             then = self.history.price_at(st.asset, latest[0] - self.s.maker.fast_move_window_s, 2.0)
-            if not allowed:
-                reason = why_not
-            elif room < self.s.maker.quote_shares * 0.5:
-                reason = f"no risk room (${room:.2f})"
-            elif self.fast_guard.check(st.asset, now, latest[1], then, self.vol[st.asset].sigma):
+            if self.fast_guard.check(st.asset, now, latest[1], then, self.vol[st.asset].sigma):
                 reason = "sharp move: quotes pulled for a moment"
             elif lead_pulled:
                 reason = "early warning: Binance moving fast; bids pulled"
@@ -434,6 +439,15 @@ class UpDownEngine:
             mb.cancel_all(list(tokens.values()))
             st.why = reason
             return
+        allowed, why_not = self.risk.can_trade(now, st.asset)
+        room = max(0.0, self.risk.room_usd(now, st.asset) - self._open_exposure()) if allowed else 0.0
+        no_new = (
+            why_not if not allowed
+            else f"no risk room (${room:.2f})" if room < self.s.maker.quote_shares * 0.5
+            else f"under {self.s.maker.open_until_s:.0f}s left: only completing pairs" if seconds_left <= self.s.maker.open_until_s
+            else "another coin is moving fast: only completing pairs" if now < self.global_pause_until
+            else ""
+        )
 
         snap = self.snapshot(st, now, latest[1], books)
         m = self.s.model
@@ -441,7 +455,9 @@ class UpDownEngine:
             pv = twap_prob_vol_1s(latest[1], st.strike, seconds_left, self.vol[st.asset].sigma, m.twap_window_s, snap.twap_so_far, m.basis_sd)
         else:
             pv = prob_vol_1s(latest[1], st.strike, seconds_left, self.vol[st.asset].sigma)
-        targets, why = self.quoter.targets(books, st.pos, self.strategy.prob_up(snap), pv)
+        targets, why = self.quoter.targets(books, st.pos, self.strategy.prob_up(snap), pv, allow_new=not no_new)
+        if no_new:
+            why += f" | {no_new}"
         for o in (UP, DOWN):
             mb.sync(tokens[o], o, targets[o], now)
         st.books = books

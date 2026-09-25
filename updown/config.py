@@ -96,8 +96,17 @@ class MakerConfig:
     vol_spread_mult: float = 2.5
     # Seconds between a price move and our quote catching up (tick + API).
     reaction_s: float = 2.0
-    # A bid that completes a pair must leave at least this profit per pair.
+    # A bid that completes a pair must leave at least this profit per pair
+    # (0 = break-even allowed: better a flat pair than an open bet).
     pair_margin: float = 0.02
+    # Bids that complete pairs (hedges) sit this close to fair instead of
+    # half_spread (still widened when the price moves fast). Tighter hedges
+    # complete far more pairs; they only ever reduce what's at risk.
+    hedge_edge: float = 0.02
+    # Only open NEW one-sided risk while more than this many seconds are
+    # left, so a first leg still has time to be paired. Hedges continue
+    # until stop_quoting_s.
+    open_until_s: float = 150.0
     min_price: float = 0.15
     max_price: float = 0.85
     # Don't churn orders: move a quote at most this often, and only if the
@@ -122,6 +131,9 @@ class MakerConfig:
     # Paper mode: a move only counts as caught in time if we saw it at least
     # this long before the fill (time to send the cancels).
     lead_latency_s: float = 0.5
+    # Coins crash together: when any coin's early warning fires, stop
+    # opening new positions on every coin for lead_cooldown_s (hedges stay).
+    lead_global: bool = True
 
 
 @dataclass

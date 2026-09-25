@@ -82,7 +82,9 @@ maker:
   max_side_shares: 20      # per window, per side
   max_imbalance_shares: 5  # max unpaired shares (Up - Down or Down - Up)
   skew_per_share: 0.002    # lean bids toward completing pairs
-  pair_margin: 0.04        # a pair must cost at most 1 - this
+  pair_margin: 0.0         # a pair must cost at most 1 - this (0 = break-even pairs allowed)
+  hedge_edge: 0.05         # bids that complete pairs sit this far below fair
+  open_until_s: 0          # open NEW positions only while more than this many seconds are left (0 = until stop_quoting_s)
   min_price: 0.15         # only quote while the market is still undecided
   max_price: 0.85
   requote_s: 3             # raise a bid at most this often (lowering is instant)
@@ -96,3 +98,4 @@ maker:
   lead_window_s: 3         # ...within this many seconds...
   lead_cooldown_s: 10      # ...for this long
   lead_latency_s: 0.5      # paper: time we allow ourselves to get the cancels out
+  lead_global: true        # one coin's sharp move pauses new positions on every coin

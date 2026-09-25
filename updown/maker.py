@@ -30,6 +30,7 @@ OTHER = {UP: DOWN, DOWN: UP}
 class Quote:
     price: float
     shares: float
+    hedge: bool = False  # completes pairs rather than adding risk
 
 
 def floor_tick(price: float, tick: float) -> float:
@@ -62,35 +63,55 @@ class MakerQuoter:
             return c.half_spread
         return max(c.half_spread, c.vol_spread_mult * prob_vol_1s * math.sqrt(c.reaction_s))
 
+    def hedge_spread(self, prob_vol_1s: float | None) -> float:
+        c = self.cfg
+        if prob_vol_1s is None:
+            return c.hedge_edge
+        return max(c.hedge_edge, c.vol_spread_mult * prob_vol_1s * math.sqrt(c.reaction_s))
+
     def targets(
         self, books: dict[str, Book], pos: WindowPosition, model_p_up: float | None,
-        prob_vol_1s: float | None = None,
+        prob_vol_1s: float | None = None, allow_new: bool = True,
     ) -> tuple[dict[str, Quote | None], str]:
-        """Where we want a bid on each side right now (None = no bid), and why."""
+        """Where we want a bid on each side right now (None = no bid), and why.
+
+        The side that completes pairs (the "light" side) is a hedge: it bids
+        close to fair, capped so the pair never costs more than 1 - pair_margin.
+        Buying it at fair minus a little is positive value AND removes the
+        open bet, so it's always worth doing. Everything else is new risk and
+        needs the full spread, and only while `allow_new`."""
         c = self.cfg
         hs = self.half_spread(prob_vol_1s)
+        hedge_hs = self.hedge_spread(prob_vol_1s)
         fair_up = self.market_fair_up(books)
         if fair_up is None:
             return {UP: None, DOWN: None}, "no market prices"
+        out: dict[str, Quote | None] = {}
+        notes = []
         if model_p_up is not None and abs(model_p_up - fair_up) > c.max_model_gap:
-            return {UP: None, DOWN: None}, f"model {model_p_up:.2f} vs market {fair_up:.2f}: disagree, staying out"
+            # Something is off (or the market knows something): no new risk,
+            # but still complete pairs if we can.
+            allow_new = False
+            notes.append(f"model {model_p_up:.2f} vs market {fair_up:.2f}: disagree, staying out")
 
         fair = {UP: fair_up, DOWN: 1.0 - fair_up}
         imbalance = pos.shares[UP] - pos.shares[DOWN]  # >0: long Up, need Down to pair
-        out: dict[str, Quote | None] = {}
-        notes = []
         for side in (UP, DOWN):
             held, other_held = pos.shares[side], pos.shares[OTHER[side]]
             lean = imbalance if side == UP else -imbalance  # >0: this side is the heavy one
-            price = fair[side] - hs - c.skew_per_share * lean
-
-            if other_held > held:
-                # This bid completes pairs: never pay more than 1 - their cost - margin.
+            hedge = other_held > held + 1e-9
+            if hedge:
+                # Completes pairs: near fair, but never pay more than 1 - their cost - margin.
                 avg_other = pos.cost_usd[OTHER[side]] / other_held
-                price = min(price, 1.0 - avg_other - c.pair_margin)
-            room = c.max_side_shares - held
-            if lean >= 0:
-                room = min(room, c.max_imbalance_shares - lean)
+                price = min(fair[side] - hedge_hs, 1.0 - avg_other - c.pair_margin)
+                room = min(c.max_side_shares - held, other_held - held)
+            else:
+                if not allow_new:
+                    out[side] = None
+                    notes.append(f"{side}: no new positions now")
+                    continue
+                price = fair[side] - hs - c.skew_per_share * lean
+                room = min(c.max_side_shares - held, c.max_imbalance_shares - lean)
             if room < 1:
                 out[side] = None
                 notes.append(f"{side}: inventory limit")
@@ -102,17 +123,21 @@ class MakerQuoter:
             if book.best_ask is not None:
                 price = min(price, book.best_ask - c.tick)  # post-only: never cross
             price = floor_tick(price, c.tick)
-            if not (c.min_price <= price <= c.max_price):
+            # New risk only while the market is undecided; a hedge is fine at
+            # any price (it can only lock the pair in).
+            lo, hi = (c.tick, 1.0 - c.tick) if hedge else (c.min_price, c.max_price)
+            if not (lo - 1e-9 <= price <= hi + 1e-9):
                 out[side] = None
                 notes.append(f"{side}: price {price:.2f} out of range")
                 continue
-            out[side] = Quote(round(price, 4), min(c.quote_shares, room))
+            out[side] = Quote(round(price, 4), min(c.quote_shares, room), hedge)
         q_up, q_dn = out[UP], out[DOWN]
         pair = f" (pair {q_up.price + q_dn.price:.2f})" if q_up and q_dn else ""
+        tag = lambda q: " (hedge)" if q.hedge else ""  # noqa: E731
         why = (
-            f"quoting Up {q_up.price:.2f} / Down {q_dn.price:.2f}{pair}" if q_up and q_dn
-            else f"quoting Up {q_up.price:.2f}" if q_up
-            else f"quoting Down {q_dn.price:.2f}" if q_dn
+            f"quoting Up {q_up.price:.2f}{tag(q_up)} / Down {q_dn.price:.2f}{tag(q_dn)}{pair}" if q_up and q_dn
+            else f"quoting Up {q_up.price:.2f}{tag(q_up)}" if q_up
+            else f"quoting Down {q_dn.price:.2f}{tag(q_dn)}" if q_dn
             else "no quotes"
         )
         if notes:

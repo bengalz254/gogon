@@ -116,3 +116,23 @@ def test_background_io_keeps_ticks_fast_and_still_settles():
         t += 1
     assert slowest < 0.2  # no tick waited on a 0.3s lookup
     assert engine.stats.windows_traded == 1  # found the market and settled via Polymarket
+
+
+def test_one_coin_crashing_stops_new_positions_on_every_coin():
+    s = UpDownSettings(wallet=None, assets=["btc", "eth"], mode="maker")
+    s.sizing = SizingConfig(bankroll_usd=1000)
+    s.maker = MakerConfig(half_spread=0.03, fast_move_z=99, vol_spread_mult=0, lead_global=True, lead_cooldown_s=10)
+    gw = ScriptedGateway(UP)
+    history, lead = PriceHistory(), PriceHistory()
+    engine = UpDownEngine(s, gw, PaperBroker(), history, journal=None, lead_history=lead)
+    for a in ("btc", "eth"):
+        engine.vol[a].seed(1e-4)
+    for t in range(T0 - 65, T0 + 40):
+        gw.now = t
+        for a in ("btc", "eth"):
+            history.add(a, float(t), 100.0)
+            lead.add(a, float(t) - 0.5, 100.0 if (a == "eth" or t < T0 + 35) else 99.0)  # BTC dumps at +35s
+        engine.tick(float(t))
+    eth = engine.windows[("eth", T0)]
+    assert "another coin is moving fast" in eth.why
+    assert not [tok for tok in engine.maker_broker.orders if tok.endswith(str(T0))]
