@@ -58,6 +58,9 @@ feed:
   poll_seconds: 1.0
   max_age_s: 5.0
   source: chainlink   # chainlink = settlement oracle via Polymarket RTDS; binance = Binance spot
+  stale_reconnect_s: 10.0   # reconnect Chainlink if no new price for this long
+  backup: true              # use Binance/Hyperliquid (gap-corrected) while Chainlink is silent
+  backup_after_s: 4.0
 
 # ---------------------------------------------------------------------------
 # Strategy mode.

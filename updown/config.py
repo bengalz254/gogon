@@ -150,6 +150,12 @@ class FeedConfig:
     # Live price source: "chainlink" (the settlement oracle, via Polymarket's
     # RTDS socket) or "binance" (Binance spot / Hyperliquid for HYPE).
     source: str = "chainlink"
+    # Reconnect the Chainlink socket if it sends no new price for this long.
+    stale_reconnect_s: float = 10.0
+    # Fall back to Binance/Hyperliquid (gap-corrected) while Chainlink has
+    # been silent for more than backup_after_s, instead of stopping.
+    backup: bool = True
+    backup_after_s: float = 4.0
 
 
 @dataclass

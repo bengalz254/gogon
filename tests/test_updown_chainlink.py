@@ -40,3 +40,36 @@ def test_chainlink_is_the_default_source_with_candle_seeders_kept():
     assert isinstance(seeders["btc"], BinanceFeed)  # volatility still seeded from candles
     feeds, _ = build_price_feeds(assets, FeedConfig(source="binance"), PriceHistory())
     assert isinstance(feeds["btc"], BinanceFeed)
+
+
+class _Primary:
+    def __init__(self):
+        self.last_seen = {}
+
+
+def test_backup_only_learns_the_gap_while_chainlink_is_fresh():
+    from updown.feeds import BackupSink
+
+    now = [1000.0]
+    hist, primary, ticks = PriceHistory(), _Primary(), []
+    sink = BackupSink(hist, primary, stale_after_s=4, on_tick=lambda a, t, p: ticks.append(p), clock=lambda: now[0])
+    hist.add("btc", 999.5, 100.0)
+    primary.last_seen["btc"] = (999.8, 100.0)
+    assert sink.add("btc", 1000.0, 99.0) is False  # Chainlink fresh: backup stays out
+    assert hist.latest("btc") == (999.5, 100.0) and ticks == []
+    now[0] = 1010.0  # Chainlink silent for 10s
+    assert sink.add("btc", 1010.0, 99.0) is True
+    ts, price = hist.latest("btc")
+    assert ts == 1010.0 and abs(price - 100.0) < 1e-9  # corrected by the learned gap
+    assert ticks and sink.active["btc"]
+    primary.last_seen["btc"] = (1011.0, 100.5)  # Chainlink back
+    now[0] = 1011.5
+    assert sink.add("btc", 1011.5, 99.5) is False and not sink.active["btc"]
+
+
+def test_chainlink_mode_starts_backup_feeds():
+    feeds, seeders = build_price_feeds(["btc", "hype"], FeedConfig(), PriceHistory())
+    kinds = {type(f).__name__ for f in feeds.values()}
+    assert kinds == {"ChainlinkRTDSFeed", "BinanceFeed", "HyperliquidFeed"}
+    feeds, _ = build_price_feeds(["btc"], FeedConfig(backup=False), PriceHistory())
+    assert {type(f).__name__ for f in feeds.values()} == {"ChainlinkRTDSFeed"}

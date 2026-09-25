@@ -72,8 +72,15 @@ class ChainlinkRTDSFeed:
 
     name = "Chainlink RTDS"
 
-    def __init__(self, assets: list[str], symbols: dict[str, str], history, on_tick=None, url: str = RTDS_URL):
+    def __init__(self, assets: list[str], symbols: dict[str, str], history, on_tick=None, url: str = RTDS_URL,
+                 stale_reconnect_s: float = 10.0):
         self.assets = assets
+        self.stale_reconnect_s = stale_reconnect_s
+        # asset -> (wall time we got a new price, price); read by the backup feed.
+        self.last_seen: dict[str, tuple[float, float]] = {}
+        self._max_ts: dict[str, float] = {}
+        self.reconnects = 0
+        self._live_logged: set[str] = set()
         self.symbols = symbols  # asset -> "btc/usd"
         self.history = history
         self.on_tick = on_tick
@@ -109,25 +116,38 @@ class ChainlinkRTDSFeed:
                 ws.settimeout(2)  # short reads, so the keep-alive PING goes out on time
                 self._sockets[asset] = ws
                 ws.send(subscribe_message(symbol))
-                last_ping = time.time()
+                last_ping = last_new = time.time()
                 got_any = False
                 while not self._stop.is_set():
-                    if time.time() - last_ping >= 8:
+                    now = time.time()
+                    if now - last_ping >= 8:
                         ws.send("PING")  # the server drops idle connections
-                        last_ping = time.time()
+                        last_ping = now
+                    if now - last_new > self.stale_reconnect_s:
+                        # The socket can stay open yet stop sending prices;
+                        # a fresh connection (and snapshot) fixes that.
+                        self.reconnects += 1
+                        if self.reconnects in (1, 5) or self.reconnects % 50 == 0:
+                            logger.warning("[%s] no Chainlink price for %.0fs; reconnecting (#%d)", asset, now - last_new, self.reconnects)
+                        break
                     try:
                         raw = ws.recv()
                     except websocket.WebSocketTimeoutException:
                         continue
                     points = parse_message(raw, symbol)
                     for ts, price in points:
-                        self.history.add(asset, ts, price)
-                        if self.on_tick:
+                        if ts > self._max_ts.get(asset, 0.0):
+                            self._max_ts[asset] = ts
+                            last_new = time.time()
+                            self.last_seen[asset] = (last_new, price)
+                        if self.history.add(asset, ts, price) and self.on_tick:
                             self.on_tick(asset, ts, price)
                     if points and not got_any:
                         got_any = True
                         failures = 0
-                        logger.info("[%s] Chainlink feed live (%s)", asset, symbol)
+                        if asset not in self._live_logged:  # once; reconnects can be frequent
+                            self._live_logged.add(asset)
+                            logger.info("[%s] Chainlink feed live (%s)", asset, symbol)
                     elif not points and raw not in ("PONG", "") and "statusCode" in str(raw):
                         logger.warning("[%s] RTDS said: %s", asset, str(raw)[:200])
             except Exception as exc:

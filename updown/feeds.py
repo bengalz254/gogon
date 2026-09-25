@@ -23,12 +23,14 @@ class PriceHistory:
         self._maxlen = maxlen
         self._lock = threading.Lock()
 
-    def add(self, asset: str, ts: float, price: float) -> None:
+    def add(self, asset: str, ts: float, price: float) -> bool:
+        """Store a sample; False (and ignored) if it isn't newer than the last."""
         with self._lock:
             q = self._samples.setdefault(asset, deque(maxlen=self._maxlen))
             if q and ts <= q[-1][0]:
-                return
+                return False
             q.append((ts, price))
+            return True
 
     def latest(self, asset: str) -> tuple[float, float] | None:
         with self._lock:
@@ -120,8 +122,7 @@ class _PollingFeed:
                 prices = self._fetch()
                 now = time.time()
                 for asset, price in prices.items():
-                    self.history.add(asset, now, price)
-                    if self.on_tick:
+                    if self.history.add(asset, now, price) and self.on_tick:
                         self.on_tick(asset, now, price)
                 failures = 0
             except Exception as exc:  # network blips must not kill the feed
@@ -191,6 +192,49 @@ class HyperliquidFeed(_PollingFeed):
         return [float(r["c"]) for r in rows]
 
 
+class BackupSink:
+    """Lets Binance/Hyperliquid fill in while the Chainlink feed is silent.
+
+    The backup feed polls all the time. While Chainlink is fresh its prices
+    are only used to learn the gap between the two (Chainlink / backup, e.g.
+    USD vs USDT); once Chainlink has been quiet for `stale_after_s`, backup
+    prices, corrected by that gap, go into the history so the bot keeps
+    working. Chainlink takes over again as soon as it's back.
+    """
+
+    def __init__(self, history: PriceHistory, primary, stale_after_s: float, on_tick=None, clock=time.time):
+        self.history = history
+        self.primary = primary  # has .last_seen {asset: (wall time received, price)}
+        self.stale_after_s = stale_after_s
+        self.on_tick = on_tick
+        self.clock = clock
+        self.ratio: dict[str, float] = {}
+        self.active: dict[str, bool] = {}
+
+    def add(self, asset: str, ts: float, price: float) -> bool:
+        seen = self.primary.last_seen.get(asset)
+        if seen is not None and self.clock() - seen[0] <= self.stale_after_s:
+            r = seen[1] / price
+            old = self.ratio.get(asset)
+            self.ratio[asset] = r if old is None else old + 0.1 * (r - old)
+            if self.active.get(asset):
+                self.active[asset] = False
+                logger.info("[%s] Chainlink is back; backup feed off", asset)
+            return False
+        if not self.active.get(asset):
+            self.active[asset] = True
+            logger.warning(
+                "[%s] Chainlink silent for >%.0fs; using backup prices (gap correction %s)",
+                asset, self.stale_after_s, f"{self.ratio[asset]:.5f}" if asset in self.ratio else "unknown yet",
+            )
+        adj = price * self.ratio.get(asset, 1.0)
+        if not self.history.add(asset, ts, adj):
+            return False
+        if self.on_tick:
+            self.on_tick(asset, ts, adj)
+        return True
+
+
 def chainlink_symbol(asset: str) -> str:
     return f"{asset}/usd"
 
@@ -199,16 +243,24 @@ def build_price_feeds(assets: list[str], cfg: FeedConfig, history: PriceHistory,
     """(live price feed per asset, candle seeder per asset).
 
     With source "chainlink" prices come from the settlement oracle; Binance /
-    Hyperliquid are still used once at startup to seed volatility from 1m
-    candles, since the socket has no history endpoint.
+    Hyperliquid seed volatility from 1m candles at startup (the socket has no
+    history endpoint) and, with `backup` on, keep polling as a stand-in for
+    whenever Chainlink goes quiet (see BackupSink).
     """
-    seeders = build_feeds(assets, cfg, history, on_tick)
-    if cfg.source == "chainlink":
-        from updown.chainlink_feed import ChainlinkRTDSFeed
+    if cfg.source != "chainlink":
+        feeds = build_feeds(assets, cfg, history, on_tick)
+        return feeds, feeds
+    from updown.chainlink_feed import ChainlinkRTDSFeed
 
-        feed = ChainlinkRTDSFeed(assets, {a: chainlink_symbol(a) for a in assets}, history, on_tick)
-        return {a: feed for a in assets}, seeders
-    return seeders, seeders
+    chainlink = ChainlinkRTDSFeed(
+        assets, {a: chainlink_symbol(a) for a in assets}, history, on_tick, stale_reconnect_s=cfg.stale_reconnect_s,
+    )
+    feeds: dict = {a: chainlink for a in assets}
+    if cfg.backup:
+        backups = build_feeds(assets, cfg, BackupSink(history, chainlink, cfg.backup_after_s, on_tick))
+        feeds.update({f"{a}:backup": f for a, f in backups.items()})
+        return feeds, backups
+    return feeds, build_feeds(assets, cfg, history, on_tick)
 
 
 def build_feeds(assets: list[str], cfg: FeedConfig, history: PriceHistory, on_tick=None) -> dict[str, _PollingFeed]:
