@@ -13,7 +13,7 @@ import time
 import requests
 
 from bot.updown.events import CexTick
-from bot.updown.feeds.base import WsFeed
+from bot.updown.feeds.base import WsFeed, decode_frame
 
 logger = logging.getLogger("polybot.updown.feeds.cex")
 
@@ -56,12 +56,13 @@ class _ThrottledCex(WsFeed):
         self.throttle_s = throttle_ms / 1000.0
         self._last_emit: dict = {}
 
-    def _emit_throttled(self, events) -> None:
+    def _emit_throttled(self, events) -> bool:
         for ev in events:
             last = self._last_emit.get(ev.asset, 0.0)
             if ev.ts - last >= self.throttle_s:
                 self._last_emit[ev.asset] = ev.ts
                 self.emit(ev)
+        return bool(events)
 
 
 class BinanceFeed(_ThrottledCex):
@@ -75,8 +76,9 @@ class BinanceFeed(_ThrottledCex):
         streams = "/".join(f"{s}@aggTrade" for s in sorted(self.symbol_map))
         return f"{self.base_url}?streams={streams}"
 
-    def on_message(self, raw) -> None:
-        self._emit_throttled(parse_binance(json.loads(raw), self.symbol_map))
+    def on_message(self, raw) -> bool:
+        text = decode_frame(raw)
+        return text is not None and self._emit_throttled(parse_binance(json.loads(text), self.symbol_map))
 
 
 class BybitFeed(_ThrottledCex):
@@ -94,8 +96,9 @@ class BybitFeed(_ThrottledCex):
         args = [f"publicTrade.{s.upper()}" for s in sorted(self.symbol_map)]
         await ws.send(json.dumps({"op": "subscribe", "args": args}))
 
-    def on_message(self, raw) -> None:
-        self._emit_throttled(parse_bybit(json.loads(raw), self.symbol_map))
+    def on_message(self, raw) -> bool:
+        text = decode_frame(raw)
+        return text is not None and self._emit_throttled(parse_bybit(json.loads(text), self.symbol_map))
 
 
 def bootstrap_klines(symbol_map: dict, binance_rest: str, bybit_rest: str, minutes: int = 70,

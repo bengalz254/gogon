@@ -61,9 +61,12 @@ class FeedsConfig:
     binance_rest_url: str = "https://api.binance.com"
     bybit_rest_url: str = "https://api.bybit.com"
     bootstrap_history: bool = True  # seed ~1h of 1m klines at startup
-    oracle_max_age_s: float = 3.0
+    # Staleness is measured from when prices *arrive* (immune to local clock
+    # skew): no new oracle / CEX price for this long -> data counts as stale.
+    oracle_max_age_s: float = 5.0
     cex_max_age_s: float = 3.0
     rtds_ping_s: float = 5.0
+    rtds_stale_s: float = 10.0  # reconnect an RTDS socket after this long without a new price
     clob_ping_s: float = 10.0
     cex_throttle_ms: float = 100.0
     dynamic_subscribe: bool = True

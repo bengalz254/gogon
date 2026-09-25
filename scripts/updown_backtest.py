@@ -47,7 +47,7 @@ def replay(paths, cfg, journal=None):
             for u in broker.execute(engine.step(next_step), next_step):
                 engine.on_order_update(u)
             next_step += step
-        engine.handle(ev)
+        engine.handle(ev, rt)
         for u in broker.on_event(ev, rt):
             engine.on_order_update(u)
         last = rt

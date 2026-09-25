@@ -75,6 +75,10 @@ class Engine:
         self._warned: set = set()
         self._decision_log_ts: dict = {}
         self._vol_cache: dict = {}
+        # (store, asset) -> local time the latest new price arrived. Freshness
+        # is judged on arrival, not on the source timestamp, so a skewed local
+        # clock can't make live data look stale (or stale data look live).
+        self._arrival: dict = {}
         self.stats = {"takes": 0, "quotes": 0, "cancels": 0, "fills": 0, "rejected": 0}
         # Compact per-window outcome record that survives window GC (summaries, tests).
         self.results: dict[str, dict] = {}
@@ -82,16 +86,20 @@ class Engine:
     # ======================================================================
     # Inputs
     # ======================================================================
-    def handle(self, ev) -> None:
+    def handle(self, ev, recv_ts: float | None = None) -> None:
+        """Apply one input event. recv_ts: local time it arrived (default: last step time)."""
         k = ev.kind
+        arrived = self.now if recv_ts is None else recv_ts
         if k == "oracle":
             series = self._series(self.oracle, ev.asset)
             if series.update(ev.ts, ev.price):
+                self._arrival[("oracle", ev.asset)] = arrived
                 cex = self.cex.get(ev.asset)
                 cex_px = cex.price_at(ev.ts) if cex is not None and cex.age(ev.ts) <= self.cfg.feeds.cex_max_age_s else None
                 self._nowcaster(ev.asset).observe(ev.ts, ev.price, cex_px)
         elif k == "cex":
-            self._series(self.cex, ev.asset).update(ev.ts, ev.price)
+            if self._series(self.cex, ev.asset).update(ev.ts, ev.price):
+                self._arrival[("cex", ev.asset)] = arrived
         elif k == "book":
             book = self.books.get(ev.token_id)
             if book is not None:
@@ -453,9 +461,10 @@ class Engine:
         series = self.oracle.get(w.asset)
         if series is None or series.last_price is None:
             return None, "no oracle data"
+        silence = self._silence("oracle", w.asset, now)
+        if silence > self.cfg.feeds.oracle_max_age_s:
+            return None, f"oracle stale (no new price for {silence:.1f}s)"
         age = series.age(now)
-        if age > self.cfg.feeds.oracle_max_age_s:
-            return None, f"oracle stale ({age:.1f}s)"
         vol = self._vol(w.asset, series, now)
         if vol is None:
             return None, "insufficient history for volatility"
@@ -483,7 +492,8 @@ class Engine:
         oracle_px = self.oracle[asset].last_price
         cex = self.cex.get(asset)
         weight = self.cfg.model.cex_lead_weight
-        if cex is None or cex.last_price is None or cex.age(now) > self.cfg.feeds.cex_max_age_s or weight <= 0:
+        stale = self._silence("cex", asset, now) > self.cfg.feeds.cex_max_age_s
+        if cex is None or cex.last_price is None or stale or weight <= 0:
             return oracle_px, None, ""
         nc = self._nowcaster(asset).nowcast(cex.last_price)
         if nc is None:
@@ -492,12 +502,16 @@ class Engine:
             return None, cex.last_price, f"CEX nowcast diverges from oracle by {(nc / oracle_px - 1) * 100:+.3f}%"
         return oracle_px + weight * (nc - oracle_px), cex.last_price, ""
 
+    def _silence(self, store: str, asset: str, now: float) -> float:
+        """Seconds since a new price for `asset` last arrived from `store`."""
+        return now - self._arrival.get((store, asset), -math.inf)
+
     def current_price(self, asset: str, now: float) -> float | None:
         o = self.oracle.get(asset)
-        if o is not None and o.age(now) <= self.cfg.feeds.oracle_max_age_s:
+        if o is not None and self._silence("oracle", asset, now) <= self.cfg.feeds.oracle_max_age_s:
             return o.last_price
         c = self.cex.get(asset)
-        if c is not None and c.age(now) <= self.cfg.feeds.cex_max_age_s:
+        if c is not None and self._silence("cex", asset, now) <= self.cfg.feeds.cex_max_age_s:
             return c.last_price
         return None
 

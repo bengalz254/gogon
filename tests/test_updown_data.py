@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import json
 import os
@@ -16,7 +17,7 @@ from bot.updown.events import (
 )
 from bot.updown.feeds.cex import parse_binance, parse_bybit
 from bot.updown.feeds.clob_ws import parse_clob
-from bot.updown.feeds.rtds import parse_rtds, subscribe_message
+from bot.updown.feeds.rtds import CEX_TOPIC, CHAINLINK_TOPIC, RtdsSymbolFeed, parse_points, subscribe_message
 from bot.updown.recorder import EventRecorder, read_events
 from bot.updown.sim import SimConfig, run_simulation
 from updown_helpers import spec
@@ -60,18 +61,77 @@ def test_parse_resolution_and_price_to_beat():
 
 
 # -- feeds ----------------------------------------------------------------------------------
-def test_parse_rtds_updates_and_backfill():
-    cl, cx = {"btc/usd": "btc"}, {"btcusdt": "btc"}
-    single = {"topic": "crypto_prices_chainlink", "type": "update", "timestamp": 1,
-              "payload": {"symbol": "btc/usd", "timestamp": 1760000100500, "value": 61000.5}}
-    assert parse_rtds(single, cl, cx) == [OracleTick("btc", 1760000100.5, 61000.5)]
-    backfill = {"topic": "crypto_prices", "payload": {"symbol": "btcusdt", "data": [
-        {"timestamp": 1760000102000, "value": 2.0}, {"timestamp": 1760000101000, "value": 1.0}]}}
-    assert parse_rtds(backfill, cl, cx) == [CexTick("btc", 1760000101.0, 1.0), CexTick("btc", 1760000102.0, 2.0)]
-    other = {"topic": "crypto_prices_chainlink", "payload": {"symbol": "eth/usd", "value": 1}}
-    assert parse_rtds(other, cl, cx) == []
-    sub = subscribe_message(["btc/usd"], ["btcusdt"])
-    assert sub["subscriptions"][0]["filters"] == '{"symbol":"btc/usd"}'
+# Snapshot shape seen on the real RTDS socket (Sep 2026): no topic, no symbol.
+REAL_SNAPSHOT = {"payload": {"data": [
+    {"timestamp": 1790303493000, "value": 84680.14332640175},
+    {"timestamp": 1790303494000, "value": 84680.30443597712},
+]}}
+
+
+def _update(ts_ms, value, symbol="btc/usd"):
+    return {"topic": "crypto_prices_chainlink", "type": "update", "timestamp": ts_ms + 123,
+            "payload": {"symbol": symbol, "timestamp": ts_ms, "value": value}}
+
+
+def test_rtds_parses_untagged_snapshot_and_tagged_updates():
+    assert parse_points(REAL_SNAPSHOT, CHAINLINK_TOPIC, "btc/usd") == [
+        (1790303493.0, 84680.14332640175), (1790303494.0, 84680.30443597712)]
+    # on an unfiltered socket (all coins) an untagged snapshot can't be attributed
+    assert parse_points(REAL_SNAPSHOT, CHAINLINK_TOPIC, "btc/usd", require_tag=True) == []
+    upd = _update(1790303499000, 84701.1)
+    assert parse_points(upd, CHAINLINK_TOPIC, "btc/usd") == [(1790303499.0, 84701.1)]
+    assert parse_points(upd, CHAINLINK_TOPIC, "eth/usd") == []
+    assert parse_points(upd, CEX_TOPIC, "btc/usd") == []  # different topic
+    relay = {"topic": "crypto_prices", "payload": {"symbol": "btcusdt", "timestamp": 1790303499500, "value": 84700.0}}
+    assert parse_points(relay, CEX_TOPIC, "btcusdt") == [(1790303499.5, 84700.0)]
+    assert parse_points({"body": {"message": "x"}, "statusCode": 401}, CHAINLINK_TOPIC, "btc/usd") == []
+
+
+def test_rtds_subscribe_styles():
+    compact = subscribe_message(CHAINLINK_TOPIC, "btc/usd", "compact")["subscriptions"][0]
+    assert compact == {"topic": CHAINLINK_TOPIC, "type": "*", "filters": '{"symbol":"btc/usd"}'}
+    assert subscribe_message(CHAINLINK_TOPIC, "btc/usd", "spaced")["subscriptions"][0]["filters"] == '{"symbol": "btc/usd"}'
+    assert "filters" not in subscribe_message(CHAINLINK_TOPIC, "btc/usd", "nofilter")["subscriptions"][0]
+    assert subscribe_message(CEX_TOPIC, "btcusdt", "plain")["subscriptions"][0]["filters"] == "btcusdt"
+
+
+class _FakeWs:
+    def __init__(self):
+        self.sent = []
+
+    async def send(self, text):
+        self.sent.append(json.loads(text))
+
+
+def test_rtds_feed_rotates_subscribe_style_until_live_updates_stream():
+    got = []
+    feed = RtdsSymbolFeed("ws://x", CHAINLINK_TOPIC, "btc/usd", "btc", got.append)
+    snapshot = json.dumps(REAL_SNAPSHOT)
+
+    # Connection 1 ("compact"): snapshot, then only PONG / empty frames.
+    ws = _FakeWs()
+    asyncio.run(feed.on_open(ws))
+    assert ws.sent[0]["subscriptions"][0]["filters"] == '{"symbol":"btc/usd"}'
+    assert feed.on_message(snapshot) is True
+    assert feed.on_message("PONG") is False and feed.on_message("") is False
+    assert feed.on_message(snapshot) is False  # nothing new: the idle watchdog keeps counting
+    feed.on_close()
+    assert feed.variant == "nofilter" and not feed.streaming
+
+    # Connection 2 ("nofilter"): untagged snapshot ignored, tagged updates stream.
+    ws = _FakeWs()
+    asyncio.run(feed.on_open(ws))
+    assert "filters" not in ws.sent[0]["subscriptions"][0]
+    assert feed.on_message(snapshot) is False
+    assert feed.on_message(json.dumps(_update(1790303500000, 84690.0, "eth/usd"))) is False
+    for i in range(4):
+        assert feed.on_message(json.dumps(_update(1790303500000 + i * 1000, 84690.0 + i))) is True
+    assert feed.streaming
+    feed.on_close()
+    assert feed.variant == "nofilter"  # a style that streams is kept
+
+    assert [e.ts for e in got] == [1790303493.0, 1790303494.0, 1790303500.0, 1790303501.0, 1790303502.0, 1790303503.0]
+    assert all(isinstance(e, OracleTick) and e.asset == "btc" for e in got)
 
 
 def test_parse_clob_messages():

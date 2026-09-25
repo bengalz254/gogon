@@ -20,8 +20,9 @@ feeds:
   # binance / bybit = direct exchange websockets (lower latency; may be geo-blocked)
   cex_source: rtds
   bootstrap_history: true           # ~1h of 1m klines at startup (1h filter + vol)
-  oracle_max_age_s: 3.0             # no trading on a stale oracle
+  oracle_max_age_s: 5.0             # no trading when no new oracle price arrived for this long
   cex_max_age_s: 3.0
+  rtds_stale_s: 10.0                # reconnect an RTDS socket (and rotate subscribe style) after this long without a new price
 
 settlement:
   # How the window settles. VERIFY in the market rules on polymarket.com.

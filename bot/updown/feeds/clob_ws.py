@@ -8,7 +8,7 @@ import logging
 import time
 
 from bot.updown.events import BookLevel, BookSnapshot, TickSizeChange, TradePrint
-from bot.updown.feeds.base import WsFeed
+from bot.updown.feeds.base import WsFeed, decode_frame
 
 logger = logging.getLogger("polybot.updown.feeds.clob")
 
@@ -125,11 +125,11 @@ class ClobMarketFeed(WsFeed):
             return
         await self.ws.close()  # resubscribe everything on reconnect
 
-    def on_message(self, raw) -> None:
-        if isinstance(raw, bytes):
-            raw = raw.decode("utf-8", "replace")
-        raw = raw.strip()
-        if not raw or raw.upper() == "PONG" or raw[0] not in "[{":
-            return
-        for ev in parse_clob(json.loads(raw)):
+    def on_message(self, raw) -> bool:
+        text = decode_frame(raw)
+        if text is None:
+            return False
+        events = parse_clob(json.loads(text))
+        for ev in events:
             self.emit(ev)
+        return bool(events)

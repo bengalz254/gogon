@@ -21,7 +21,7 @@ from bot.updown.engine import Engine
 from bot.updown.events import FeedStatus, OfficialPriceToBeat, OfficialResolution, WindowListed
 from bot.updown.feeds.cex import BinanceFeed, BybitFeed, bootstrap_klines
 from bot.updown.feeds.clob_ws import ClobMarketFeed
-from bot.updown.feeds.rtds import RtdsFeed
+from bot.updown.feeds.rtds import build_rtds_feeds
 from bot.updown.journal import UpDownJournal
 from bot.updown.orders import CancelOrder, OrderUpdate, PaperBroker, PlaceOrder
 from bot.updown.recorder import EventRecorder
@@ -29,6 +29,18 @@ from bot.updown.risk import UpDownRisk
 from bot.updown.strategies import build_strategies
 
 logger = logging.getLogger("polybot.updown.runner")
+
+
+def server_clock_offset(clob_host: str) -> float | None:
+    """CLOB server time minus local time, in seconds (None if unreachable)."""
+    import requests
+
+    try:
+        resp = requests.get(f"{clob_host.rstrip('/')}/time", timeout=5)
+        resp.raise_for_status()
+        return float(resp.text.strip().strip('"')) - time.time()
+    except Exception:
+        return None
 
 
 class Runner:
@@ -55,11 +67,13 @@ class Runner:
         logger.info("Strategies enabled: %s", ", ".join(s.name for s in strategies) or "(none)")
 
     # -- events in ------------------------------------------------------------------
-    def emit(self, ev) -> None:
+    def emit(self, ev, arrived: float | None = None) -> None:
+        """Feed one event to the engine. `arrived` overrides the arrival time the
+        engine uses for freshness (historical backfill must not look live)."""
         now = time.time()
         if self.recorder is not None:
             self.recorder.record(ev, now)
-        self.engine.handle(ev)
+        self.engine.handle(ev, now if arrived is None else arrived)
         if self.paper is not None:
             for u in self.paper.on_event(ev, now):
                 self.engine.on_order_update(u)
@@ -83,10 +97,15 @@ class Runner:
             client = await asyncio.to_thread(build_client, self.wallet)
             self.broker = LiveBroker(client, self.engine.fees)
             offset = await asyncio.to_thread(self.broker.server_time_offset)
-            if offset is not None and abs(offset) > 2:
-                logger.warning("Local clock is %.1fs off the CLOB server clock: sync with NTP before trading!", -offset)
         else:
             self.paper = PaperBroker(self.engine)
+            offset = await asyncio.to_thread(server_clock_offset, self.wallet.clob_host)
+        if offset is not None and abs(offset) > 2:
+            logger.warning(
+                "Local clock is %.0fs %s the CLOB server clock. Window timing depends on it: sync the "
+                "clock (Windows: Settings > Time & language > Date & time > Sync now).",
+                abs(offset), "behind" if offset > 0 else "ahead of",
+            )
 
         assets = self.cfg.markets.assets
         chainlink_map = {self.cfg.markets.chainlink_symbol(a): a for a in assets}
@@ -98,13 +117,13 @@ class Runner:
                 bootstrap_klines, cex_map, self.cfg.feeds.binance_rest_url, self.cfg.feeds.bybit_rest_url
             )
             for ev in ticks:
-                self.emit(ev)
+                self.emit(ev, arrived=ev.ts)
             logger.info("Bootstrapped %d kline closes for %d assets", len(ticks), len({e.asset for e in ticks}))
 
-        feeds = [
-            RtdsFeed(self.cfg.feeds.rtds_url, chainlink_map, cex_map if source == "rtds" else {}, self.emit,
-                     self.cfg.feeds.rtds_ping_s, on_status=self._feed_status)
-        ]
+        feeds = build_rtds_feeds(
+            self.cfg.feeds.rtds_url, chainlink_map, cex_map if source == "rtds" else {}, self.emit,
+            ping_s=self.cfg.feeds.rtds_ping_s, stale_s=self.cfg.feeds.rtds_stale_s, on_status=self._feed_status,
+        )
         if source == "binance":
             feeds.append(BinanceFeed(self.cfg.feeds.binance_ws_url, cex_map, self.emit,
                                      self.cfg.feeds.cex_throttle_ms, on_status=self._feed_status))

@@ -116,7 +116,7 @@ def run_simulation(sim: SimConfig | None = None, cfg: UpDownConfig | None = None
     def feed(ev, now):
         if recorder is not None:
             recorder.record(ev, now)
-        engine.handle(ev)
+        engine.handle(ev, now)
         for u in broker.on_event(ev, now):
             engine.on_order_update(u)
 

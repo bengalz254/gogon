@@ -39,16 +39,19 @@ def make(fn=None, use_official=False, journal=None):
 
 
 def feed(eng, broker, ev, now):
-    eng.handle(ev)
+    eng.handle(ev, now)
     for u in broker.on_event(ev, now):
         eng.on_order_update(u)
 
 
-def run(eng, broker, sp, t_from, t_to, price, up=(0.60, 0.62)):
-    """Feed one oracle tick + fresh books per second and step the engine."""
+def run(eng, broker, sp, t_from, t_to, price, up=(0.60, 0.62), clock_ahead=0.0):
+    """Feed one oracle tick + fresh books per second and step the engine.
+
+    clock_ahead: how far the local clock runs ahead of the oracle's timestamps.
+    """
     t = t_from
     while t <= t_to:
-        feed(eng, broker, OracleTick("btc", t + 0.1, price(t)), t + 0.1)
+        feed(eng, broker, OracleTick("btc", t + 0.1 - clock_ahead, price(t)), t + 0.1)
         if sp.start - 5 <= t < sp.end:
             bid, ask = up
             feed(eng, broker, BookSnapshot(sp.up_token, t + 0.2, ((bid, 500.0),), ((ask, 500.0),)), t + 0.2)
@@ -183,3 +186,13 @@ def test_early_taker_ban_applies_inside_engine():
     run(eng, broker, sp, T0 - 1900, T0 + 20, flat, up=(0.50, 0.52))
     assert eng.stats["takes"] == 0
     assert not any(isinstance(a, PlaceOrder) for a in eng.step(T0 + 21))
+
+
+def test_local_clock_skew_does_not_make_a_live_oracle_look_stale():
+    eng, broker, sp = make()
+    run(eng, broker, sp, T0 - 1900, T0 + 60, flat, clock_ahead=10.0)
+    w = eng.windows[sp.window_id]
+    assert w.ptb is not None  # locked once the oracle's own clock reached t=0
+    assert w.tradable_reason == ""
+    eng.step(T0 + 70)  # ...but ten seconds without a new price is stale
+    assert "stale" in w.tradable_reason

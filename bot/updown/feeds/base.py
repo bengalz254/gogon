@@ -14,19 +14,22 @@ class WsFeed:
     """Connect, (re)subscribe, keep alive, reconnect with backoff.
 
     Subclasses implement `url()`, `on_open(ws)` and `on_message(raw)`.
-    `status(connected, detail)` is reported through `on_status`.
+    `on_message` returns True when the message carried real data. The idle
+    watchdog only counts those: a socket that still answers PING with PONG
+    (or sends empty frames) but no longer delivers prices is treated as dead
+    and reconnected.
     """
 
     name = "ws"
     ping_text: str | None = "PING"
     ping_interval: float = 10.0
-    idle_timeout: float = 60.0  # force a reconnect if nothing arrives for this long
+    idle_timeout: float = 60.0  # reconnect if no data arrives for this long
 
     def __init__(self, on_status: Callable[[str, bool, str], None] | None = None):
         self.on_status = on_status or (lambda feed, ok, detail: None)
         self.ws = None
         self.connected = False
-        self.last_message = 0.0
+        self.last_data = 0.0
         self.reconnects = 0
 
     def url(self) -> str:
@@ -35,12 +38,20 @@ class WsFeed:
     async def on_open(self, ws) -> None:
         pass
 
-    def on_message(self, raw) -> None:
+    def on_message(self, raw) -> bool:
         raise NotImplementedError
+
+    def on_close(self) -> None:
+        """Called after every connection ends (for per-connection bookkeeping)."""
 
     def ready(self) -> bool:
         """Whether there is anything to connect for (e.g. tokens to watch)."""
         return True
+
+    def _should_log(self) -> bool:
+        # Reconnects can be frequent (e.g. while probing subscribe styles):
+        # log the first few, then every 20th.
+        return self.reconnects <= 3 or self.reconnects % 20 == 0
 
     async def run(self) -> None:
         import websockets
@@ -57,22 +68,23 @@ class WsFeed:
                 ) as ws:
                     self.ws = ws
                     self.connected = True
-                    self.last_message = time.time()
+                    self.last_data = time.time()
                     await self.on_open(ws)
                     self.on_status(self.name, True, "")
-                    logger.info("%s feed connected", self.name)
+                    if self._should_log():
+                        logger.info("%s feed connected", self.name)
                     backoff = 1.0
                     keepalive = asyncio.create_task(self._keepalive(ws))
                     try:
                         async for raw in ws:
-                            self.last_message = time.time()
                             try:
-                                self.on_message(raw)
+                                if self.on_message(raw):
+                                    self.last_data = time.time()
                             except Exception:
                                 logger.exception("%s: failed to handle message: %.200s", self.name, raw)
                     finally:
                         keepalive.cancel()
-                    detail = "closed by server"
+                    detail = "closed"
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # network errors, handshake failures, ...
@@ -82,8 +94,14 @@ class WsFeed:
                 if self.connected:
                     self.connected = False
                     self.reconnects += 1
+                try:
+                    self.on_close()
+                except Exception:
+                    logger.exception("%s: on_close failed", self.name)
             self.on_status(self.name, False, detail or "disconnected")
-            logger.warning("%s feed disconnected (%s); reconnecting in %.0fs", self.name, detail, backoff)
+            if self._should_log():
+                logger.warning("%s feed disconnected (%s); reconnecting in %.0fs (#%d)",
+                               self.name, detail, backoff, self.reconnects)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2.0, 30.0)
 
@@ -92,8 +110,9 @@ class WsFeed:
         while True:
             await asyncio.sleep(1.0)
             now = time.time()
-            if now - self.last_message > self.idle_timeout:
-                logger.warning("%s feed idle for %.0fs; forcing reconnect", self.name, self.idle_timeout)
+            if now - self.last_data > self.idle_timeout:
+                if self._should_log():
+                    logger.warning("%s: no data for %.0fs; reconnecting", self.name, now - self.last_data)
                 await ws.close()
                 return
             if self.ping_text is not None and now - last_ping >= self.ping_interval:
@@ -113,3 +132,12 @@ class WsFeed:
         except Exception:
             return False
 
+
+def decode_frame(raw) -> str | None:
+    """Text of a data frame, or None for PONG / empty / non-JSON frames."""
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", "replace")
+    raw = raw.strip()
+    if not raw or raw.upper() == "PONG" or raw[0] not in "[{":
+        return None
+    return raw
