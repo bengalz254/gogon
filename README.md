@@ -57,19 +57,24 @@ rules around it.
 
 ### The model
 
-- **Settlement-aware.** It supports a TWAP settlement (the mean of the
-  last `twap_seconds` per-second Chainlink samples) or a last-price
-  settlement (`settlement.rule`). Inside the TWAP window, the samples
-  already observed are locked in and only the rest is random. The variance
-  of the future average is computed exactly
-  (`bot/updown/model.py`, checked against Monte Carlo in the tests).
+- **Settlement-aware.** Since 14 Aug 2026 both ends are Chainlink TWAPs
+  (per this repo's other Up/Down branch, which ran against the real
+  markets): the price to beat is the mean of the per-second prices over the
+  60s *before* the open, and the result is the mean over the last 60s before
+  the close. `settlement.rule: last` switches back to single prices. Inside
+  the closing TWAP window, the samples already observed are locked in and
+  only the rest is random. The variance of the future average is computed
+  exactly (`bot/updown/model.py`, checked against Monte Carlo in the tests).
 - **Inputs:** Chainlink price (truth), the CEX price as a *leading
   indicator only* (a basis-corrected nowcast that nudges the spot price),
   realized volatility over 3 and 30 minutes with per-coin floors, time
   remaining, and the distance to `price_to_beat` (locked at t=0).
 - **Robust:** fat-tailed Student-t instead of a normal distribution. The
   edge must hold across `sigma * (1 +/- vol_uncertainty)`, and the result
-  is shrunk toward the market price (`market_blend`).
+  is blended 50/50 with the market price (`market_blend`): other bots may
+  see the settlement price sooner than we do. When the model and the market
+  disagree by more than 0.30 (`max_model_market_gap`), the bot assumes its
+  own data is wrong or late and stays out of that window.
 
 ### Architecture: 4 layers
 

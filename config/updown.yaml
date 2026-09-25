@@ -32,8 +32,9 @@ settlement:
   # data/updown_settlements.csv; `scripts/updown_report.py` shows which rule
   # actually matches. Fix this setting if it doesn't.
   rule: twap
-  twap_seconds: 60
-  ptb_tolerance_s: 2.0              # t=0 must be observed within this many seconds
+  twap_seconds: 60                  # both the price to beat (60s before the open) and the close
+  ptb_tolerance_s: 2.0              # "last" rule only: t=0 must be observed within this many seconds
+  max_gap_s: 10.0                   # longest oracle gap tolerated inside an opening/closing TWAP
   prefer_official_ptb: true         # use Gamma's price_to_beat when it publishes one
   use_official: true                # book P&L on Gamma's official resolution
   official_timeout_s: 1800
@@ -50,7 +51,8 @@ model:
   vol_uncertainty: 0.20             # edge must survive sigma * (1 +/- 0.2)
   cex_lead_weight: 0.5              # how far to nudge spot toward the CEX nowcast
   max_cex_oracle_divergence: 0.003  # pause if CEX and oracle disagree by > 0.3%
-  market_blend: 0.2                 # p = 0.8 * p_model + 0.2 * p_market
+  market_blend: 0.5                 # p = 0.5 * p_model + 0.5 * p_market (other bots may see the oracle sooner)
+  max_model_market_gap: 0.30        # model vs market further apart than this -> assume OUR data is wrong, stay out
 
 fees:
   # Taker fee/share = p * taker_rate * (p*(1-p))^taker_exponent (~1.56% at 50c).
@@ -107,7 +109,7 @@ strategies:
     enabled: true
     min_edge: 0.05                  # 4-8c per the design; after fees, spread and slippage
     min_remaining_s: 10
-    max_remaining_s: 290
+    max_remaining_s: 240              # skip the first minute (~50/50, highest fees)
     max_entries_per_window: 2
     min_entry_spacing_s: 15
     min_price: 0.05

@@ -48,6 +48,7 @@ def parse_bybit(obj, symbol_map: dict) -> list:
 class _ThrottledCex(WsFeed):
     name = "cex"
     idle_timeout = 30.0
+    protocol_ping = 20.0
 
     def __init__(self, symbol_map: dict, emit, throttle_ms: float, on_status=None):
         super().__init__(on_status)

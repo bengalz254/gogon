@@ -118,12 +118,16 @@ class ClobMarketFeed(WsFeed):
             return
         added = tokens - self._subscribed
         self.tokens = tokens
-        if self.ws is None or not added:
+        ws = self.ws  # the connection can drop while we await below
+        if ws is None or not added:
             return  # nothing new to subscribe; stale tokens are harmless until the next reconnect
         if self.dynamic and await self.send_json({"assets_ids": sorted(added), "operation": "subscribe"}):
             self._subscribed |= added
             return
-        await self.ws.close()  # resubscribe everything on reconnect
+        try:
+            await ws.close()  # resubscribe everything on reconnect
+        except Exception:
+            pass
 
     def on_message(self, raw) -> bool:
         text = decode_frame(raw)

@@ -21,9 +21,13 @@ class WsFeed:
     """
 
     name = "ws"
-    ping_text: str | None = "PING"
+    ping_text: str | None = "PING"  # application-level keepalive, sent as text
     ping_interval: float = 10.0
     idle_timeout: float = 60.0  # reconnect if no data arrives for this long
+    # Protocol-level (control frame) pings from the websockets library. Off for
+    # Polymarket sockets, which use text PING/PONG: on the real CLOB socket the
+    # library's pings timed out about once a minute (close code 1011).
+    protocol_ping: float | None = None
 
     def __init__(self, on_status: Callable[[str, bool, str], None] | None = None):
         self.on_status = on_status or (lambda feed, ok, detail: None)
@@ -64,7 +68,8 @@ class WsFeed:
             detail = ""
             try:
                 async with websockets.connect(
-                    self.url(), open_timeout=15, ping_interval=20, ping_timeout=20, max_size=2**24,
+                    self.url(), open_timeout=20, ping_interval=self.protocol_ping,
+                    ping_timeout=self.protocol_ping, max_size=2**24,
                 ) as ws:
                     self.ws = ws
                     self.connected = True

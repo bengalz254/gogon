@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from collections import deque
 from dataclasses import dataclass
 
@@ -35,9 +36,6 @@ from bot.updown.strategies.base import Quote, QuoteView, StrategyContext, Take
 from bot.updown.window import DOWN, OUTCOMES, UP, Phase, WindowSpec, WindowState
 
 logger = logging.getLogger("polybot.updown.engine")
-
-MAX_SETTLEMENT_GAP_S = 5.0
-
 
 @dataclass
 class Exposure:
@@ -208,22 +206,37 @@ class Engine:
             if not inflight or now >= spec.end + 30:
                 self._provisional_settle(w, now)
 
+    def _strikes(self, series: PriceSeries, start: float) -> tuple[float | None, float | None]:
+        """Both candidate strikes from one feed: (TWAP over the `twap_seconds`
+        before the open, price at the open). None where the data is missing."""
+        cfg = self.cfg.settlement
+        last = None
+        b = series.last_bucket_at_or_before(start)
+        if b is not None and start - b[0] <= cfg.ptb_tolerance_s:
+            last = b[1]
+        else:
+            a = series.first_price_at_or_after(start, cfg.ptb_tolerance_s)
+            if a is not None:
+                last = a[1]
+        first = int(start) - max(1, int(cfg.twap_seconds)) + 1
+        twap = None
+        if series.last_bucket_at_or_before(first) is not None and series.max_gap(first, start) <= cfg.max_gap_s:
+            twap = series.sample_mean(first, int(start))
+        return twap, last
+
     def _lock_ptb(self, w: WindowState) -> None:
         cfg = self.cfg.settlement
+        series = self.oracle.get(w.asset)
+        # Wait until the oracle has reported the opening second itself.
+        if series is not None and series.last_ts is not None and series.last_ts >= w.spec.start \
+                and w.ptb_twap is None and w.ptb_last is None:
+            w.ptb_twap, w.ptb_last = self._strikes(series, w.spec.start)
         if w.official_ptb is not None and cfg.prefer_official_ptb:
             w.ptb, w.ptb_source = w.official_ptb, "official"
-            return
-        series = self.oracle.get(w.asset)
-        if series is None:
-            return
-        start = w.spec.start
-        before = series.last_bucket_at_or_before(start)
-        if before is not None and start - before[0] <= cfg.ptb_tolerance_s:
-            w.ptb, w.ptb_source = before[1], "oracle@t0"
-        else:
-            after = series.first_price_at_or_after(start, cfg.ptb_tolerance_s)
-            if after is not None:
-                w.ptb, w.ptb_source = after[1], "oracle@t0+"
+        elif cfg.rule == "twap" and w.ptb_twap is not None:
+            w.ptb, w.ptb_source = w.ptb_twap, f"oracle {cfg.twap_seconds}s TWAP before the open"
+        elif cfg.rule == "last" and w.ptb_last is not None:
+            w.ptb, w.ptb_source = w.ptb_last, "oracle at the open"
         if w.ptb is not None:
             logger.info("%s price_to_beat locked at %.6g (%s)", w.window_id, w.ptb, w.ptb_source)
 
@@ -241,17 +254,38 @@ class Engine:
             w.ptb, w.ptb_source = price, "official"
 
     # -- trading -----------------------------------------------------------------
+    def _not_tradable(self, w: WindowState, reason: str, actions: list) -> None:
+        # Reasons carry live numbers ("no new price for 7.3s"): log a change of
+        # kind, not every step. Right after the open the opening second simply
+        # hasn't arrived yet; only complain if the strike is still missing later.
+        opening = w.ptb is None and self.now - w.spec.start < 5.0
+        if _reason_key(reason) != _reason_key(w.tradable_reason) and not opening:
+            logger.info("%s not tradable: %s", w.window_id, reason)
+        w.tradable_reason = reason
+        self._cancel_window_orders(w, actions, reason, quotes_only=True)
+
+    def market_p_up(self, w: WindowState) -> float | None:
+        up, down = self.books[w.spec.up_token], self.books[w.spec.down_token]
+        if up.mid is not None:
+            return up.mid
+        return None if down.mid is None else 1.0 - down.mid
+
     def _trade_window(self, w: WindowState, now: float, actions: list) -> None:
         snap, reason = self._model(w, now)
         if snap is None:
-            if reason != w.tradable_reason:
-                logger.info("%s not tradable: %s", w.window_id, reason)
-            w.tradable_reason = reason
-            self._cancel_window_orders(w, actions, reason, quotes_only=True)
+            self._not_tradable(w, reason, actions)
             return
-        w.tradable_reason = ""
         w.last_model = snap
         self._maybe_snapshot(w, snap, now)
+        limit = self.cfg.model.max_model_market_gap
+        mkt = self.market_p_up(w)
+        if limit > 0 and mkt is not None and abs(snap.p_up - mkt) > limit:
+            self._not_tradable(w, (
+                f"model p_up {snap.p_up:.2f} vs market {mkt:.2f}: gap > {limit:.2f}, "
+                "assuming our data (feed or price_to_beat) is wrong or late"
+            ), actions)
+            return
+        w.tradable_reason = ""
         if w.spec.end - now <= self.cfg.execution.cancel_quotes_before_end_s:
             self._cancel_window_orders(w, actions, "close approaching", quotes_only=True)
             return
@@ -451,7 +485,7 @@ class Engine:
     def _model(self, w: WindowState, now: float, drift: float = 0.0) -> tuple[ModelSnapshot | None, str]:
         spec = w.spec
         if w.ptb is None:
-            return None, "no price_to_beat (t=0 not observed)"
+            return None, "no price_to_beat yet (needs oracle data for the minute before the open)"
         for feed in ("oracle", "clob"):
             if feed in self.feed_down:
                 return None, f"{feed} feed down: {self.feed_down[feed]}"
@@ -479,7 +513,7 @@ class Engine:
             if realized_mean is None:
                 return None, "no oracle data at settlement window start"
             gap = series.max_gap(first_sample, min(now, spec.end))
-            if gap > MAX_SETTLEMENT_GAP_S:
+            if gap > self.cfg.settlement.max_gap_s:
                 return None, f"oracle gap {gap:.0f}s inside the settlement window"
         snap = evaluate_window(
             now=now, start=spec.start, end=spec.end, samples=self.samples, ptb=w.ptb, spot=spot,
@@ -538,14 +572,14 @@ class Engine:
             if w.asset == asset and w.spec.start == start and w.ptb is not None:
                 self._slot_open[key] = w.ptb
                 return w.ptb
-        tol = self.cfg.settlement.ptb_tolerance_s
         for series in (self.oracle.get(asset), self.cex.get(asset)):
-            if series is None:
+            if series is None or series.last_ts is None or series.last_ts < start:
                 continue
-            b = series.last_bucket_at_or_before(start)
-            if b is not None and start - b[0] <= tol:
-                self._slot_open[key] = b[1]
-                return b[1]
+            twap, last = self._strikes(series, start)
+            value = twap if self.cfg.settlement.rule == "twap" else last
+            if value is not None:
+                self._slot_open[key] = value
+                return value
         return None
 
     def _slot_deltas(self, spec: WindowSpec, now: float) -> dict:
@@ -566,7 +600,7 @@ class Engine:
             w.settle_last = settlement_value(series, spec.end, 1)
             gap = series.max_gap(int(spec.end) - self.samples + 1, spec.end)
             rule_value = w.settle_twap if self.samples > 1 else w.settle_last
-            if w.ptb is not None and rule_value is not None and gap <= MAX_SETTLEMENT_GAP_S:
+            if w.ptb is not None and rule_value is not None and gap <= self.cfg.settlement.max_gap_s:
                 w.provisional_winner = UP if rule_value >= w.ptb else DOWN
         if w.provisional_winner is None:
             w.provisional_winner = ""  # unknown; rely on the official result
@@ -677,15 +711,18 @@ class Engine:
 
     def _settlement_row(self, w: WindowState, event: str) -> dict:
         self._record_result(w)
-        def rule_winner(v):
-            if v is None or w.ptb is None:
+
+        def rule_winner(settle, strike):
+            if settle is None or strike is None:
                 return ""
-            return UP if v >= w.ptb else DOWN
+            return UP if settle >= strike else DOWN
 
         return {
             "window_id": w.window_id, "asset": w.asset, "start": w.spec.start, "end": w.spec.end,
             "ptb": w.ptb, "ptb_source": w.ptb_source, "settle_twap": w.settle_twap, "settle_last": w.settle_last,
-            "winner_twap_rule": rule_winner(w.settle_twap), "winner_last_rule": rule_winner(w.settle_last),
+            # Each rule with its own strike: TWAP-vs-TWAP, and price-at-close vs price-at-open.
+            "winner_twap_rule": rule_winner(w.settle_twap, w.ptb_twap),
+            "winner_last_rule": rule_winner(w.settle_last, w.ptb_last),
             "provisional_winner": w.provisional_winner or "", "official_winner": w.official_winner or "",
             "booked_winner": w.booked_winner or "", "event": event,
             "pnl_total": round(sum(w.pnl.values()), 6), "pnl_by_strategy": {k: round(v, 6) for k, v in w.pnl.items()},
@@ -809,3 +846,7 @@ def _fmt(x, digits: int = 6) -> str:
 
 def _finite(x: float):
     return x if math.isfinite(x) else (1e9 if x > 0 else -1e9)
+
+
+def _reason_key(reason: str) -> str:
+    return re.sub(r"\d+(\.\d+)?", "#", reason or "")

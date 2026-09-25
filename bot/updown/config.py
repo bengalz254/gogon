@@ -78,9 +78,12 @@ class SettlementConfig:
     # samples over the last `twap_seconds`; "last" = the single price at close.
     # VERIFY against the market's rules text; the bot logs both computed
     # outcomes next to the official one so you can check which rule matches.
+    # Since 14 Aug 2026 (per this repo's other Up/Down branch) the price to
+    # beat is ALSO a TWAP: the mean over the `twap_seconds` before the open.
     rule: str = "twap"
     twap_seconds: int = 60
-    ptb_tolerance_s: float = 2.0  # max distance from t=0 for locking price_to_beat
+    ptb_tolerance_s: float = 2.0  # "last" rule: max distance from t=0 for the opening price
+    max_gap_s: float = 10.0  # longest oracle gap tolerated inside an opening/closing TWAP window
     prefer_official_ptb: bool = True
     settle_grace_s: float = 3.0
     use_official: bool = True  # wait for Gamma's resolution before booking P&L
@@ -110,8 +113,13 @@ class ModelConfig:
     cex_lead_weight: float = 0.5
     basis_halflife_s: float = 60.0
     max_cex_oracle_divergence: float = 0.003
-    # Shrink toward the market price: p = (1-w)*p_model + w*p_market.
-    market_blend: float = 0.2
+    # Shrink toward the market price: p = (1-w)*p_model + w*p_market. Other
+    # bots may see the settlement price sooner than we do (paper results on the
+    # other branch showed adverse selection at lower weights).
+    market_blend: float = 0.5
+    # If the model and the market disagree by more than this, assume our data
+    # (feed, price_to_beat) is wrong or late and stay out. 0 = off.
+    max_model_market_gap: float = 0.30
 
     def vol_floor(self, asset: str) -> float:
         return float(self.vol_floor_annual.get(asset, self.default_vol_floor_annual))
@@ -199,7 +207,7 @@ class FairValueConfig(StrategyConfig):
     enabled: bool = True
     min_edge: float = 0.05
     min_remaining_s: float = 10.0
-    max_remaining_s: float = 290.0
+    max_remaining_s: float = 240.0  # skip the first minute: ~50/50, no information, highest fees
     max_entries_per_window: int = 2
     min_entry_spacing_s: float = 15.0
     min_price: float = 0.05

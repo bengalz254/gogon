@@ -174,7 +174,7 @@ def run_simulation(sim: SimConfig | None = None, cfg: UpDownConfig | None = None
             if spec.window_id not in resolved and t >= spec.end + 20:
                 resolved.add(spec.window_id)
                 settle = oracle_series[a].sample_mean(int(spec.end) - samples + 1, int(spec.end))
-                ptb = oracle_series[a].price_at(spec.start)
+                ptb = _strike(oracle_series[a], spec.start, samples)
                 if settle is not None and ptb is not None:
                     winner = UP if settle >= ptb else DOWN
                     official[spec.window_id] = winner
@@ -219,7 +219,7 @@ def run_simulation(sim: SimConfig | None = None, cfg: UpDownConfig | None = None
 def _market_maker_prob(sim, asset, spec, t, hist, oracle, sigma, samples, rng, noise_state) -> float:
     lag = min(len(hist) - 1, sim.mm_lag_s + sim.oracle_lag_s)
     stale_spot = hist[-1 - lag]
-    ptb = oracle.price_at(spec.start) or stale_spot
+    ptb = _strike(oracle, spec.start, samples) or stale_spot
     first = int(spec.end) - samples + 1
     realized = oracle.sample_mean(first, int(t)) if int(t) >= first else None
     dist = settlement_distribution(
@@ -229,6 +229,14 @@ def _market_maker_prob(sim, asset, spec, t, hist, oracle, sigma, samples, rng, n
     p = prob_at_least(dist, ptb, "normal", 0)
     noise_state[asset] = 0.9 * noise_state[asset] + rng.gauss(0, sim.mm_noise * math.sqrt(1 - 0.81))
     return clamp(p + noise_state[asset], 0.02, 0.98)
+
+
+def _strike(series: PriceSeries, start: float, samples: int) -> float | None:
+    """Price to beat under the same rule as settlement: the mean of the
+    `samples` per-second prices before the open (or the price at the open)."""
+    if samples > 1:
+        return series.sample_mean(int(start) - samples + 1, int(start))
+    return series.price_at(start)
 
 
 def _books(spec: WindowSpec, p_up: float, sim: SimConfig, ts: float):

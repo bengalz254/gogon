@@ -25,11 +25,15 @@ class Scripted:
         return self.fn(ctx)
 
 
-def make(fn=None, use_official=False, journal=None):
+def make(fn=None, use_official=False, journal=None, gap_guard=0.0, rule="twap"):
     cfg = UpDownConfig()
     cfg.markets.assets = ["btc"]
     cfg.settlement.use_official = use_official
+    cfg.settlement.rule = rule
     cfg.risk.bankroll_usd = 1000
+    # Most tests script a market that deliberately disagrees with the model;
+    # the model/market gap guard has its own test below.
+    cfg.model.max_model_market_gap = gap_guard
     strategies = [Scripted(fn)] if fn else []
     eng = Engine(cfg, strategies, UpDownRisk(cfg.risk, now=T0 - 4000), journal or NullJournal(), mode="test")
     broker = PaperBroker(eng)
@@ -65,13 +69,41 @@ def flat(t):
     return 100.0 + (0.0001 if int(t) % 2 else -0.0001)  # tiny wiggle so vol estimates exist
 
 
-def test_price_to_beat_locks_at_t0():
+def test_price_to_beat_is_the_twap_of_the_minute_before_the_open():
     eng, broker, sp = make()
     run(eng, broker, sp, T0 - 1900, T0 + 5, lambda t: 100.0 + (t - T0) * 0.001)
     w = eng.windows[sp.window_id]
-    assert w.ptb == pytest.approx(100.0 + (-0.9) * 0.001, abs=0.002)  # last tick at/before t0
-    assert w.ptb_source.startswith("oracle")
+    # per-second samples at t0-59 .. t0 of a price rising 0.001/s: mean = 100 - 0.0295
+    assert w.ptb == pytest.approx(99.9705, abs=1e-6)
+    assert "TWAP" in w.ptb_source
+    assert w.ptb_last == pytest.approx(100.0)  # kept for the settlement-rule check
     assert w.tradable_reason == ""
+
+
+def test_last_price_rule_uses_the_price_at_the_open():
+    eng, broker, sp = make(rule="last")
+    run(eng, broker, sp, T0 - 1900, T0 + 5, lambda t: 100.0 + (t - T0) * 0.001)
+    assert eng.windows[sp.window_id].ptb == pytest.approx(100.0)
+
+
+def test_no_price_to_beat_without_the_minute_before_the_open():
+    eng, broker, sp = make(lambda ctx: [Take("Up", 0.99, 0.99, 0.3, "always")])
+    run(eng, broker, sp, T0 - 20, T0 + 60, flat)  # only 20s of history before the open
+    w = eng.windows[sp.window_id]
+    assert w.ptb is None and "price_to_beat" in w.tradable_reason
+    assert eng.stats["takes"] == 0
+
+
+def test_model_market_gap_guard_stays_out():
+    def after_jump(ctx):
+        return [Take("Up", 0.62, 0.9, 0.25, "x")] if ctx.model.elapsed >= 70 else []
+
+    eng, broker, sp = make(after_jump, gap_guard=0.30)
+    # price runs well above the strike, but the market still says ~0.61
+    run(eng, broker, sp, T0 - 1900, T0 + 130, lambda t: flat(t) + (0.5 if t >= T0 + 60 else 0.0))
+    w = eng.windows[sp.window_id]
+    assert "market" in w.tradable_reason and "gap" in w.tradable_reason
+    assert eng.stats["takes"] == 0
 
 
 def test_missed_open_is_never_traded():

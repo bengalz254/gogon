@@ -71,6 +71,10 @@ class WindowState:
     phase: Phase = Phase.UPCOMING
     ptb: float | None = None
     ptb_source: str = ""
+    # Both candidate strikes from our oracle feed, kept for the settlement-rule
+    # check in the report: 60s TWAP before the open, and the price at the open.
+    ptb_twap: float | None = None
+    ptb_last: float | None = None
     official_ptb: float | None = None
     # (strategy, outcome) -> Holding
     holdings: dict = field(default_factory=dict)
