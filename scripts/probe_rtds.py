@@ -85,7 +85,35 @@ def probe(name: str, msg: dict) -> None:
         print("(nothing received)")
 
 
+def check_symbols(symbols: list[str]) -> None:
+    """Does the Chainlink topic have data for each coin the bot trades?"""
+    print("\n=== Chainlink data per coin ===")
+    for sym in symbols:
+        msg = {"action": "subscribe", "subscriptions": [{"topic": "crypto_prices_chainlink", "type": "*", "filters": json.dumps({"symbol": sym})}]}
+        try:
+            ws = websocket.create_connection(URL, timeout=5)
+            ws.send(json.dumps(msg))
+            ws.settimeout(6)
+            raw = ws.recv()
+            ws.close()
+        except Exception as exc:
+            print(f"  {sym:10s} FAIL ({exc})")
+            continue
+        try:
+            data = json.loads(raw).get("payload", {}).get("data") or []
+        except Exception:
+            data = []
+        if data:
+            last = data[-1]
+            print(f"  {sym:10s} OK   {len(data)} points, last {last.get('value')}")
+        else:
+            print(f"  {sym:10s} NO DATA  {str(raw)[:160]}")
+
+
 if __name__ == "__main__":
-    for name, msg in ATTEMPTS.items():
-        probe(name, msg)
+    if "--coins" in sys.argv:
+        check_symbols(["btc/usd", "eth/usd", "sol/usd", "xrp/usd", "bnb/usd", "doge/usd", "hype/usd"])
+    else:
+        for name, msg in ATTEMPTS.items():
+            probe(name, msg)
     print("\nDone. Paste everything above into the chat.")

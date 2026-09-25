@@ -143,8 +143,13 @@ class FeedConfig:
     binance_host: str = "https://api.binance.com"
     hyperliquid_host: str = "https://api.hyperliquid.xyz"
     poll_seconds: float = 1.0
-    # Refuse to trade on a price older than this.
-    max_age_s: float = 3.0
+    # Refuse to trade on a price older than this. Chainlink samples are
+    # stamped with the oracle's observation time, which reaches us a moment
+    # later, so allow a little more than one second of relay delay.
+    max_age_s: float = 5.0
+    # Live price source: "chainlink" (the settlement oracle, via Polymarket's
+    # RTDS socket) or "binance" (Binance spot / Hyperliquid for HYPE).
+    source: str = "chainlink"
 
 
 @dataclass
@@ -245,6 +250,8 @@ def load_updown_settings(config_path: str | None = None, env_path: str | None = 
         mode=str(raw.get("mode", "maker")).lower(),
         maker=_section(MakerConfig, raw.get("maker")),
     )
+    if settings.feed.source not in ("chainlink", "binance"):
+        raise ValueError("feed.source must be 'chainlink' or 'binance'")
     if settings.mode not in ("maker", "taker"):
         raise ValueError("mode must be 'maker' or 'taker'")
     s = settings.strategy

@@ -27,9 +27,14 @@ Bot mengikuti aturan ini (`model.twap_window_s: 60`):
 - Konsekuensi penting: di menit terakhir, kalau harga dekat strike, peluang
   bergerak **~1,7× lebih cepat** daripada di sistem lama. Itu sebabnya market
   maker menarik semua bid 60 detik sebelum tutup.
-- Feed TWAP resmi Polymarket (RTDS WebSocket) belum dipakai. Jalankan
-  `venv/bin/python scripts/probe_rtds.py` di server dan kirim hasilnya supaya
-  bisa disambungkan.
+- **Sumber harga = Chainlink** (`feed.source: chainlink`), yaitu oracle yang
+  dipakai settlement, lewat WebSocket RTDS publik Polymarket
+  (`crypto_prices_chainlink`, per detik). Bot menghitung TWAP 60 detik
+  sendiri dari data ini, jadi tidak ada lagi selisih Binance vs Chainlink.
+  Binance/Hyperliquid hanya dipakai sekali saat start untuk estimasi
+  volatilitas awal. Kembali ke Binance: `feed.source: binance`.
+- Cek coin mana yang punya data Chainlink:
+  `venv/bin/python scripts/probe_rtds.py --coins`.
 
 ## Mode default: market maker
 

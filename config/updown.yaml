@@ -56,7 +56,8 @@ risk:
 feed:
   binance_host: "https://api.binance.com"   # US: https://api.binance.us
   poll_seconds: 1.0
-  max_age_s: 3.0
+  max_age_s: 5.0
+  source: chainlink   # chainlink = settlement oracle via Polymarket RTDS; binance = Binance spot
 
 # ---------------------------------------------------------------------------
 # Strategy mode.

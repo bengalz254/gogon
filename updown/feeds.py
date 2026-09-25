@@ -191,6 +191,26 @@ class HyperliquidFeed(_PollingFeed):
         return [float(r["c"]) for r in rows]
 
 
+def chainlink_symbol(asset: str) -> str:
+    return f"{asset}/usd"
+
+
+def build_price_feeds(assets: list[str], cfg: FeedConfig, history: PriceHistory, on_tick=None) -> tuple[dict, dict]:
+    """(live price feed per asset, candle seeder per asset).
+
+    With source "chainlink" prices come from the settlement oracle; Binance /
+    Hyperliquid are still used once at startup to seed volatility from 1m
+    candles, since the socket has no history endpoint.
+    """
+    seeders = build_feeds(assets, cfg, history, on_tick)
+    if cfg.source == "chainlink":
+        from updown.chainlink_feed import ChainlinkRTDSFeed
+
+        feed = ChainlinkRTDSFeed(assets, {a: chainlink_symbol(a) for a in assets}, history, on_tick)
+        return {a: feed for a in assets}, seeders
+    return seeders, seeders
+
+
 def build_feeds(assets: list[str], cfg: FeedConfig, history: PriceHistory, on_tick=None) -> dict[str, _PollingFeed]:
     """One feed per venue; returns {asset: the feed that prices it}."""
     by_asset: dict[str, _PollingFeed] = {}

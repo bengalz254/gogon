@@ -27,7 +27,7 @@ def run_live(settings, logger) -> None:
     from bot.journal import TradeJournal
     from updown.broker import LiveBroker, PaperBroker
     from updown.engine import UpDownEngine
-    from updown.feeds import PriceHistory, build_feeds
+    from updown.feeds import PriceHistory, build_price_feeds
     from updown.markets import PolymarketGateway
     from updown.state import build_state, write_state
 
@@ -49,9 +49,10 @@ def run_live(settings, logger) -> None:
     gateway = PolymarketGateway(settings.gamma_host, settings.wallet.clob_host, settings.slug_template, settings.window_seconds)
     engine = UpDownEngine(settings, gateway, broker, history, TradeJournal(settings.journal_path), maker_broker=maker_broker)
 
-    feeds = build_feeds(settings.assets, settings.feed, history, on_tick=engine.on_price)
+    feeds, seeders = build_price_feeds(settings.assets, settings.feed, history, on_tick=engine.on_price)
+    logger.info("Price source: %s", "Chainlink (settlement oracle, via Polymarket RTDS)" if settings.feed.source == "chainlink" else "Binance/Hyperliquid")
     for asset in settings.assets:
-        sigma = feeds[asset].seed_sigma(asset)
+        sigma = seeders[asset].seed_sigma(asset)
         if sigma:
             engine.vol[asset].seed(sigma)
             logger.info("[%s] seeded volatility %.2e per sqrt(s) (~%.0f%% annualized)", asset, sigma, sigma * (365 * 86400) ** 0.5 * 100)
