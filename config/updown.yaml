@@ -55,6 +55,7 @@ risk:
 
 feed:
   binance_host: "https://api.binance.com"   # US: https://api.binance.us
+  binance_ws: "wss://stream.binance.com:9443" # US: wss://stream.binance.us:9443
   poll_seconds: 1.0
   max_age_s: 5.0
   source: chainlink   # chainlink = settlement oracle via Polymarket RTDS; binance = Binance spot
@@ -73,15 +74,15 @@ mode: maker
 maker:
   quote_start_s: 15        # start quoting this long after the window opens
   stop_quoting_s: 60       # pull all bids with this many seconds left
-  half_spread: 0.03        # minimum distance below fair price, each side
+  half_spread: 0.05        # minimum distance below fair price, each side
   vol_spread_mult: 2.5     # ...widened with how fast the probability moves
   reaction_s: 2.0          # our reaction time used for that widening
   tick: 0.01
-  quote_shares: 10         # shares per bid
-  max_side_shares: 40      # per window, per side
-  max_imbalance_shares: 10 # max unpaired shares (Up - Down or Down - Up)
+  quote_shares: 5          # shares per bid
+  max_side_shares: 20      # per window, per side
+  max_imbalance_shares: 5  # max unpaired shares (Up - Down or Down - Up)
   skew_per_share: 0.002    # lean bids toward completing pairs
-  pair_margin: 0.02        # a pair must cost at most 1 - this
+  pair_margin: 0.04        # a pair must cost at most 1 - this
   min_price: 0.15         # only quote while the market is still undecided
   max_price: 0.85
   requote_s: 3             # raise a bid at most this often (lowering is instant)
@@ -90,3 +91,8 @@ maker:
   fast_move_window_s: 5    # ...within this many seconds...
   fast_move_cooldown_s: 15 # ...for this long
   max_model_gap: 0.25      # stay out if our model and the market disagree this much
+  lead_guard: true         # early warning: watch Binance (Hyperliquid for HYPE) live...
+  lead_move_z: 2.5         # ...and pull all bids on a move this many sigmas...
+  lead_window_s: 3         # ...within this many seconds...
+  lead_cooldown_s: 10      # ...for this long
+  lead_latency_s: 0.5      # paper: time we allow ourselves to get the cancels out

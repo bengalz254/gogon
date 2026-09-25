@@ -55,6 +55,16 @@ sekarang `mode: maker`:
 - Paper mode mengisi bid kalau (1) ada transaksi publik di mana seseorang
   **menjual** di harga ≤ bid kita, atau (2) ask pasar turun ke harga bid kita.
   Antrian order diabaikan, jadi jumlah fill di paper cenderung optimis.
+- **Alarm dini Binance** (`lead_guard`): harga bergerak dulu di Binance
+  (Hyperliquid untuk HYPE), baru Chainlink dan order book Polymarket
+  menyusul. Bot mendengarkan transaksi Binance secara real-time; kalau harga
+  bergerak lebih dari `lead_move_z` sigma dalam `lead_window_s` detik, semua
+  bid coin itu ditarik selama `lead_cooldown_s` detik. Di paper, gerakan
+  baru dianggap "sempat" kalau terlihat minimal `lead_latency_s` (0,5 dtk)
+  sebelumnya, supaya hasil paper tidak terlalu optimis. Di live, alarm
+  langsung membangunkan bot (tidak menunggu tick 1 detik berikutnya).
+- **Lebih hati-hati**: bid minimal 5 sen di bawah harga wajar, 5 saham per
+  bid, maksimal 5 saham tak berpasangan, dan pasangan harus untung ≥ 4 sen.
 
 Di simulator, pasangan lengkap menghasilkan untung dan sisa tak berpasangan
 merugi; hasil bersihnya tipis dan bergantung pada seberapa banyak trader

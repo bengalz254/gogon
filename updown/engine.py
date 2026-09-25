@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import threading
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -21,7 +22,7 @@ from bot.journal import TradeJournal
 from bot.strategies.base import Signal
 from updown.config import UpDownSettings
 from updown.feeds import PriceHistory
-from updown.maker import FastMoveGuard, MakerQuoter, PaperMakerBroker
+from updown.maker import FastMoveGuard, LeadGuard, MakerQuoter, PaperMakerBroker
 from updown.markets import WindowMarket, window_start
 from updown.model import VolEstimator, prob_vol_1s, twap_prob_vol_1s
 from updown.risk import UpDownRisk
@@ -79,7 +80,8 @@ class Stats:
 
 
 class UpDownEngine:
-    def __init__(self, settings: UpDownSettings, gateway, broker, history: PriceHistory, journal: TradeJournal | None, settle_fallback_s: float = 600.0, maker_broker=None):
+    def __init__(self, settings: UpDownSettings, gateway, broker, history: PriceHistory, journal: TradeJournal | None, settle_fallback_s: float = 600.0, maker_broker=None,
+                 lead_history: PriceHistory | None = None):
         self.s = settings
         self.gateway = gateway
         self.broker = broker
@@ -97,6 +99,11 @@ class UpDownEngine:
         self.quoter = MakerQuoter(settings.maker)
         self.maker_broker = maker_broker or PaperMakerBroker(settings.maker)
         self.fast_guard = FastMoveGuard(settings.maker)
+        # Early-warning prices (Binance / Hyperliquid), if running.
+        self.lead_history = lead_history
+        self.lead_guard = LeadGuard(settings.maker)
+        # Set from the lead feed's thread to run a tick right away (live only).
+        self.wake = threading.Event()
         self.started_at: float | None = None
         self.recent_windows: deque[dict] = deque(maxlen=64 * max(1, len(settings.assets)))  # newest last
         self.asset_stats: dict[str, Stats] = {a: Stats() for a in settings.assets}
@@ -105,6 +112,26 @@ class UpDownEngine:
     # -- inputs ---------------------------------------------------------
     def on_price(self, asset: str, ts: float, price: float) -> None:
         self.vol[asset].update(ts, price)
+
+    def on_lead_price(self, asset: str, ts: float, price: float) -> None:
+        """Lead-feed thread: wake the main loop at once if a sharp move starts,
+        so live bids get cancelled now instead of at the next 1s tick."""
+        if not self.broker.live or self.lead_history is None or asset not in self.vol:
+            return
+        if ts < self.lead_guard.until.get(asset, 0.0):
+            return  # already pulled
+        z = self.lead_guard.move_z(self.lead_history, asset, ts, self.vol[asset].sigma)
+        if z is not None and z > self.s.maker.lead_move_z:
+            self.wake.set()
+
+    def _lead_pulled(self, asset: str, now: float) -> bool:
+        if self.lead_history is None or not self.s.maker.lead_guard:
+            return False
+        before = self.lead_guard.trips.get(asset, 0)
+        pulled = self.lead_guard.check(self.lead_history, asset, now, self.vol[asset].sigma)
+        if self.lead_guard.trips.get(asset, 0) > before:
+            logger.info("[%s] early warning: sharp move on the lead venue; bids pulled for %.0fs", asset, self.s.maker.lead_cooldown_s)
+        return pulled
 
     # -- main tick -------------------------------------------------------
     def tick(self, now: float) -> None:
@@ -326,6 +353,12 @@ class UpDownEngine:
         seconds_left = st.end - now
         books = {o: all_books.get(tokens[o]) for o in (UP, DOWN)}
 
+        # 0. Early warning: the leading venue is moving fast, so cancel before
+        #    counting fills (the cancel went out when we saw the move).
+        lead_pulled = self._lead_pulled(st.asset, now)
+        if lead_pulled:
+            mb.cancel_all(list(tokens.values()))
+
         # 1. Fills on the bids we already have out.
         resting = any(t in mb.orders for t in tokens.values())
         if resting and not mb.live and hasattr(self.gateway, "trades") and now - st.last_trades_fetch >= TRADES_POLL_S:
@@ -362,6 +395,8 @@ class UpDownEngine:
                 reason = f"no risk room (${room:.2f})"
             elif self.fast_guard.check(st.asset, now, latest[1], then, self.vol[st.asset].sigma):
                 reason = "sharp move: quotes pulled for a moment"
+            elif lead_pulled:
+                reason = "early warning: Binance moving fast; bids pulled"
         if reason:
             mb.cancel_all(list(tokens.values()))
             st.why = reason

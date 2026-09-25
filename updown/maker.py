@@ -284,3 +284,37 @@ class FastMoveGuard:
             if z > c.fast_move_z:
                 self.until[asset] = now + c.fast_move_cooldown_s
         return now < self.until.get(asset, 0.0)
+
+
+class LeadGuard:
+    """Pull bids when the leading venue (Binance / Hyperliquid) moves sharply.
+
+    Polymarket's fast market makers reprice off Binance; if we wait for our
+    own (Chainlink) price, our stale bids are already filled. Only price
+    seen at least `lead_latency_s` ago counts, so paper results don't assume
+    we cancel faster than we could.
+    """
+
+    def __init__(self, cfg: MakerConfig):
+        self.cfg = cfg
+        self.until: dict[str, float] = {}
+        self.trips: dict[str, int] = {}
+
+    def move_z(self, history, asset: str, t: float, sigma: float) -> float | None:
+        c = self.cfg
+        now_p = history.price_at(asset, t, 2.0)
+        then_p = history.price_at(asset, t - c.lead_window_s, 2.0)
+        if not now_p or not then_p or sigma <= 0:
+            return None
+        return abs(math.log(now_p / then_p)) / (sigma * math.sqrt(c.lead_window_s))
+
+    def check(self, history, asset: str, now: float, sigma: float) -> bool:
+        """True while bids should stay pulled."""
+        c = self.cfg
+        t = now - c.lead_latency_s
+        z = self.move_z(history, asset, t, sigma)
+        if z is not None and z > c.lead_move_z:
+            if now >= self.until.get(asset, 0.0):
+                self.trips[asset] = self.trips.get(asset, 0) + 1
+            self.until[asset] = t + c.lead_cooldown_s
+        return now < self.until.get(asset, 0.0)

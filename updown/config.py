@@ -112,6 +112,16 @@ class MakerConfig:
     # Our model vs the market's price: if they disagree by more than this,
     # something is off (or the market knows something), so stay out.
     max_model_gap: float = 0.25
+    # Early warning: Binance (Hyperliquid for HYPE) moves before Chainlink
+    # and before Polymarket's books. Pull bids when it moves more than
+    # lead_move_z sigmas within lead_window_s, for lead_cooldown_s.
+    lead_guard: bool = True
+    lead_move_z: float = 2.5
+    lead_window_s: float = 3.0
+    lead_cooldown_s: float = 10.0
+    # Paper mode: a move only counts as caught in time if we saw it at least
+    # this long before the fill (time to send the cancels).
+    lead_latency_s: float = 0.5
 
 
 @dataclass
@@ -141,6 +151,8 @@ class RiskLimitsConfig:
 class FeedConfig:
     # Binance public REST host. US users: https://api.binance.us
     binance_host: str = "https://api.binance.com"
+    # Real-time trades for the early-warning guard. US: wss://stream.binance.us:9443
+    binance_ws: str = "wss://stream.binance.com:9443"
     hyperliquid_host: str = "https://api.hyperliquid.xyz"
     poll_seconds: float = 1.0
     # Refuse to trade on a price older than this. Chainlink samples are

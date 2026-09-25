@@ -46,8 +46,10 @@ def run_live(settings, logger) -> None:
         maker_broker = PaperMakerBroker(settings.maker)
 
     history = PriceHistory()
+    lead_history = PriceHistory(maxlen=600) if settings.mode == "maker" and settings.maker.lead_guard else None
     gateway = PolymarketGateway(settings.gamma_host, settings.wallet.clob_host, settings.slug_template, settings.window_seconds)
-    engine = UpDownEngine(settings, gateway, broker, history, TradeJournal(settings.journal_path), maker_broker=maker_broker)
+    engine = UpDownEngine(settings, gateway, broker, history, TradeJournal(settings.journal_path), maker_broker=maker_broker,
+                          lead_history=lead_history)
 
     feeds, seeders = build_price_feeds(settings.assets, settings.feed, history, on_tick=engine.on_price)
     logger.info("Price source: %s", "Chainlink (settlement oracle, via Polymarket RTDS)" if settings.feed.source == "chainlink" else "Binance/Hyperliquid")
@@ -58,6 +60,13 @@ def run_live(settings, logger) -> None:
             logger.info("[%s] seeded volatility %.2e per sqrt(s) (~%.0f%% annualized)", asset, sigma, sigma * (365 * 86400) ** 0.5 * 100)
     for feed in set(feeds.values()):
         feed.start()
+    lead = None
+    if lead_history is not None:
+        from updown.lead_feed import LeadFeed
+
+        lead = LeadFeed(settings.assets, lead_history, on_tick=engine.on_lead_price, binance_ws=settings.feed.binance_ws)
+        lead.start()
+        logger.info("Early warning on: bids are pulled when Binance/Hyperliquid move sharply")
 
     signal_module.signal(signal_module.SIGINT, _request_stop)
     signal_module.signal(signal_module.SIGTERM, _request_stop)
@@ -70,10 +79,14 @@ def run_live(settings, logger) -> None:
             write_state(settings.state_path, build_state(engine, time.time()))
         except Exception:
             logger.exception("Could not write dashboard state")
-        time.sleep(max(0.0, settings.tick_seconds - (time.time() - started)))
+        # Sleep until the next tick, or until the early warning wakes us.
+        engine.wake.wait(max(0.0, settings.tick_seconds - (time.time() - started)))
+        engine.wake.clear()
 
     for feed in set(feeds.values()):
         feed.stop()
+    if lead:
+        lead.stop()
     if maker_broker.orders:
         logger.info("Cancelling %d resting order(s) before exit", len(maker_broker.orders))
         maker_broker.cancel_all(list(maker_broker.orders))
