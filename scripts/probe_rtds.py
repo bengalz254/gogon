@@ -90,24 +90,36 @@ def check_symbols(symbols: list[str]) -> None:
     print("\n=== Chainlink data per coin ===")
     for sym in symbols:
         msg = {"action": "subscribe", "subscriptions": [{"topic": "crypto_prices_chainlink", "type": "*", "filters": json.dumps({"symbol": sym})}]}
+        seen, data = [], []
         try:
             ws = websocket.create_connection(URL, timeout=5)
             ws.send(json.dumps(msg))
-            ws.settimeout(6)
-            raw = ws.recv()
+            ws.settimeout(2)
+            end = time.time() + 8
+            # The server may send an empty frame first; keep reading until
+            # prices arrive or time runs out.
+            while time.time() < end and not data:
+                try:
+                    raw = ws.recv()
+                except websocket.WebSocketTimeoutException:
+                    continue
+                if raw in ("", "PONG"):
+                    continue
+                seen.append(str(raw)[:160])
+                try:
+                    payload = json.loads(raw).get("payload") or {}
+                    data = payload.get("data") or ([payload] if "value" in payload else [])
+                except Exception:
+                    data = []
             ws.close()
         except Exception as exc:
             print(f"  {sym:10s} FAIL ({exc})")
             continue
-        try:
-            data = json.loads(raw).get("payload", {}).get("data") or []
-        except Exception:
-            data = []
         if data:
             last = data[-1]
             print(f"  {sym:10s} OK   {len(data)} points, last {last.get('value')}")
         else:
-            print(f"  {sym:10s} NO DATA  {str(raw)[:160]}")
+            print(f"  {sym:10s} NO DATA  {seen[:2] if seen else '(only empty frames in 8s)'}")
 
 
 if __name__ == "__main__":
