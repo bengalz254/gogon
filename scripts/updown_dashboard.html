@@ -272,7 +272,7 @@
     <span class="pill" id="asset-pill">— COIN</span>
     <span class="pill" id="mode-pill">—</span>
     <span class="pill" id="link-pill"><span class="dot"></span><span id="link-text">CONNECTING</span></span>
-    <span class="clock" id="clock">--:--:-- UTC</span>
+    <span class="clock" id="clock">--:--:--</span>
   </div>
 </header>
 
@@ -409,8 +409,13 @@
   const cents = (x) => x == null ? "—" : x.toFixed(2);
   const signed = (x, d = 3) => x == null ? "—" : (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(d);
   const mmss = (s) => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
-  const hhmmss = (t) => new Date(t * 1000).toISOString().slice(11, 19);
-  const hhmm = (t) => new Date(t * 1000).toISOString().slice(11, 16);
+  // Times are shown in the viewer's own timezone (the browser's), e.g. UTC+8.
+  const pad = (n) => String(n).padStart(2, "0");
+  const hhmmss = (t) => { const d = new Date(t * 1000); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+  const hhmm = (t) => { const d = new Date(t * 1000); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+  const TZ = (() => { const m = -new Date().getTimezoneOffset(); return "UTC" + (m >= 0 ? "+" : "−") + (Math.abs(m) / 60); })();
+  // The daily loss limit resets at 00:00 UTC; say when that is locally.
+  const utcMidnightLocal = hhmm(Date.UTC(2000, 0, 1) / 1000);
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
   // Size an SVG's viewBox to its on-screen width so 11px text stays 11px.
@@ -499,7 +504,7 @@
     mp.className = "pill mode-" + mode;
     mp.textContent = mode === "live" ? "● LIVE · UANG ASLI" : mode === "demo" ? "DEMO · SIMULATOR" : "PAPER · SIMULASI";
     $("asset-pill").textContent = state.assets.length + " COIN · 5M";
-    $("clock").textContent = hhmmss(state.now) + " UTC";
+    $("clock").textContent = hhmmss(state.now) + " " + TZ;
     $("slug").textContent = view.slug || (view.skip_reason ? "window dilewati" : "mencari market…");
     renderCoins(); renderTiles(); renderSignal(); renderTrack(); renderPnl(); renderStrip(); renderRisk(); renderLog();
   }
@@ -831,7 +836,7 @@
     strip.querySelectorAll(".cell[data-i]").forEach((c) => {
       const w = rows[+c.dataset.i];
       const label = { win: "MENANG", loss: "KALAH", flat: "IMPAS", idle: "TANPA TRADE", skip: "DILEWATI" }[w.result];
-      const html = `<div class="t-title">${hhmm(w.start)} UTC · ${label}</div>P&amp;L <b>${usd(w.pnl, true)}</b>` + (w.note ? `<br><span style="color:var(--text-muted)">${esc(w.note).slice(0, 90)}</span>` : "");
+      const html = `<div class="t-title">${hhmm(w.start)} · ${label}</div>P&amp;L <b>${usd(w.pnl, true)}</b>` + (w.note ? `<br><span style="color:var(--text-muted)">${esc(w.note).slice(0, 90)}</span>` : "");
       const show = (ev) => { const r = c.getBoundingClientRect(); showTip(html, ev.clientX || r.right, ev.clientY || r.bottom); };
       c.addEventListener("mousemove", show); c.addEventListener("focus", show);
       c.addEventListener("mouseleave", hideTip); c.addEventListener("blur", hideTip);
@@ -844,7 +849,7 @@
     const r = state.risk;
     const box = $("risk-status");
     let cls = "armed", label = "✓ SIAP", note = "semua batas aman";
-    if (!r.can_trade && r.reason.includes("daily")) { cls = "stop"; label = "✕ STOP HARIAN"; note = "berhenti sampai 00:00 UTC"; }
+    if (!r.can_trade && r.reason.includes("daily")) { cls = "stop"; label = "✕ STOP HARIAN"; note = "berhenti sampai " + utcMidnightLocal + " (" + TZ + ")"; }
     else if (!r.can_trade) { cls = "hold"; label = "⚠ ISTIRAHAT"; note = "cooldown " + mmss(r.cooldown_left); }
     box.innerHTML = `<span class="badge ${cls}">${label}</span><small>${note}</small>`;
     const used = Math.max(0, -r.today_pnl), frac = r.daily_limit ? Math.min(1, used / r.daily_limit) : 0;
