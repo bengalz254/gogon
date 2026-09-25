@@ -9,10 +9,14 @@ if exist vps_address.txt set /p VPS=<vps_address.txt
 if not defined VPS set /p VPS=Alamat VPS (contoh root@203.0.113.5): 
 if not defined VPS exit /b
 >vps_address.txt echo %VPS%
-start "" /min cmd /c "ping -n 9 127.0.0.1 >nul & start http://127.0.0.1:8767"
-echo Menyambung ke %VPS% ... dashboard terbuka di browser dalam beberapa detik.
+rem Open the browser only once the tunnel is up, i.e. after the password was accepted.
+start "" /min powershell -NoProfile -WindowStyle Hidden -Command "for ($i = 0; $i -lt 300; $i++) { try { $c = New-Object Net.Sockets.TcpClient('127.0.0.1', 8767); $c.Close(); Start-Process 'http://127.0.0.1:8767'; break } catch { Start-Sleep -Seconds 1 } }"
+echo Menyambung ke %VPS% ...
+echo Masukkan password VPS kalau diminta. Sesudah itu jendela ini memang kosong: artinya tersambung,
+echo dan dashboard terbuka sendiri di browser (alamatnya http://127.0.0.1:8767).
 echo Biarkan jendela ini terbuka selama melihat dashboard. Tutup jendela ini untuk berhenti.
-ssh -N -L 8767:127.0.0.1:8766 %VPS%
 echo.
-echo Sambungan tertutup. Kalau alamat VPS salah, hapus file vps_address.txt lalu coba lagi.
+ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -L 8767:127.0.0.1:8766 %VPS%
+echo.
+echo Sambungan tertutup. Kalau password atau alamat VPS salah, hapus file vps_address.txt lalu coba lagi.
 pause
