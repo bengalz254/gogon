@@ -11,6 +11,7 @@ model the bot would just be gambling.
 """
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -83,6 +84,8 @@ class WindowState:
     notes: dict = field(default_factory=dict)  # strategy scratch space
     last_model: object = None  # ModelSnapshot
     last_snapshot_log: float = 0.0
+    # (ts, p_up, p_up_lo, p_up_hi, market p_up) every snapshot, for the dashboard
+    history: deque = field(default_factory=lambda: deque(maxlen=120))
     tradable_reason: str = "not started"
     # settlement
     settle_twap: float | None = None

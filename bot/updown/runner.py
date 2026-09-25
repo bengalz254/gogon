@@ -10,7 +10,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import signal
 import time
 
@@ -64,6 +66,9 @@ class Runner:
         self._ptb_polled: dict = {}
         self._res_polled: dict = {}
         self.clob: ClobMarketFeed | None = None
+        self.feeds: list = []
+        self.started_at = time.time()
+        self.status_path = os.path.join(cfg.journal.dir, "updown_status.json")
         logger.info("Strategies enabled: %s", ", ".join(s.name for s in strategies) or "(none)")
 
     # -- events in ------------------------------------------------------------------
@@ -134,12 +139,14 @@ class Runner:
                                    self.cfg.feeds.dynamic_subscribe, on_status=self._feed_status)
         feeds.append(self.clob)
 
+        self.feeds = feeds
         tasks = [asyncio.create_task(f.run(), name=f"feed-{f.name}") for f in feeds]
         tasks += [
             asyncio.create_task(self._step_loop(), name="step"),
             asyncio.create_task(self._discovery_loop(), name="discovery"),
             asyncio.create_task(self._resolution_loop(), name="resolution"),
             asyncio.create_task(self._status_loop(), name="status"),
+            asyncio.create_task(self._status_file_loop(), name="status-file"),
         ]
         if self.live:
             tasks += [
@@ -284,3 +291,27 @@ class Runner:
         while True:
             await asyncio.sleep(30.0)
             logger.info("STATUS %s", self.engine.status_line())
+
+    def write_status(self) -> None:
+        """Snapshot for scripts/updown_dashboard.py (atomic replace)."""
+        now = time.time()
+        snap = self.engine.status_snapshot(now)
+        snap.update(mode=self.mode, started_at=self.started_at, feeds=[f.status(now) for f in self.feeds])
+        tmp = self.status_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(snap, fh, separators=(",", ":"))
+        try:
+            os.replace(tmp, self.status_path)
+        except PermissionError:
+            pass  # Windows: the dashboard is reading it right now; next second will do
+
+    async def _status_file_loop(self) -> None:
+        warned = False
+        while True:
+            await asyncio.sleep(1.0)
+            try:
+                self.write_status()
+            except Exception:
+                if not warned:
+                    warned = True
+                    logger.exception("Could not write %s (dashboard data)", self.status_path)

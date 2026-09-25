@@ -146,8 +146,30 @@ python scripts/updown_report.py          # P&L, Brier model-vs-market, settlemen
 python scripts/updown_backtest.py "data/recordings/*.jsonl.gz" --config config/updown.yaml
 ```
 
-The existing dashboard (`python scripts/dashboard.py`) shows the Up/Down
-engine's fills and settlements too.
+### Live dashboard
+
+While `python -m bot.updown` runs, start the monitor in a second terminal:
+
+```bash
+python scripts/updown_dashboard.py                  # opens http://127.0.0.1:8766
+python scripts/updown_dashboard.py --host 0.0.0.0   # also reachable from a phone on the same Wi-Fi
+```
+
+Every second it shows each coin's live window: price vs price to beat, model
+vs market probability (with the model's uncertainty band and history), what
+the bot holds and has resting, and why a coin isn't being traded. It also
+shows today's P&L and exposure, the risk guards (kill switch, cooldowns) and
+feed health. Every 15 seconds it adds the cumulative P&L, P&L per strategy,
+model-vs-market calibration, the settlement-rule check and the latest fills.
+The page's labels are in Indonesian.
+
+The engine writes `data/updown_status.json` every second for it. The
+dashboard only reads files: it can't place or cancel orders, and stopping it
+never affects the bot. There's no login, so only use `--host 0.0.0.0` on a
+network you trust.
+
+The older `python scripts/dashboard.py` still shows the engine's fills and
+settlements too.
 
 **Going live needs two opt-ins:** `LIVE_TRADING=true` in `.env` *and*
 `execution.allow_live: true` in `config/updown.yaml`. Don't do it until
@@ -247,7 +269,8 @@ Tests cover the pure logic with no network calls: risk limits, arbitrage
 and threshold signals, and for the Up/Down engine the probability model
 (with a Monte Carlo check), every strategy, the risk bans, paper fills,
 the engine lifecycle (t=0 lock -> fills -> settlement -> P&L), feed and
-Gamma parsing, and record/replay. They're safe and fast to run anytime.
+Gamma parsing, record/replay, and the live dashboard's data. They're safe and
+fast to run anytime.
 
 ## Safety notes
 
@@ -290,6 +313,7 @@ scripts/dashboard.py       # local trading-activity dashboard
 scripts/updown_simulate.py # Up/Down engine vs a synthetic market (offline)
 scripts/updown_backtest.py # replay recorded events through the engine
 scripts/updown_report.py   # P&L, calibration and settlement-rule report
+scripts/updown_dashboard.py # live Up/Down monitor (per-coin model vs market, P&L, feeds)
 config/updown.yaml         # Up/Down engine config (strategies, risk, model)
 bot/updown/                # Up/Down engine (see "Up/Down engine" above)
 tests/                      # pytest unit tests, no network required

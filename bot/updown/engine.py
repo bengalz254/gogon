@@ -734,6 +734,7 @@ class Engine:
             return
         w.last_snapshot_log = now
         up, down = self.books[w.spec.up_token], self.books[w.spec.down_token]
+        w.history.append((round(now, 1), snap.p_up, snap.p_up_lo, snap.p_up_hi, self.market_p_up(w)))
         self.journal.snapshot({
             "ts": round(now, 3), "window_id": w.window_id, "asset": w.asset,
             "elapsed": round(snap.elapsed, 2), "remaining": round(snap.remaining, 2),
@@ -798,6 +799,65 @@ class Engine:
             if w.official_ptb is None and w.phase in (Phase.UPCOMING, Phase.LIVE) and w.spec.start <= now <= w.spec.start + 120
         ]
 
+    def status_snapshot(self, now: float) -> dict:
+        """Plain-JSON view of the live state for the monitoring dashboard.
+        Built in the event loop; non-finite numbers become None."""
+        risk = self.risk
+        windows = []
+        for w in sorted(self.windows.values(), key=lambda w: (w.spec.start, w.asset)):
+            if w.phase == Phase.SETTLED and now - w.spec.end > 180:
+                continue
+            spec, m = w.spec, w.last_model
+            up, down = self.books.get(spec.up_token), self.books.get(spec.down_token)
+            windows.append({
+                "id": w.window_id, "asset": w.asset, "phase": w.phase.value,
+                "start": spec.start, "end": spec.end,
+                "elapsed": now - spec.start, "remaining": max(0.0, spec.end - now),
+                "ptb": w.ptb, "ptb_source": w.ptb_source,
+                "tradable": w.phase == Phase.LIVE and not w.tradable_reason and m is not None,
+                "reason": w.tradable_reason,
+                "model": None if m is None else {
+                    "ts": m.ts, "p_up": m.p_up, "p_up_lo": m.p_up_lo, "p_up_hi": m.p_up_hi,
+                    "delta": m.delta, "spot": m.spot, "z": m.z,
+                    "sigma_annual": m.sigma * math.sqrt(365.0 * 24 * 3600),
+                    "realized_n": m.realized_n, "samples": self.samples,
+                },
+                "market": {
+                    "p_up": self.market_p_up(w) if up is not None and down is not None else None,
+                    "up_bid": up.best_bid if up else None, "up_ask": up.best_ask if up else None,
+                    "down_bid": down.best_bid if down else None, "down_ask": down.best_ask if down else None,
+                },
+                "holdings": [
+                    {"strategy": st, "outcome": o, "shares": h.shares, "cost": h.cost}
+                    for (st, o), h in sorted(w.holdings.items()) if h.shares > 1e-9
+                ],
+                "orders": [
+                    {"strategy": st.req.strategy, "outcome": st.req.outcome, "price": st.req.price,
+                     "shares": st.req.shares, "filled": st.filled, "tif": st.req.tif}
+                    for st in self.orders.live(w.window_id)
+                ],
+                "history": [list(row) for row in w.history],
+                "provisional": w.provisional_winner or None, "official": w.official_winner,
+                "booked": w.booked, "pnl": dict(w.pnl),
+            })
+        results = sorted(self.results.items(), key=lambda kv: kv[1]["start"], reverse=True)[:40]
+        exposure = sum(w.cost() for w in self.windows.values() if not w.booked) + self.orders.reserved()
+        return _json_safe({
+            "ts": now,
+            "risk": {
+                "realized_today": risk.realized_pnl_today, "realized_total": risk.realized_pnl_total,
+                "pending": risk.pending_pnl, "bankroll": risk.bankroll,
+                "max_daily_loss": risk.cfg.max_daily_loss_usd, "kill_switch": risk.daily_loss_hit,
+                "streaks": dict(risk.loss_streak),
+                "cooldowns": {k: v - now for k, v in risk.cooldown_until.items() if v > now},
+            },
+            "exposure": {"total": exposure, "cap": risk.cfg.max_total_exposure_usd},
+            "stats": dict(self.stats),
+            "feed_down": dict(self.feed_down),
+            "windows": windows,
+            "results": [{"id": wid, **r} for wid, r in results],
+        })
+
     def status_line(self) -> str:
         live = [w for w in self.windows.values() if w.phase == Phase.LIVE]
         parts = []
@@ -850,3 +910,14 @@ def _finite(x: float):
 
 def _reason_key(reason: str) -> str:
     return re.sub(r"\d+(\.\d+)?", "#", reason or "")
+
+
+def _json_safe(obj):
+    """Copy of obj with inf/nan replaced by None (strict JSON for the browser)."""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    return obj

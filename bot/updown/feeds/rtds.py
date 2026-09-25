@@ -124,6 +124,11 @@ class RtdsSymbolFeed(WsFeed):
     def url(self) -> str:
         return self._url
 
+    def status(self, now: float) -> dict:
+        out = super().status(now)
+        out.update(style=self.variant, streaming=self.streaming)
+        return out
+
     async def on_open(self, ws) -> None:
         self._msgs = self._updates = 0
         await ws.send(json.dumps(subscribe_message(self.topic, self.symbol, self.variant)))

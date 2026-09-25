@@ -1,4 +1,5 @@
 import csv
+import json
 
 import pytest
 
@@ -228,3 +229,22 @@ def test_local_clock_skew_does_not_make_a_live_oracle_look_stale():
     assert w.tradable_reason == ""
     eng.step(T0 + 70)  # ...but ten seconds without a new price is stale
     assert "stale" in w.tradable_reason
+
+
+def test_status_snapshot_is_strict_json_for_the_dashboard():
+    fired = {"n": 0}
+
+    def buy_up(ctx):
+        if fired["n"] or ctx.model.elapsed < 100:
+            return []
+        fired["n"] += 1
+        return [Take("Up", 0.62, 0.9, 0.25, "x")]
+
+    eng, broker, sp = make(buy_up)
+    run(eng, broker, sp, T0 - 1900, T0 + 200, lambda t: flat(t) + (0.5 if t >= T0 + 60 else 0.0))
+    snap = eng.status_snapshot(T0 + 200.5)
+    text = json.dumps(snap, allow_nan=False)  # the browser's JSON.parse rejects NaN/Infinity
+    w = json.loads(text)["windows"][0]
+    assert w["phase"] == "live" and w["model"]["p_up"] > 0.5 and w["history"]
+    assert w["holdings"][0]["outcome"] == "Up" and w["market"]["up_ask"] == 0.62
+    assert set(snap["risk"]) >= {"realized_today", "pending", "kill_switch", "cooldowns"}

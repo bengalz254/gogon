@@ -52,6 +52,13 @@ class WsFeed:
         """Whether there is anything to connect for (e.g. tokens to watch)."""
         return True
 
+    def status(self, now: float) -> dict:
+        """Health summary for the dashboard."""
+        return {
+            "name": self.name, "connected": self.connected, "reconnects": self.reconnects,
+            "data_age": (now - self.last_data) if self.last_data else None,
+        }
+
     def _should_log(self) -> bool:
         # Reconnects can be frequent (e.g. while probing subscribe styles):
         # log the first few, then every 20th.
