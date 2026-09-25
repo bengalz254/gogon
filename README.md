@@ -186,6 +186,43 @@ The repo root has four launchers. Each opens its own window and uses the
 Stop the bot with `Ctrl+C` in its window (answer `Y` if Windows asks
 "Terminate batch job?").
 
+### Running on a Linux VPS
+
+A VPS keeps the bot online around the clock: no Wi-Fi drops, no sleeping
+laptop, no console window to freeze. On Ubuntu 22.04+ or Debian 12+:
+
+```bash
+git clone https://github.com/bengalz254/gogon.git && cd gogon
+git checkout claude/epic-brahmagupta-gxpbv2
+bash scripts/vps_setup.sh
+```
+
+The script installs Python, creates the venv, installs the requirements and
+runs the tests. It also prints the latency to Polymarket and Polymarket's
+region check for the server. Then it installs two systemd services that start
+on boot and restart after a crash:
+- `updown-bot`: paper mode unless live trading is switched on in both `.env`
+  and `config/updown.yaml`.
+- `updown-dashboard`: listens on the server's 127.0.0.1 only.
+
+It also adds three commands:
+
+| Command | What it does |
+|---|---|
+| `updown-status` | is the bot running, which version, last log lines |
+| `updown-log` | recent connection events and the last stall report |
+| `updown-update` | `git pull`, then restart the services |
+
+To see the dashboard from Windows, double-click `vps_dashboard.bat`. It asks
+for the server address once (e.g. `root@203.0.113.5`), opens an SSH tunnel
+and shows the dashboard at http://127.0.0.1:8767. From any other machine:
+`ssh -N -L 8767:127.0.0.1:8766 root@<server-ip>`.
+
+Recordings (`--record`) are large, so files older than
+`journal.record_keep_days` (7) are deleted. Before going live from a VPS,
+make sure Polymarket allows trading from the server's region. The setup
+script prints that check.
+
 **Going live needs two opt-ins:** `LIVE_TRADING=true` in `.env` *and*
 `execution.allow_live: true` in `config/updown.yaml`. Don't do it until
 `updown_report.py` shows, over at least a few hundred paper windows, that

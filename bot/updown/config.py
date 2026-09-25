@@ -186,6 +186,7 @@ class JournalConfig:
     snapshot_every_s: float = 5.0
     record_events: bool = False
     record_dir: str = "data/recordings"
+    record_keep_days: float = 7.0  # delete older recordings (0 = keep all)
 
 
 # -- strategies --------------------------------------------------------------

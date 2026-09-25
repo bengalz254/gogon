@@ -103,6 +103,7 @@ journal:
   snapshot_every_s: 5
   record_events: false              # or run with --record
   record_dir: data/recordings
+  record_keep_days: 7               # recordings are large (every order-book change): delete older ones (0 = keep all)
 
 strategies:
   # 1. Fair value vs Polymarket price: the core strategy.

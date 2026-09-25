@@ -119,7 +119,8 @@ class Runner:
         self.journal = UpDownJournal(cfg.journal.dir, cfg.journal.trades_csv, mode=self.mode)
         strategies = build_strategies(cfg.strategies)
         self.engine = Engine(cfg, strategies, self.risk, self.journal, mode=self.mode)
-        self.recorder = EventRecorder(cfg.journal.record_dir) if (record or cfg.journal.record_events) else None
+        self.recorder = (EventRecorder(cfg.journal.record_dir, cfg.journal.record_keep_days)
+                         if (record or cfg.journal.record_events) else None)
         self.gamma = GammaClient(cfg.feeds.gamma_url)
         self.paper = None
         self.broker = None

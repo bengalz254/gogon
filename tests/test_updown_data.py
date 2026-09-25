@@ -223,3 +223,16 @@ def test_clob_socket_can_absorb_bursts():
     assert ClobMarketFeed("ws://x", lambda ev: None).connect_kwargs()["max_queue"] >= 1024
     rtds = RtdsSymbolFeed("ws://x", CHAINLINK_TOPIC, "btc/usd", "btc", lambda ev: None)
     assert "max_queue" not in rtds.connect_kwargs()
+
+
+def test_recorder_deletes_recordings_older_than_keep_days(tmp_path):
+    for name in ("events-20260901-00.jsonl.gz", "events-20260920-10.jsonl.gz", "events-20260924-23.jsonl.gz", "notes.txt"):
+        (tmp_path / name).write_bytes(b"")
+    now = 1790330000.0  # 2026-09-25 09:53 UTC
+    rec = EventRecorder(str(tmp_path), keep_days=3)
+    rec.record(OracleTick("btc", now, 60000.0), now)  # opens this hour's file and prunes
+    rec.close()
+    left = sorted(p.name for p in tmp_path.iterdir())
+    assert "events-20260901-00.jsonl.gz" not in left and "events-20260920-10.jsonl.gz" not in left
+    assert "events-20260924-23.jsonl.gz" in left and "notes.txt" in left
+    assert any(n.startswith("events-20260925-") for n in left)
