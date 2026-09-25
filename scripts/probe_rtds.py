@@ -122,8 +122,42 @@ def check_symbols(symbols: list[str]) -> None:
             print(f"  {sym:10s} NO DATA  {seen[:2] if seen else '(only empty frames in 8s)'}")
 
 
+def check_live(symbol: str = "btc/usd", listen_s: int = 20) -> None:
+    """Which subscribe style keeps streaming after the first snapshot?"""
+    sys.path.insert(0, ".")
+    from updown.chainlink_feed import VARIANTS, parse_message, subscribe_message
+
+    print(f"\n=== Live updates for {symbol} ({listen_s}s each) ===")
+    for variant in VARIANTS:
+        msgs = 0
+        try:
+            ws = websocket.create_connection(URL, timeout=5)
+            ws.send(subscribe_message(symbol, variant))
+            ws.settimeout(2)
+            end = last_ping = time.time()
+            end += listen_s
+            while time.time() < end:
+                if time.time() - last_ping >= 8:
+                    ws.send("PING")
+                    last_ping = time.time()
+                try:
+                    raw = ws.recv()
+                except websocket.WebSocketTimeoutException:
+                    continue
+                if parse_message(raw, symbol, require_tag=(variant == "nofilter")):
+                    msgs += 1
+            ws.close()
+        except Exception as exc:
+            print(f"  {variant:9s} FAIL ({exc})")
+            continue
+        verdict = "LIVE OK" if msgs > 3 else "snapshot only" if msgs else "nothing"
+        print(f"  {variant:9s} {msgs:3d} price messages -> {verdict}")
+
+
 if __name__ == "__main__":
-    if "--coins" in sys.argv:
+    if "--live" in sys.argv:
+        check_live()
+    elif "--coins" in sys.argv:
         check_symbols(["btc/usd", "eth/usd", "sol/usd", "xrp/usd", "bnb/usd", "doge/usd", "hype/usd"])
     else:
         for name, msg in ATTEMPTS.items():

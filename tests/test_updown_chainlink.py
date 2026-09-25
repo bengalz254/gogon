@@ -73,3 +73,13 @@ def test_chainlink_mode_starts_backup_feeds():
     assert kinds == {"ChainlinkRTDSFeed", "BinanceFeed", "HyperliquidFeed"}
     feeds, _ = build_price_feeds(["btc"], FeedConfig(backup=False), PriceHistory())
     assert {type(f).__name__ for f in feeds.values()} == {"ChainlinkRTDSFeed"}
+
+
+def test_subscribe_variants_and_unfiltered_parsing():
+    compact = json.loads(subscribe_message("btc/usd", "compact"))["subscriptions"][0]
+    assert compact["filters"] == '{"symbol":"btc/usd"}'
+    assert "filters" not in json.loads(subscribe_message("btc/usd", "nofilter"))["subscriptions"][0]
+    # Unfiltered socket carries every coin: only tagged points for ours count.
+    assert parse_message(SNAPSHOT, "btc/usd", require_tag=True) == []
+    upd = json.dumps({"payload": {"symbol": "btc/usd", "timestamp": 1790303499000, "value": 1.0}})
+    assert parse_message(upd, "btc/usd", require_tag=True) == [(1790303499.0, 1.0)]

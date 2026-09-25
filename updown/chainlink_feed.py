@@ -27,19 +27,28 @@ RTDS_URL = "wss://ws-live-data.polymarket.com"
 TOPIC = "crypto_prices_chainlink"
 
 
-def subscribe_message(symbol: str) -> str:
-    return json.dumps({
-        "action": "subscribe",
-        "subscriptions": [{"topic": TOPIC, "type": "*", "filters": json.dumps({"symbol": symbol})}],
-    })
+# Ways to subscribe, tried in turn until one delivers live updates (not just
+# the snapshot). On the server the original spaced filter string gave a
+# snapshot and then silence; the docs spell the filter compactly.
+VARIANTS = ("compact", "nofilter", "spaced")
 
 
-def parse_message(raw: str, symbol: str) -> list[tuple[float, float]]:
+def subscribe_message(symbol: str, variant: str = "compact") -> str:
+    sub = {"topic": TOPIC, "type": "*"}
+    if variant == "compact":
+        sub["filters"] = json.dumps({"symbol": symbol}, separators=(",", ":"))
+    elif variant == "spaced":
+        sub["filters"] = json.dumps({"symbol": symbol})
+    return json.dumps({"action": "subscribe", "subscriptions": [sub]})
+
+
+def parse_message(raw: str, symbol: str, require_tag: bool = False) -> list[tuple[float, float]]:
     """(timestamp_s, price) points from one RTDS message; [] for anything else.
 
     Handles the snapshot shape ({"payload": {"data": [...]}}) and single
     updates ({"payload": {"symbol", "timestamp", "value"}}). Points tagged
-    with a different symbol are ignored.
+    with a different symbol are ignored; with `require_tag` (unfiltered
+    subscription, every coin on one socket) untagged ones are too.
     """
     try:
         msg = json.loads(raw)
@@ -51,7 +60,7 @@ def parse_message(raw: str, symbol: str) -> list[tuple[float, float]]:
     if not isinstance(payload, dict):
         return []
     tagged = payload.get("symbol")
-    if tagged and str(tagged).lower() != symbol:
+    if (tagged and str(tagged).lower() != symbol) or (require_tag and not tagged):
         return []
     rows = payload.get("data") if isinstance(payload.get("data"), list) else [payload]
     out = []
@@ -81,6 +90,10 @@ class ChainlinkRTDSFeed:
         self._max_ts: dict[str, float] = {}
         self.reconnects = 0
         self._live_logged: set[str] = set()
+        # Which subscribe variant each coin uses, and whether it has proven to
+        # stream live updates (then it's kept for good).
+        self.variant: dict[str, int] = {a: 0 for a in assets}
+        self.streaming: dict[str, bool] = {a: False for a in assets}
         self.symbols = symbols  # asset -> "btc/usd"
         self.history = history
         self.on_tick = on_tick
@@ -115,9 +128,11 @@ class ChainlinkRTDSFeed:
                 ws = websocket.create_connection(self.url, timeout=10)
                 ws.settimeout(2)  # short reads, so the keep-alive PING goes out on time
                 self._sockets[asset] = ws
-                ws.send(subscribe_message(symbol))
+                variant = VARIANTS[self.variant[asset] % len(VARIANTS)]
+                ws.send(subscribe_message(symbol, variant))
                 last_ping = last_new = time.time()
                 got_any = False
+                updates = 0  # price messages after the first (the snapshot)
                 while not self._stop.is_set():
                     now = time.time()
                     if now - last_ping >= 8:
@@ -127,14 +142,18 @@ class ChainlinkRTDSFeed:
                         # The socket can stay open yet stop sending prices;
                         # a fresh connection (and snapshot) fixes that.
                         self.reconnects += 1
+                        if not self.streaming[asset] and updates == 0:
+                            # Snapshot, then nothing: try the next way of subscribing.
+                            self.variant[asset] += 1
                         if self.reconnects in (1, 5) or self.reconnects % 50 == 0:
-                            logger.warning("[%s] no Chainlink price for %.0fs; reconnecting (#%d)", asset, now - last_new, self.reconnects)
+                            logger.warning("[%s] no Chainlink price for %.0fs; reconnecting (#%d, subscribe style '%s')",
+                                           asset, now - last_new, self.reconnects, VARIANTS[self.variant[asset] % len(VARIANTS)])
                         break
                     try:
                         raw = ws.recv()
                     except websocket.WebSocketTimeoutException:
                         continue
-                    points = parse_message(raw, symbol)
+                    points = parse_message(raw, symbol, require_tag=(variant == "nofilter"))
                     for ts, price in points:
                         if ts > self._max_ts.get(asset, 0.0):
                             self._max_ts[asset] = ts
@@ -142,6 +161,11 @@ class ChainlinkRTDSFeed:
                             self.last_seen[asset] = (last_new, price)
                         if self.history.add(asset, ts, price) and self.on_tick:
                             self.on_tick(asset, ts, price)
+                    if points and got_any:
+                        updates += 1
+                        if updates == 3 and not self.streaming[asset]:
+                            self.streaming[asset] = True
+                            logger.info("[%s] Chainlink live updates streaming (subscribe style '%s')", asset, variant)
                     if points and not got_any:
                         got_any = True
                         failures = 0

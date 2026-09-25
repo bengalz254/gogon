@@ -210,6 +210,8 @@ class BackupSink:
         self.clock = clock
         self.ratio: dict[str, float] = {}
         self.active: dict[str, bool] = {}
+        self.switches: dict[str, int] = {}
+        self._last_log: dict[str, float] = {}
 
     def add(self, asset: str, ts: float, price: float) -> bool:
         seen = self.primary.last_seen.get(asset)
@@ -217,16 +219,18 @@ class BackupSink:
             r = seen[1] / price
             old = self.ratio.get(asset)
             self.ratio[asset] = r if old is None else old + 0.1 * (r - old)
-            if self.active.get(asset):
-                self.active[asset] = False
-                logger.info("[%s] Chainlink is back; backup feed off", asset)
+            self.active[asset] = False
             return False
         if not self.active.get(asset):
             self.active[asset] = True
-            logger.warning(
-                "[%s] Chainlink silent for >%.0fs; using backup prices (gap correction %s)",
-                asset, self.stale_after_s, f"{self.ratio[asset]:.5f}" if asset in self.ratio else "unknown yet",
-            )
+            self.switches[asset] = self.switches.get(asset, 0) + 1
+            if self.clock() - self._last_log.get(asset, 0.0) >= 300:  # at most every 5 min per coin
+                self._last_log[asset] = self.clock()
+                logger.warning(
+                    "[%s] Chainlink silent for >%.0fs; using backup prices (gap correction %s; %d switch(es) so far)",
+                    asset, self.stale_after_s, f"{self.ratio[asset]:.5f}" if asset in self.ratio else "unknown yet",
+                    self.switches[asset],
+                )
         adj = price * self.ratio.get(asset, 1.0)
         if not self.history.add(asset, ts, adj):
             return False
