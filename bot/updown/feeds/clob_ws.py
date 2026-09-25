@@ -91,6 +91,10 @@ class ClobMarketFeed(WsFeed):
     name = "clob"
     ping_text = "PING"
     idle_timeout = 60.0
+    # Book traffic is bursty (a snapshot per token right after subscribing, busy
+    # quoting near the close). With the library's default of 16 queued messages
+    # the real socket was dropped about once a minute with 1013 "slow consumer".
+    max_queue = 4096
 
     def __init__(self, url: str, emit, ping_s: float = 10.0, dynamic_subscribe: bool = True, on_status=None):
         super().__init__(on_status)
@@ -116,14 +120,22 @@ class ClobMarketFeed(WsFeed):
         tokens = set(tokens)
         if tokens == self.tokens:
             return
-        added = tokens - self._subscribed
         self.tokens = tokens
         ws = self.ws  # the connection can drop while we await below
-        if ws is None or not added:
-            return  # nothing new to subscribe; stale tokens are harmless until the next reconnect
-        if self.dynamic and await self.send_json({"assets_ids": sorted(added), "operation": "subscribe"}):
-            self._subscribed |= added
+        if ws is None:
             return
+        added, removed = tokens - self._subscribed, self._subscribed - tokens
+        if self.dynamic:
+            # Drop finished windows too: every extra book is more traffic to keep up with.
+            if removed and await self.send_json({"assets_ids": sorted(removed), "operation": "unsubscribe"}):
+                self._subscribed -= removed
+            if not added:
+                return
+            if await self.send_json({"assets_ids": sorted(added), "operation": "subscribe"}):
+                self._subscribed |= added
+                return
+        elif not added:
+            return  # stale tokens are harmless until the next reconnect
         try:
             await ws.close()  # resubscribe everything on reconnect
         except Exception:

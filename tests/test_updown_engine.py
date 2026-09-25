@@ -248,3 +248,20 @@ def test_status_snapshot_is_strict_json_for_the_dashboard():
     assert w["phase"] == "live" and w["model"]["p_up"] > 0.5 and w["history"]
     assert w["holdings"][0]["outcome"] == "Up" and w["market"]["up_ask"] == 0.62
     assert set(snap["risk"]) >= {"realized_today", "pending", "kill_switch", "cooldowns"}
+
+
+def test_only_books_of_windows_about_to_open_are_watched():
+    eng, broker, sp = make()  # btc window opening at T0
+    later, much_later = spec("btc", start=T0 + 300), spec("btc", start=T0 + 600)
+    eng.handle(WindowListed(later))
+    eng.handle(WindowListed(much_later))
+    ahead = eng.cfg.feeds.subscribe_ahead_s
+
+    eng.step(T0 - ahead - 10)
+    assert eng.active_tokens() == set()  # nothing opens soon: no book traffic at all
+    eng.step(T0 - ahead + 10)
+    assert eng.active_tokens() == {sp.up_token, sp.down_token}
+    eng.step(T0 + 300 - ahead + 10)  # first window live, the next one about to open
+    assert eng.active_tokens() == {sp.up_token, sp.down_token, later.up_token, later.down_token}
+    eng.step(T0 + 300 + 31)  # first window closed > 30s ago: dropped
+    assert eng.active_tokens() == {later.up_token, later.down_token}

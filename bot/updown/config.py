@@ -70,6 +70,9 @@ class FeedsConfig:
     clob_ping_s: float = 10.0
     cex_throttle_ms: float = 100.0
     dynamic_subscribe: bool = True
+    # Start watching a window's order books this long before it opens. Fewer
+    # books keep the CLOB socket light enough to read in time.
+    subscribe_ahead_s: float = 90.0
 
 
 @dataclass

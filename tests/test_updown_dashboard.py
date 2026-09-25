@@ -75,3 +75,23 @@ def test_dashboard_serves_page_and_json(tmp_path):
         assert summary["rules"]["twap"] == {"ok": 1, "n": 1} and summary["rules"]["last"] == {"ok": 0, "n": 1}
     finally:
         server.shutdown()
+
+
+def test_runner_status_file_and_stall_warning(tmp_path, caplog):
+    from bot.config import WalletConfig
+    from bot.updown.config import UpDownConfig
+    from bot.updown.runner import Runner
+
+    cfg = UpDownConfig()
+    cfg.journal.dir = str(tmp_path)
+    cfg.journal.trades_csv = str(tmp_path / "trades.csv")
+    runner = Runner(cfg, WalletConfig(None, 137, "http://127.0.0.1:1", 0, None, False))
+    runner.write_status_file(runner.status_text())
+    status = json.loads((tmp_path / "updown_status.json").read_text(encoding="utf-8"))
+    assert status["mode"] == "paper" and status["loop_lag_ms"] == 0
+
+    with caplog.at_level("WARNING", logger="polybot.updown.runner"):
+        runner._note_loop_lag(2.0)
+        runner._note_loop_lag(3.0)  # rate-limited: one warning a minute
+    assert sum("Event loop stalled" in r.message for r in caplog.records) == 1
+    assert json.loads(runner.status_text())["loop_lag_ms"] == 3000

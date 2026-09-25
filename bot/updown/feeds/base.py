@@ -28,6 +28,11 @@ class WsFeed:
     # Polymarket sockets, which use text PING/PONG: on the real CLOB socket the
     # library's pings timed out about once a minute (close code 1011).
     protocol_ping: float | None = None
+    # Messages the websockets library may hold before it stops reading the
+    # socket (None = library default, 16). Once it stops reading, the server's
+    # send buffer fills and Polymarket drops the connection (1013 "slow
+    # consumer"), so bursty feeds raise it.
+    max_queue: int | None = None
 
     def __init__(self, on_status: Callable[[str, bool, str], None] | None = None):
         self.on_status = on_status or (lambda feed, ok, detail: None)
@@ -35,6 +40,7 @@ class WsFeed:
         self.connected = False
         self.last_data = 0.0
         self.reconnects = 0
+        self._logged_at: dict = {}
 
     def url(self) -> str:
         raise NotImplementedError
@@ -59,10 +65,20 @@ class WsFeed:
             "data_age": (now - self.last_data) if self.last_data else None,
         }
 
-    def _should_log(self) -> bool:
-        # Reconnects can be frequent (e.g. while probing subscribe styles):
-        # log the first few, then every 20th.
-        return self.reconnects <= 3 or self.reconnects % 20 == 0
+    def connect_kwargs(self) -> dict:
+        kw = dict(open_timeout=20, ping_interval=self.protocol_ping, ping_timeout=self.protocol_ping, max_size=2**24)
+        if self.max_queue is not None:
+            kw["max_queue"] = self.max_queue
+        return kw
+
+    def _should_log(self, kind: str) -> bool:
+        # Reconnects can come in bursts (e.g. while probing subscribe styles):
+        # log the first few, then at most one line of each kind a minute.
+        now = time.time()
+        if self.reconnects <= 3 or now - self._logged_at.get(kind, 0.0) >= 60.0:
+            self._logged_at[kind] = now
+            return True
+        return False
 
     async def run(self) -> None:
         import websockets
@@ -74,16 +90,13 @@ class WsFeed:
                 continue
             detail = ""
             try:
-                async with websockets.connect(
-                    self.url(), open_timeout=20, ping_interval=self.protocol_ping,
-                    ping_timeout=self.protocol_ping, max_size=2**24,
-                ) as ws:
+                async with websockets.connect(self.url(), **self.connect_kwargs()) as ws:
                     self.ws = ws
                     self.connected = True
                     self.last_data = time.time()
                     await self.on_open(ws)
                     self.on_status(self.name, True, "")
-                    if self._should_log():
+                    if self._should_log("connected"):
                         logger.info("%s feed connected", self.name)
                     backoff = 1.0
                     keepalive = asyncio.create_task(self._keepalive(ws))
@@ -111,7 +124,7 @@ class WsFeed:
                 except Exception:
                     logger.exception("%s: on_close failed", self.name)
             self.on_status(self.name, False, detail or "disconnected")
-            if self._should_log():
+            if self._should_log("disconnected"):
                 logger.warning("%s feed disconnected (%s); reconnecting in %.0fs (#%d)",
                                self.name, detail, backoff, self.reconnects)
             await asyncio.sleep(backoff)
@@ -123,7 +136,7 @@ class WsFeed:
             await asyncio.sleep(1.0)
             now = time.time()
             if now - self.last_data > self.idle_timeout:
-                if self._should_log():
+                if self._should_log("idle"):
                     logger.warning("%s: no data for %.0fs; reconnecting", self.name, now - self.last_data)
                 await ws.close()
                 return

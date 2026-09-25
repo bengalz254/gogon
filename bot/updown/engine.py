@@ -780,9 +780,14 @@ class Engine:
 
     # -- queries for the runner -------------------------------------------------------------
     def active_tokens(self) -> set:
+        """Order books to watch: live windows, windows opening within
+        `feeds.subscribe_ahead_s`, and just-closed ones (fills still in flight)."""
+        ahead = self.cfg.feeds.subscribe_ahead_s
         toks = set()
         for w in self.windows.values():
-            if w.phase in (Phase.UPCOMING, Phase.LIVE) or (w.phase == Phase.CLOSED and self.now < w.spec.end + 30):
+            if w.phase == Phase.LIVE \
+                    or (w.phase == Phase.UPCOMING and w.spec.start - self.now <= ahead) \
+                    or (w.phase == Phase.CLOSED and self.now < w.spec.end + 30):
                 toks.update((w.spec.up_token, w.spec.down_token))
         return toks
 

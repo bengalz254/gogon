@@ -69,6 +69,8 @@ class Runner:
         self.feeds: list = []
         self.started_at = time.time()
         self.status_path = os.path.join(cfg.journal.dir, "updown_status.json")
+        self.loop_lag = 0.0
+        self._lag_warned_at = 0.0
         logger.info("Strategies enabled: %s", ", ".join(s.name for s in strategies) or "(none)")
 
     # -- events in ------------------------------------------------------------------
@@ -292,25 +294,47 @@ class Runner:
             await asyncio.sleep(30.0)
             logger.info("STATUS %s", self.engine.status_line())
 
-    def write_status(self) -> None:
-        """Snapshot for scripts/updown_dashboard.py (atomic replace)."""
+    def status_text(self) -> str:
+        """Snapshot for scripts/updown_dashboard.py. Reads engine state, so
+        call it on the event loop."""
         now = time.time()
         snap = self.engine.status_snapshot(now)
-        snap.update(mode=self.mode, started_at=self.started_at, feeds=[f.status(now) for f in self.feeds])
+        snap.update(mode=self.mode, started_at=self.started_at, feeds=[f.status(now) for f in self.feeds],
+                    loop_lag_ms=round(self.loop_lag * 1000.0))
+        return json.dumps(snap, separators=(",", ":"))
+
+    def write_status_file(self, text: str) -> None:
+        """Atomic replace; safe to run in a worker thread."""
         tmp = self.status_path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(snap, fh, separators=(",", ":"))
+            fh.write(text)
         try:
             os.replace(tmp, self.status_path)
         except PermissionError:
             pass  # Windows: the dashboard is reading it right now; next second will do
 
+    def _note_loop_lag(self, lag: float) -> None:
+        """A late wake-up means nothing ran on the event loop meanwhile: no feed
+        was read, which is how a socket ends up dropped as a slow consumer."""
+        self.loop_lag = max(0.0, lag)
+        now = time.time()
+        if lag > 0.5 and now - self._lag_warned_at > 60.0:
+            self._lag_warned_at = now
+            logger.warning(
+                "Event loop stalled for %.1fs; feeds were not read meanwhile. On Windows this "
+                "happens while text is selected in the console window (press Esc there).", lag,
+            )
+
     async def _status_file_loop(self) -> None:
         warned = False
         while True:
+            due = time.monotonic() + 1.0
             await asyncio.sleep(1.0)
+            self._note_loop_lag(time.monotonic() - due)
             try:
-                self.write_status()
+                text = self.status_text()
+                # Disk (and antivirus scans on Windows) off the event loop.
+                await asyncio.to_thread(self.write_status_file, text)
             except Exception:
                 if not warned:
                     warned = True

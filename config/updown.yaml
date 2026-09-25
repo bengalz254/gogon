@@ -23,6 +23,7 @@ feeds:
   oracle_max_age_s: 5.0             # no trading when no new oracle price arrived for this long
   cex_max_age_s: 3.0
   rtds_stale_s: 10.0                # reconnect an RTDS socket (and rotate subscribe style) after this long without a new price
+  subscribe_ahead_s: 90             # watch a window's order books from this long before it opens (fewer books = lighter CLOB socket)
 
 settlement:
   # How the window settles. VERIFY in the market rules on polymarket.com.

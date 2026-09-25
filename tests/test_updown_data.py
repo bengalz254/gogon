@@ -16,7 +16,7 @@ from bot.updown.events import (
     event_to_dict,
 )
 from bot.updown.feeds.cex import parse_binance, parse_bybit
-from bot.updown.feeds.clob_ws import parse_clob
+from bot.updown.feeds.clob_ws import ClobMarketFeed, parse_clob
 from bot.updown.feeds.rtds import CEX_TOPIC, CHAINLINK_TOPIC, RtdsSymbolFeed, parse_points, subscribe_message
 from bot.updown.recorder import EventRecorder, read_events
 from bot.updown.sim import SimConfig, run_simulation
@@ -201,3 +201,25 @@ def test_simulation_records_and_replays(tmp_path):
     assert n > 1000
     assert len(engine.results) == 9
     assert all(r["official"] for r in engine.results.values())
+
+
+def test_clob_feed_swaps_books_without_reconnecting():
+    feed = ClobMarketFeed("ws://x", lambda ev: None)
+    feed.tokens = {"a", "b"}
+    ws = _FakeWs()
+    feed.ws = ws
+    asyncio.run(feed.on_open(ws))
+    asyncio.run(feed.set_tokens({"b", "c"}))
+    assert ws.sent[1:] == [
+        {"assets_ids": ["a"], "operation": "unsubscribe"},  # finished window: stop its traffic
+        {"assets_ids": ["c"], "operation": "subscribe"},
+    ]
+    assert feed._subscribed == {"b", "c"}
+
+
+def test_clob_socket_can_absorb_bursts():
+    # With the library default (16 queued messages) Polymarket dropped the real
+    # socket about once a minute with 1013 "slow consumer".
+    assert ClobMarketFeed("ws://x", lambda ev: None).connect_kwargs()["max_queue"] >= 1024
+    rtds = RtdsSymbolFeed("ws://x", CHAINLINK_TOPIC, "btc/usd", "btc", lambda ev: None)
+    assert "max_queue" not in rtds.connect_kwargs()

@@ -172,7 +172,7 @@ class RtdsSymbolFeed(WsFeed):
         if not self.streaming:
             old = self.variant
             self.variant_index += 1
-            if self._should_log():
+            if self._should_log("style"):
                 logger.warning("%s: no live updates with subscribe style '%s'; trying '%s'",
                                self.name, old, self.variant)
 
