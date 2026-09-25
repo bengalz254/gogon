@@ -77,3 +77,42 @@ def test_early_warning_pulls_the_bid_before_the_book_collapses_onto_it():
     engine = run(lead=True)
     assert not [e for e in engine.events if e["kind"] == "BUY"]
     assert engine.lead_guard.trips["btc"] == 1
+
+
+class SlowGateway(ScriptedGateway):
+    """Discovery and resolution each take 0.3s, like real HTTP calls."""
+
+    def discover(self, asset, start):
+        import time
+        time.sleep(0.3)
+        return super().discover(asset, start)
+
+    def resolution(self, wm):
+        import time
+        time.sleep(0.3)
+        return self.winner
+
+
+def test_background_io_keeps_ticks_fast_and_still_settles():
+    import time
+
+    s = UpDownSettings(wallet=None, assets=["btc"], mode="maker")
+    s.sizing = SizingConfig(bankroll_usd=1000)
+    s.maker = MakerConfig(half_spread=0.03, quote_shares=10, fast_move_z=99, vol_spread_mult=0, lead_guard=False)
+    gw = SlowGateway(UP)
+    history = PriceHistory()
+    engine = UpDownEngine(s, gw, PaperBroker(), history, journal=None, settle_fallback_s=10_000, background_io=True)
+    engine.vol["btc"].seed(1e-4)
+    slowest = 0.0
+    t = T0 - 65
+    while t < T0 + 300 + 60 and engine.stats.windows_traded == 0:
+        gw.now = t
+        history.add("btc", float(t), 100.0)
+        started = time.perf_counter()
+        engine.tick(float(t))
+        slowest = max(slowest, time.perf_counter() - started)
+        if t in (T0 + 1, T0 + 303, T0 + 313):
+            time.sleep(0.4)  # let the background lookup finish, like real time passing
+        t += 1
+    assert slowest < 0.2  # no tick waited on a 0.3s lookup
+    assert engine.stats.windows_traded == 1  # found the market and settled via Polymarket

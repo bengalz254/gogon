@@ -15,6 +15,7 @@ from __future__ import annotations
 import copy
 import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -63,6 +64,8 @@ class WindowState:
     last_entry_ts: float | None = None
     trades: list = field(default_factory=list)
     last_trades_fetch: float = -1e18
+    # Background network calls in flight (live bot), by name.
+    pending: dict = field(default_factory=dict)
 
     @property
     def has_position(self) -> bool:
@@ -81,7 +84,7 @@ class Stats:
 
 class UpDownEngine:
     def __init__(self, settings: UpDownSettings, gateway, broker, history: PriceHistory, journal: TradeJournal | None, settle_fallback_s: float = 600.0, maker_broker=None,
-                 lead_history: PriceHistory | None = None):
+                 lead_history: PriceHistory | None = None, background_io: bool = False):
         self.s = settings
         self.gateway = gateway
         self.broker = broker
@@ -104,6 +107,10 @@ class UpDownEngine:
         self.lead_guard = LeadGuard(settings.maker)
         # Set from the lead feed's thread to run a tick right away (live only).
         self.wake = threading.Event()
+        # Slow lookups (market discovery, trade prints, resolution) run in the
+        # background in the live bot, so they never hold up requoting. Tests
+        # and the simulator run them inline for deterministic results.
+        self._pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="updown-io") if background_io else None
         self.started_at: float | None = None
         self.recent_windows: deque[dict] = deque(maxlen=64 * max(1, len(settings.assets)))  # newest last
         self.asset_stats: dict[str, Stats] = {a: Stats() for a in settings.assets}
@@ -132,6 +139,27 @@ class UpDownEngine:
         if self.lead_guard.trips.get(asset, 0) > before:
             logger.info("[%s] early warning: sharp move on the lead venue; bids pulled for %.0fs", asset, self.s.maker.lead_cooldown_s)
         return pulled
+
+    def _io(self, st: WindowState, key: str, fn, *args):
+        """Call fn(*args): inline, or in the background (then this returns
+        done=False until a later tick picks up the result).
+        Returns (done, result, exception)."""
+        if self._pool is None:
+            try:
+                return True, fn(*args), None
+            except Exception as exc:
+                return True, None, exc
+        fut = st.pending.get(key)
+        if fut is None:
+            st.pending[key] = self._pool.submit(fn, *args)
+            return False, None, None
+        if not fut.done():
+            return False, None, None
+        del st.pending[key]
+        try:
+            return True, fut.result(), None
+        except Exception as exc:
+            return True, None, exc
 
     # -- main tick -------------------------------------------------------
     def tick(self, now: float) -> None:
@@ -208,11 +236,14 @@ class UpDownEngine:
                     else "no feed price at window open (bot started mid-window?)"
                 )
                 logger.info("[%s] skipping window %d: %s", st.asset, st.start, st.skip_reason)
-        if st.market is None and not st.skip_reason and now - st.last_discovery_try >= DISCOVERY_RETRY_S:
-            st.last_discovery_try = now
-            try:
-                st.market = self.gateway.discover(st.asset, st.start)
-            except Exception as exc:  # network trouble: one line, retried in a few seconds
+        if st.market is None and not st.skip_reason and ("discover" in st.pending or now - st.last_discovery_try >= DISCOVERY_RETRY_S):
+            if "discover" not in st.pending:
+                st.last_discovery_try = now
+            done, market, exc = self._io(st, "discover", self.gateway.discover, st.asset, st.start)
+            if not done:
+                return
+            st.market = market
+            if exc is not None:  # network trouble: one line, retried in a few seconds
                 if now - st.last_status_log >= STATUS_LOG_EVERY_S:
                     st.last_status_log = now
                     logger.warning("[%s] market lookup failed (will retry): %s", st.asset, _short(exc))
@@ -361,11 +392,13 @@ class UpDownEngine:
 
         # 1. Fills on the bids we already have out.
         resting = any(t in mb.orders for t in tokens.values())
-        if resting and not mb.live and hasattr(self.gateway, "trades") and now - st.last_trades_fetch >= TRADES_POLL_S:
-            st.last_trades_fetch = now
-            try:
-                st.trades = self.gateway.trades(st.market.condition_id)
-            except Exception as exc:
+        if resting and not mb.live and hasattr(self.gateway, "trades") and ("trades" in st.pending or now - st.last_trades_fetch >= TRADES_POLL_S):
+            if "trades" not in st.pending:
+                st.last_trades_fetch = now
+            done, trades, exc = self._io(st, "trades", self.gateway.trades, st.market.condition_id)
+            if done and exc is None:
+                st.trades = trades
+            elif done:
                 st.trades = []
                 if now - st.last_status_log >= STATUS_LOG_EVERY_S:
                     logger.warning("[%s] trade feed unavailable (%s); paper fills from book crossings only", st.asset, _short(exc))
@@ -456,14 +489,16 @@ class UpDownEngine:
                         "pnl": 0.0, "note": st.skip_reason or st.why,
                     })
                 continue
-            if now - st.last_resolution_try < 10:
+            if "resolution" not in st.pending:
+                if now - st.last_resolution_try < 10:
+                    continue
+                st.last_resolution_try = now
+            done, outcome, exc = self._io(st, "resolution", self.gateway.resolution, st.market)
+            if not done:
                 continue
-            st.last_resolution_try = now
-            outcome = None
-            try:
-                outcome = self.gateway.resolution(st.market)
-            except Exception as exc:
-                logger.warning("[%s] resolution lookup failed for %s: %s", st.asset, st.market.slug, exc)
+            if exc is not None:
+                outcome = None
+                logger.warning("[%s] resolution lookup failed for %s: %s", st.asset, st.market.slug, _short(exc))
             source = "polymarket"
             if outcome is None and now - st.end >= self.settle_fallback_s:
                 w = self.s.model.twap_window_s

@@ -49,7 +49,7 @@ def run_live(settings, logger) -> None:
     lead_history = PriceHistory(maxlen=600) if settings.mode == "maker" and settings.maker.lead_guard else None
     gateway = PolymarketGateway(settings.gamma_host, settings.wallet.clob_host, settings.slug_template, settings.window_seconds)
     engine = UpDownEngine(settings, gateway, broker, history, TradeJournal(settings.journal_path), maker_broker=maker_broker,
-                          lead_history=lead_history)
+                          lead_history=lead_history, background_io=True)
 
     feeds, seeders = build_price_feeds(settings.assets, settings.feed, history, on_tick=engine.on_price)
     logger.info("Price source: %s", "Chainlink (settlement oracle, via Polymarket RTDS)" if settings.feed.source == "chainlink" else "Binance/Hyperliquid")
@@ -72,9 +72,15 @@ def run_live(settings, logger) -> None:
     signal_module.signal(signal_module.SIGTERM, _request_stop)
     logger.info("Waiting for the next window to open (the current one is skipped: its strike wasn't seen).")
 
+    last_slow_warn = 0.0
     while not _stop:
         started = time.time()
         engine.tick(started)
+        took = time.time() - started
+        if took > 1.5 and started - last_slow_warn >= 60:
+            # Slow ticks leave bids stale while prices move: the costliest kind of lag for a maker.
+            last_slow_warn = started
+            logger.warning("Slow tick: %.1fs (bids were not updated meanwhile)", took)
         try:
             write_state(settings.state_path, build_state(engine, time.time()))
         except Exception:

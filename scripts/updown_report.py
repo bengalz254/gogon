@@ -28,6 +28,9 @@ LOG_PROBLEMS = {
     "market not found": re.compile(r"no market found"),
     "order-book failures": re.compile(r"order-book fetch failed|Order book fetch failed"),
     "blocked by Windows/VPN (10013)": re.compile(r"WinError 10013"),
+    "slow ticks": re.compile(r"Slow tick"),
+    "Chainlink reconnects": re.compile(r"no Chainlink price for"),
+    "early-warning pulls": re.compile(r"early warning: sharp move"),
 }
 
 
