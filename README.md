@@ -205,13 +205,14 @@ on boot and restart after a crash:
   and `config/updown.yaml`.
 - `updown-dashboard`: listens on the server's 127.0.0.1 only.
 
-It also adds three commands:
+It also adds four commands:
 
 | Command | What it does |
 |---|---|
 | `updown-status` | is the bot running, which version, last log lines |
 | `updown-log` | recent connection events and the last stall report |
-| `updown-update` | `git pull`, then restart the services |
+| `updown-report` | results so far: P&L per strategy, model vs market, settlement rule |
+| `updown-update` | `git pull`, then re-run the setup (tests, services restart) |
 
 To see the dashboard from Windows, double-click `vps_dashboard.bat`. It asks
 for the server address once (e.g. `root@203.0.113.5`), opens an SSH tunnel

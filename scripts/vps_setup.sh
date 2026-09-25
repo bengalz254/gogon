@@ -9,8 +9,8 @@
 # then installs two systemd services that start on boot and restart after a
 # crash: updown-bot (paper mode unless live trading is switched on in BOTH .env
 # and config/updown.yaml) and updown-dashboard (listens on 127.0.0.1 only; view
-# it through an SSH tunnel). Also adds three commands: updown-update,
-# updown-log and updown-status. Safe to run again.
+# it through an SSH tunnel). Also adds four commands: updown-update,
+# updown-log, updown-status and updown-report. Safe to run again.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -100,7 +100,13 @@ systemctl is-active updown-dashboard >/dev/null 2>&1 && echo "Dashboard: running
 echo
 tail -n 20 logs/bot.log 2>/dev/null || true
 EOF
-$SUDO chmod 755 /usr/local/bin/updown-update /usr/local/bin/updown-log /usr/local/bin/updown-status
+$SUDO tee /usr/local/bin/updown-report >/dev/null <<EOF
+#!/usr/bin/env bash
+# Results so far: P&L per strategy, model vs market (Brier), settlement-rule check.
+cd "$REPO"
+venv/bin/python scripts/updown_report.py "\$@"
+EOF
+$SUDO chmod 755 /usr/local/bin/updown-update /usr/local/bin/updown-log /usr/local/bin/updown-status /usr/local/bin/updown-report
 
 if [ ! -d /run/systemd/system ]; then
     say "systemd is not available on this server"
@@ -156,6 +162,7 @@ The bot now runs by itself, also after a reboot or a crash.
   updown-status   is it running + last log lines
   updown-log      recent connection events (paste this into the chat)
   updown-update   download the latest version and restart
+  updown-report   results so far: P&L, model vs market, settlement rule
 Dashboard: on your PC run  ssh -N -L 8767:127.0.0.1:8766 $RUN_USER@<server-ip>
            then open http://127.0.0.1:8767  (or double-click vps_dashboard.bat)
 EOF
