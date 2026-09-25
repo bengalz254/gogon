@@ -12,9 +12,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import signal
+import sys
+import threading
 import time
+import traceback
 
 from bot.config import WalletConfig
 from bot.updown.config import UpDownConfig
@@ -31,6 +35,65 @@ from bot.updown.risk import UpDownRisk
 from bot.updown.strategies import build_strategies
 
 logger = logging.getLogger("polybot.updown.runner")
+
+
+class LoopWatchdog:
+    """Notices from its own thread when the event loop stops running, and
+    logs the line the loop's thread is stuck on. The loop reads every
+    websocket, so a stall of a few seconds is enough to get sockets dropped;
+    the stack shows what caused it (console, disk, network call, CPU)."""
+
+    def __init__(self, threshold_s: float = 2.0, poll_s: float = 0.5, stack_every_s: float = 60.0):
+        self.threshold_s = threshold_s
+        self.poll_s = poll_s
+        self.stack_every_s = stack_every_s
+        self.loop_thread = threading.get_ident()  # construct it on the event loop's thread
+        self.last_tick = time.monotonic()
+        self._stalled_since: float | None = None
+        self._stack_at = -math.inf
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def tick(self) -> None:
+        """Called from the event loop a few times a second."""
+        self.last_tick = time.monotonic()
+
+    def check(self) -> None:
+        """One pass of the watchdog thread."""
+        now, last = time.monotonic(), self.last_tick
+        if self._stalled_since is not None:
+            if last > self._stalled_since:
+                logger.warning("Event loop running again after a %.1fs stall", last - self._stalled_since)
+                self._stalled_since = None
+            return
+        behind = now - last
+        if behind < self.threshold_s:
+            return
+        self._stalled_since = last
+        if now - self._stack_at < self.stack_every_s:
+            logger.warning("Event loop stalled for %.1fs so far; feeds are not being read", behind)
+            return
+        self._stack_at = now
+        frame = sys._current_frames().get(self.loop_thread)
+        stack = "".join(traceback.format_stack(frame)).rstrip() if frame is not None else "(not found)"
+        logger.warning("Event loop stalled for %.1fs so far; feeds are not being read. It is stuck here:\n%s",
+                       behind, stack)
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.poll_s):
+            try:
+                self.check()
+            except Exception:
+                logger.exception("Loop watchdog failed")
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, name="loop-watchdog", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
 
 
 def server_clock_offset(clob_host: str) -> float | None:
@@ -70,7 +133,7 @@ class Runner:
         self.started_at = time.time()
         self.status_path = os.path.join(cfg.journal.dir, "updown_status.json")
         self.loop_lag = 0.0
-        self._lag_warned_at = 0.0
+        self.watchdog: LoopWatchdog | None = None
         logger.info("Strategies enabled: %s", ", ".join(s.name for s in strategies) or "(none)")
 
     # -- events in ------------------------------------------------------------------
@@ -91,6 +154,8 @@ class Runner:
     # -- lifecycle --------------------------------------------------------------------
     async def run(self) -> None:
         loop = asyncio.get_running_loop()
+        self.watchdog = LoopWatchdog()  # created here: it must know the event loop's thread
+        self.watchdog.start()
         for sig in (signal.SIGINT, signal.SIGTERM):
             try:
                 loop.add_signal_handler(sig, self.stop.set)
@@ -149,6 +214,7 @@ class Runner:
             asyncio.create_task(self._resolution_loop(), name="resolution"),
             asyncio.create_task(self._status_loop(), name="status"),
             asyncio.create_task(self._status_file_loop(), name="status-file"),
+            asyncio.create_task(self._watchdog_ticks(), name="watchdog"),
         ]
         if self.live:
             tasks += [
@@ -173,6 +239,8 @@ class Runner:
         if self.recorder is not None:
             self.recorder.close()
         self.journal.close()
+        if self.watchdog is not None:
+            self.watchdog.stop()
         logger.info("Up/Down engine stopped. %s", self.engine.status_line())
 
     # -- loops --------------------------------------------------------------------------
@@ -314,16 +382,15 @@ class Runner:
             pass  # Windows: the dashboard is reading it right now; next second will do
 
     def _note_loop_lag(self, lag: float) -> None:
-        """A late wake-up means nothing ran on the event loop meanwhile: no feed
-        was read, which is how a socket ends up dropped as a slow consumer."""
+        """How late the status loop woke up (shown on the dashboard). Long
+        stalls are reported, with their cause, by LoopWatchdog."""
         self.loop_lag = max(0.0, lag)
-        now = time.time()
-        if lag > 0.5 and now - self._lag_warned_at > 60.0:
-            self._lag_warned_at = now
-            logger.warning(
-                "Event loop stalled for %.1fs; feeds were not read meanwhile. On Windows this "
-                "happens while text is selected in the console window (press Esc there).", lag,
-            )
+
+    async def _watchdog_ticks(self) -> None:
+        while True:
+            if self.watchdog is not None:
+                self.watchdog.tick()
+            await asyncio.sleep(0.25)
 
     async def _status_file_loop(self) -> None:
         warned = False

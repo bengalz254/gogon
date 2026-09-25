@@ -77,7 +77,7 @@ def test_dashboard_serves_page_and_json(tmp_path):
         server.shutdown()
 
 
-def test_runner_status_file_and_stall_warning(tmp_path, caplog):
+def test_runner_writes_the_status_file(tmp_path):
     from bot.config import WalletConfig
     from bot.updown.config import UpDownConfig
     from bot.updown.runner import Runner
@@ -89,9 +89,6 @@ def test_runner_status_file_and_stall_warning(tmp_path, caplog):
     runner.write_status_file(runner.status_text())
     status = json.loads((tmp_path / "updown_status.json").read_text(encoding="utf-8"))
     assert status["mode"] == "paper" and status["loop_lag_ms"] == 0
-
-    with caplog.at_level("WARNING", logger="polybot.updown.runner"):
-        runner._note_loop_lag(2.0)
-        runner._note_loop_lag(3.0)  # rate-limited: one warning a minute
-    assert sum("Event loop stalled" in r.message for r in caplog.records) == 1
+    runner._note_loop_lag(3.0)
     assert json.loads(runner.status_text())["loop_lag_ms"] == 3000
+    runner.journal.close()
