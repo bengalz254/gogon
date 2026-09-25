@@ -96,6 +96,22 @@ class LoopWatchdog:
             self._thread.join(timeout=2.0)
 
 
+REGION_CHECK_URL = "https://polymarket.com/api/geoblock"
+EXIT_REFUSED = 3  # systemd must not restart the bot after this (see scripts/vps_setup.sh)
+
+
+def region_check(url: str = REGION_CHECK_URL) -> dict | None:
+    """Polymarket's own answer to "may this IP trade?", e.g.
+    {"blocked": true, "country": "GB", "region": "ENG"}. None if unknown."""
+    import requests
+
+    try:
+        data = requests.get(url, timeout=10).json()
+    except Exception:
+        return None
+    return data if isinstance(data, dict) and isinstance(data.get("blocked"), bool) else None
+
+
 def server_clock_offset(clob_host: str) -> float | None:
     """CLOB server time minus local time, in seconds (None if unreachable)."""
     import requests
@@ -135,6 +151,7 @@ class Runner:
         self.status_path = os.path.join(cfg.journal.dir, "updown_status.json")
         self.loop_lag = 0.0
         self.watchdog: LoopWatchdog | None = None
+        self.region: dict | None = None
         logger.info("Strategies enabled: %s", ", ".join(s.name for s in strategies) or "(none)")
 
     # -- events in ------------------------------------------------------------------
@@ -153,7 +170,24 @@ class Runner:
         self.emit(FeedStatus(feed, time.time(), connected, detail))
 
     # -- lifecycle --------------------------------------------------------------------
-    async def run(self) -> None:
+    async def run(self) -> int:
+        """Run until stopped. Returns the process exit code."""
+        self.region = await asyncio.to_thread(region_check)
+        if self.region is None:
+            logger.warning("Could not ask Polymarket whether trading is allowed from here (%s)", REGION_CHECK_URL)
+        elif self.region["blocked"]:
+            where = "/".join(str(self.region[k]) for k in ("country", "region") if self.region.get(k))
+            if self.live:
+                logger.error(
+                    "Polymarket does not allow trading from this location (%s). Refusing to start in LIVE "
+                    "mode. Paper mode still works here; live trading needs a location where Polymarket, "
+                    "and the rules that apply to you, allow it.", where,
+                )
+                return EXIT_REFUSED
+            logger.warning("Polymarket does not allow trading from this location (%s): paper mode only here.", where)
+        else:
+            logger.info("Polymarket region check: trading allowed from here (%s)", self.region.get("country", "?"))
+
         loop = asyncio.get_running_loop()
         self.watchdog = LoopWatchdog()  # created here: it must know the event loop's thread
         self.watchdog.start()
@@ -229,6 +263,7 @@ class Runner:
         await self.stop.wait()
         logger.info("Stopping: cancelling resting orders...")
         await self._shutdown(tasks)
+        return 0
 
     async def _shutdown(self, tasks) -> None:
         if self.live and self.broker is not None:
@@ -369,7 +404,7 @@ class Runner:
         now = time.time()
         snap = self.engine.status_snapshot(now)
         snap.update(mode=self.mode, started_at=self.started_at, feeds=[f.status(now) for f in self.feeds],
-                    loop_lag_ms=round(self.loop_lag * 1000.0))
+                    loop_lag_ms=round(self.loop_lag * 1000.0), region=self.region)
         return json.dumps(snap, separators=(",", ":"))
 
     def write_status_file(self, text: str) -> None:

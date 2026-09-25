@@ -41,10 +41,9 @@ def main(argv=None) -> int:
     from bot.updown.runner import Runner
 
     try:
-        asyncio.run(Runner(cfg, wallet, record=args.record).run())
+        return asyncio.run(Runner(cfg, wallet, record=args.record).run()) or 0
     except KeyboardInterrupt:
-        pass
-    return 0
+        return 0
 
 
 if __name__ == "__main__":

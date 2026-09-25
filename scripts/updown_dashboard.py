@@ -218,6 +218,7 @@ INDEX_HTML = r"""<!doctype html>
     <div class="row">
       <span id="conn" class="status s-neutral"><span class="icon">·</span><span>memuat…</span></span>
       <span id="mode" class="pill">&ndash;</span>
+      <span id="region"></span>
       <button class="plain" id="theme" title="Ganti tema terang/gelap">tema</button>
     </div>
   </header>
@@ -338,6 +339,12 @@ function renderHeader(live) {
   else if (st) { label = "offline · update terakhir " + ago(live.age) + " lalu"; }
   conn.replaceWith(Object.assign(status(kind, label), {id: "conn"}));
   document.getElementById("mode").textContent = st ? st.mode.toUpperCase() : "–";
+  const region = st && st.region;
+  const regionEl = region && region.blocked
+    ? status("warning", "live diblokir di " + [region.country, region.region].filter(Boolean).join("/"),
+        "Polymarket tidak mengizinkan trading dari lokasi server ini. Paper trading tetap jalan.")
+    : el("span", {});
+  document.getElementById("region").replaceWith(Object.assign(regionEl, {id: "region"}));
   const banner = document.getElementById("banner");
   const offline = !st || live.age >= 30;
   banner.classList.toggle("show", offline);

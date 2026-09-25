@@ -68,3 +68,45 @@ def test_watchdog_reports_where_the_loop_is_stuck(caplog):
     text = "\n".join(r.getMessage() for r in caplog.records)
     assert "stuck here" in text and "stuck_writing_to_the_console" in text
     assert "running again after a 0." in text
+
+
+def test_region_check_reads_polymarkets_answer(monkeypatch):
+    import requests
+
+    from bot.updown import runner as runner_mod
+
+    class _Resp:
+        def __init__(self, data):
+            self.data = data
+
+        def json(self):
+            return self.data
+
+    monkeypatch.setattr(requests, "get", lambda url, timeout: _Resp({"blocked": True, "country": "GB", "region": "ENG"}))
+    assert runner_mod.region_check() == {"blocked": True, "country": "GB", "region": "ENG"}
+    monkeypatch.setattr(requests, "get", lambda url, timeout: _Resp({"error": "unexpected"}))
+    assert runner_mod.region_check() is None
+
+    def offline(url, timeout):
+        raise requests.ConnectionError("offline")
+
+    monkeypatch.setattr(requests, "get", offline)
+    assert runner_mod.region_check() is None
+
+
+def test_live_mode_refuses_to_start_where_polymarket_blocks_trading(tmp_path, monkeypatch):
+    import asyncio
+
+    from bot.config import WalletConfig
+    from bot.updown import runner as runner_mod
+    from bot.updown.config import UpDownConfig
+
+    monkeypatch.setattr(runner_mod, "region_check", lambda: {"blocked": True, "country": "GB", "region": "ENG"})
+    cfg = UpDownConfig()
+    cfg.journal.dir = str(tmp_path)
+    cfg.journal.trades_csv = str(tmp_path / "trades.csv")
+    live = runner_mod.Runner(cfg, WalletConfig("0x" + "1" * 64, 137, "http://127.0.0.1:1", 0, None, True))
+    try:
+        assert asyncio.run(live.run()) == runner_mod.EXIT_REFUSED
+    finally:
+        live.journal.close()

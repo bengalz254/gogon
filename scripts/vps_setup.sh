@@ -60,20 +60,23 @@ else
     echo "clob.polymarket.com: not reachable"
 fi
 echo "Region check (live trading must be allowed where this server is):"
-curl -s --max-time 15 https://polymarket.com/api/geoblock | head -c 300 || echo "(no answer)"
-echo
+region="$(curl -s --max-time 15 https://polymarket.com/api/geoblock | head -c 300 || true)"
+echo "${region:-(no answer)}"
+if printf '%s' "$region" | grep -q '"blocked":true'; then
+    echo "=> Polymarket does not allow trading from this server's location: paper mode only here."
+    echo "   The bot refuses to start in live mode on this server."
+fi
 
 say "Installing the helper commands"
 $SUDO tee /usr/local/bin/updown-update >/dev/null <<EOF
 #!/usr/bin/env bash
-# Download the latest bot version and restart it.
+# Download the latest bot version, then re-run the setup: it installs new
+# requirements, runs the tests and restarts the services. (exec: the setup
+# rewrites this very file.)
 set -e
 cd "$REPO"
 git pull
-venv/bin/pip install -q -r requirements.txt
-S=""; [ "\$(id -u)" -ne 0 ] && S="sudo"
-\$S systemctl restart updown-bot updown-dashboard 2>/dev/null || echo "(systemd not available: restart the bot yourself)"
-echo "Now running: \$(git log --oneline -1)"
+exec bash scripts/vps_setup.sh
 EOF
 $SUDO tee /usr/local/bin/updown-log >/dev/null <<EOF
 #!/usr/bin/env bash
@@ -119,6 +122,8 @@ WorkingDirectory=$REPO
 ExecStart=$REPO/venv/bin/python -m bot.updown --record
 Restart=always
 RestartSec=10
+# 2 = configuration error, 3 = live trading refused (region): restarting won't help
+RestartPreventExitStatus=2 3
 TimeoutStopSec=30
 
 [Install]
