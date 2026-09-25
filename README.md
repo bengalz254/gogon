@@ -180,7 +180,7 @@ made stale and noisy on purpose. Only calibration on real data counts.
 
 ```bash
 python3 -m venv venv
-source venv/bin/activate
+source venv/bin/activate          # Windows PowerShell: .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
 cp .env.example .env
