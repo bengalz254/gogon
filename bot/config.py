@@ -39,6 +39,44 @@ class ThresholdConfig:
     sell_rise_pct: float = 0.08
 
 
+@dataclass
+class MarketMakerConfig:
+    enabled: bool = False
+    # Reward markets quoted at once, and how often they're re-picked.
+    max_markets: int = 3
+    reselect_minutes: float = 30.0
+    # How often quotes and fills are checked (needs the WebSocket feed).
+    refresh_seconds: float = 5.0
+    # Shares per quote; raised to the market's reward minimum when that's higher.
+    order_size: float = 20.0
+    # Distance from the midpoint as a fraction of the market's reward
+    # max_spread. Closer earns more rewards but gets picked off more often.
+    spread_fraction: float = 0.6
+    # Half-spread used when a market publishes no max_spread.
+    default_half_spread: float = 0.02
+    # Stop adding to a side once net inventory reaches this many shares.
+    max_inventory: float = 100.0
+    # Lean quotes against inventory: 0 = none, 1 = a full half-spread at max inventory.
+    inventory_skew: float = 0.5
+    # Only quote while the midpoint is inside this band.
+    min_mid: float = 0.15
+    max_mid: float = 0.85
+    # Skip markets ending within this many days, and sports markets whose
+    # game starts within this many hours (or has started).
+    min_days_to_end: float = 3.0
+    avoid_game_start_hours: float = 6.0
+    # Pull quotes and pause a market for cooldown_minutes when its midpoint
+    # moves more than max_mid_move within volatility_window_seconds.
+    max_mid_move: float = 0.03
+    volatility_window_seconds: float = 60.0
+    cooldown_minutes: float = 15.0
+    # Live orders expire on their own after about this long (plus the
+    # exchange's 60 s minimum) unless the bot keeps refreshing them.
+    order_ttl_seconds: float = 120.0
+    # Replace a resting quote only when its ideal price moved this many ticks.
+    requote_ticks: int = 1
+
+
 # Polymarket taker-fee rates per market category (Sept 2026 schedule). Keep in
 # sync with https://docs.polymarket.com/trading/fees — Polymarket does change
 # them (sports went from 0.03 to 0.05 in July 2026).
@@ -118,6 +156,7 @@ class Settings:
     arbitrage: ArbitrageConfig
     threshold: ThresholdConfig
     polling_interval_seconds: int = 15
+    market_maker: MarketMakerConfig = field(default_factory=MarketMakerConfig)
     fees: FeeConfig = field(default_factory=FeeConfig)
     notifications: NotificationConfig = field(default_factory=NotificationConfig)
     market_data: MarketDataConfig = field(default_factory=MarketDataConfig)
@@ -129,6 +168,22 @@ def _bool_env(name: str, default: bool = False) -> bool:
     if val is None:
         return default
     return val.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _market_maker_config(raw: dict) -> MarketMakerConfig:
+    defaults = MarketMakerConfig()
+    values = {}
+    for name, default in vars(defaults).items():
+        if name not in raw or raw[name] is None:
+            continue
+        caster = bool if isinstance(default, bool) else type(default)
+        values[name] = caster(raw[name])
+    cfg = MarketMakerConfig(**values)
+    if not 0 < cfg.min_mid < cfg.max_mid < 1:
+        raise ValueError("strategies.market_maker: need 0 < min_mid < max_mid < 1")
+    if cfg.spread_fraction <= 0 or cfg.order_size <= 0 or cfg.max_inventory <= 0:
+        raise ValueError("strategies.market_maker: spread_fraction, order_size and max_inventory must be > 0")
+    return cfg
 
 
 def load_settings(config_path: str | None = None, env_path: str | None = None) -> Settings:
@@ -148,6 +203,7 @@ def load_settings(config_path: str | None = None, env_path: str | None = None) -
     strategies_raw = raw.get("strategies", {}) or {}
     arb_raw = strategies_raw.get("arbitrage", {}) or {}
     thr_raw = strategies_raw.get("threshold", {}) or {}
+    mm_raw = strategies_raw.get("market_maker", {}) or {}
     fees_raw = raw.get("fees", {}) or {}
     notify_raw = raw.get("notifications", {}) or {}
     md_raw = raw.get("market_data", {}) or {}
@@ -201,6 +257,7 @@ def load_settings(config_path: str | None = None, env_path: str | None = None) -
             sell_rise_pct=float(thr_raw.get("sell_rise_pct", 0.08)),
         ),
         polling_interval_seconds=int(raw.get("polling_interval_seconds", 15)),
+        market_maker=_market_maker_config(mm_raw),
         fees=fees,
         notifications=NotificationConfig(
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN") or None,

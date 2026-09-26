@@ -96,15 +96,19 @@ class RecordingNotifier:
 
 
 def run_cycles(monkeypatch, cycles=1):
+    """Run the bot on a fake clock that only moves when it sleeps, stopping
+    after `cycles` polling intervals (1 s in these settings)."""
     monkeypatch.setattr(main_mod, "_stop", False)
-    sleeps = []
+    clock = {"now": 1_000_000.0}
+    start = clock["now"]
 
-    def stop_after_enough_cycles(seconds):
-        sleeps.append(seconds)
-        if len(sleeps) >= cycles:
+    def fake_sleep(seconds):
+        clock["now"] += seconds
+        if clock["now"] - start >= cycles - 1e-6:
             main_mod._stop = True
 
-    monkeypatch.setattr(main_mod.time, "sleep", stop_after_enough_cycles)
+    monkeypatch.setattr(main_mod.time, "time", lambda: clock["now"])
+    monkeypatch.setattr(main_mod.time, "sleep", fake_sleep)
     main_mod.run()
 
 
@@ -221,3 +225,98 @@ def test_paper_merges_complete_sets_and_books_the_profit(tmp_path, monkeypatch):
     status = read_status(tmp_path)
     assert status["open_positions"] == 0
     assert abs(status["realized_pnl_today_usd"] - 26.04 * 0.04) < 1e-6
+
+
+# -- market making through the main loop ---------------------------------------------
+
+from bot.orderbook import OrderBook  # noqa: E402
+from bot.ws_market import Trade  # noqa: E402
+
+MM_SETTINGS = """
+strategies:
+  arbitrage:
+    enabled: false
+  market_maker:
+    enabled: true
+    order_size: 10
+    refresh_seconds: 1
+    min_days_to_end: 0
+"""
+
+
+class RewardClient(FakeClient):
+    """One reward market, quoted 0.48 / 0.52 on both tokens."""
+
+    def get_sampling_markets(self, next_cursor="MA=="):
+        market = {
+            "condition_id": "mkt1",
+            "question": "Will it happen?",
+            "tokens": [{"token_id": "yes", "outcome": "Yes"}, {"token_id": "no", "outcome": "No"}],
+            "rewards": {"rates": [{"rewards_daily_rate": 40}], "min_size": 10, "max_spread": 3},
+            "minimum_tick_size": 0.01,
+        }
+        return {"data": [market], "next_cursor": "LTE="}
+
+
+class FakeFeed:
+    """Stands in for the market WebSocket: fixed books, trades handed out per refresh."""
+
+    instances = []
+
+    def __init__(self, url=None, stale_after=None):
+        self.books = {
+            t: OrderBook(t, bids={0.48: 100.0}, asks={0.52: 100.0}, tick_size=0.01) for t in ("yes", "no")
+        }
+        self.trade_batches = [[], [Trade("yes", 0.47, 4.0, "SELL", 0.0)]]
+        self.assets = []
+        FakeFeed.instances.append(self)
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    def set_assets(self, assets):
+        self.assets = list(assets)
+
+    def is_live(self, now=None):
+        return True
+
+    def book(self, token_id, now=None):
+        book = self.books.get(token_id)
+        return book.copy() if book else None
+
+    def drain_trades(self):
+        return self.trade_batches.pop(0) if self.trade_batches else []
+
+
+def test_paper_market_making_quotes_and_fills(tmp_path, monkeypatch):
+    prepare(tmp_path, monkeypatch, RewardClient(), MM_SETTINGS)
+    # prepare() switched the socket off; market making needs it (faked here)
+    settings_file = tmp_path / "config" / "settings.yaml"
+    settings_file.write_text(settings_file.read_text().replace("websocket: false", "websocket: true"))
+    FakeFeed.instances.clear()
+    RecordingNotifier.instances.clear()
+    monkeypatch.setattr(main_mod, "MarketFeed", FakeFeed)
+    monkeypatch.setattr(main_mod, "Notifier", RecordingNotifier)
+
+    run_cycles(monkeypatch, cycles=3)
+
+    feed = FakeFeed.instances[0]
+    assert {"yes", "no"} <= set(feed.assets)  # quoted tokens are streamed
+    trades = read_trades(tmp_path)
+    assert [(t["strategy"], t["side"], t["outcome"], t["price"], t["size_shares"]) for t in trades] == [
+        ("market_maker", "BUY", "Yes", "0.4800", "4.0000")
+    ]
+    mm = read_status(tmp_path)["market_maker"]
+    assert mm["enabled"] and mm["markets"] == ["mkt1"] and mm["fills_today"] == 1
+    assert mm["open_quotes"] == 2
+    messages = RecordingNotifier.instances[0].messages
+    assert any("Market making di 1 market" in m for m in messages)
+
+
+def test_market_making_is_refused_without_the_websocket(tmp_path, monkeypatch):
+    prepare(tmp_path, monkeypatch, RewardClient(), MM_SETTINGS)
+    run_one_cycle(monkeypatch)
+    assert read_status(tmp_path)["market_maker"] == {"enabled": False}
