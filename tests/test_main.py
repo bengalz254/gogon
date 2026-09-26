@@ -7,6 +7,8 @@ import bot.main as main_mod
 
 SETTINGS = """
 polling_interval_seconds: 1
+market_data:
+  websocket: false
 markets:
   min_volume_usd: 0
   min_liquidity_usd: 0
@@ -51,6 +53,20 @@ class FakeClient:
     def get_order_book(self, token_id):
         ask = {"yes": 0.47, "no": 0.49}[token_id]
         return Book(round(ask - 0.02, 2), ask)
+
+    def get_order_books(self, params):
+        self.batch_requests = getattr(self, "batch_requests", 0) + 1
+        books = []
+        for p in params:
+            ask = {"yes": 0.47, "no": 0.49}[p["token_id"]]
+            books.append(
+                {
+                    "asset_id": p["token_id"],
+                    "bids": [{"price": str(round(ask - 0.02, 2)), "size": "100"}],
+                    "asks": [{"price": str(ask), "size": "100"}],
+                }
+            )
+        return books
 
     def get_market(self, condition_id):
         return {"condition_id": condition_id, "closed": False, "tokens": []}
@@ -121,9 +137,11 @@ def prepare(tmp_path, monkeypatch, client):
 
 
 def test_paper_cycle_trades_persists_and_survives_a_restart(tmp_path, monkeypatch):
-    prepare(tmp_path, monkeypatch, FakeClient())
+    client = FakeClient()
+    prepare(tmp_path, monkeypatch, client)
 
     run_one_cycle(monkeypatch)
+    assert client.batch_requests == 1  # both books came in one /books request
 
     trades = read_trades(tmp_path)
     assert [(t["side"], t["outcome"], t["filled"]) for t in trades] == [

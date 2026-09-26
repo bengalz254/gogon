@@ -8,19 +8,21 @@ import signal as signal_module
 import time
 from datetime import datetime, timezone
 
+from bot.books import BookProvider
 from bot.client import build_client
 from bot.config import load_settings
 from bot.execution import OrderExecutor
 from bot.fees import FeeModel
 from bot.journal import TradeJournal
 from bot.logger import setup_logging
-from bot.market_data import BookLevel, best_levels, iter_active_markets
+from bot.market_data import iter_active_markets
 from bot.notify import Notifier
 from bot.reconcile import reconcile
 from bot.risk import RiskManager
 from bot.settlement import settle_resolved_markets
 from bot.state import StateStore, state_path
 from bot.strategies import ArbitrageStrategy, ThresholdStrategy
+from bot.ws_market import MarketFeed
 
 logger = logging.getLogger("polybot.main")
 
@@ -54,6 +56,11 @@ def _pnl_summary(risk: RiskManager) -> str:
         f"P&L hari ini {_usd(risk.daily_pnl)} (realized {_usd(risk.realized_pnl_today)}, "
         f"unrealized {_usd(risk.unrealized_pnl)})"
     )
+
+
+def _ws_assets(risk: RiskManager, scan_tokens: list[str], limit: int) -> list[str]:
+    """Tokens to stream: held positions first (they're marked every cycle), then the scan's."""
+    return list(dict.fromkeys([*risk.positions, *scan_tokens]))[: max(0, limit)]
 
 
 def _marks_for_positions(risk: RiskManager, get_book) -> dict[str, float]:
@@ -119,7 +126,12 @@ def _reconcile_positions(address: str, risk: RiskManager, notifier: Notifier) ->
 
 
 def _write_status(
-    mode: str, risk: RiskManager, cycles: int, last_cycle_seconds: float, markets_scanned: int
+    mode: str,
+    risk: RiskManager,
+    cycles: int,
+    last_cycle_seconds: float,
+    markets_scanned: int,
+    feed: MarketFeed | None = None,
 ) -> None:
     payload = {
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -133,6 +145,7 @@ def _write_status(
         "realized_pnl_today_usd": round(risk.realized_pnl_today, 4),
         "unrealized_pnl_usd": round(risk.unrealized_pnl, 4),
         "kill_switch": risk.daily_loss_limit_hit,
+        "websocket_live": feed.is_live() if feed is not None else False,
     }
     os.makedirs(os.path.dirname(STATUS_PATH), exist_ok=True)
     tmp_path = STATUS_PATH + ".tmp"
@@ -175,6 +188,11 @@ def run() -> None:
         )
     # Exact per-market fee terms from Polymarket when available, else config rates.
     fees = FeeModel(settings.fees, market_info=getattr(client, "get_clob_market_info", None))
+    feed = None
+    if settings.market_data.websocket:
+        feed = MarketFeed(url=settings.market_data.ws_url, stale_after=settings.market_data.stale_after_seconds)
+        feed.start()
+    books = BookProvider(client, feed, batch_size=settings.market_data.rest_batch_size)
     journal = TradeJournal()
     executor = OrderExecutor(
         client,
@@ -184,6 +202,7 @@ def run() -> None:
         store=store,
         notifier=notifier,
         notify_fills=settings.notifications.fills,
+        book_lookup=books.book,
     )
 
     strategies = []
@@ -214,27 +233,26 @@ def run() -> None:
 
     while not _stop:
         cycle_start = time.time()
-        book_cache: dict[str, BookLevel] = {}
-
-        def get_book(token_id: str) -> BookLevel:
-            if token_id not in book_cache:
-                try:
-                    raw_book = client.get_order_book(token_id)
-                    book_cache[token_id] = best_levels(raw_book)
-                except Exception:
-                    logger.exception("Failed to fetch order book for token %s", token_id)
-                    book_cache[token_id] = BookLevel(None, None, 0.0, 0.0)
-            return book_cache[token_id]
+        books.new_cycle()
 
         market_count = 0
         try:
+            markets = []
             for market in iter_active_markets(client, settings.markets):
                 if _stop:
                     break
-                market_count += 1
+                markets.append(market)
+            market_count = len(markets)
+            scan_tokens = [t.token_id for m in markets for t in m.tokens]
+            if feed is not None:
+                feed.set_assets(_ws_assets(risk, scan_tokens, settings.market_data.max_ws_assets))
+            books.prefetch(scan_tokens)
+            for market in markets:
+                if _stop:
+                    break
                 for strategy in strategies:
-                    executor.execute_signals(strategy.generate_signals(market, get_book))
-            risk.update_marks(_marks_for_positions(risk, get_book))
+                    executor.execute_signals(strategy.generate_signals(market, books.top))
+            risk.update_marks(_marks_for_positions(risk, books.top))
             logger.info(
                 "Cycle complete: scanned %d markets | open_positions=%d | "
                 "exposure=$%.2f | realized_pnl_today=$%.2f | unrealized_pnl=$%.2f",
@@ -290,7 +308,7 @@ def run() -> None:
         cycles += 1
         elapsed = time.time() - cycle_start
         try:
-            _write_status(mode, risk, cycles, elapsed, market_count)
+            _write_status(mode, risk, cycles, elapsed, market_count, feed)
         except OSError:
             logger.exception("Failed to write %s", STATUS_PATH)
 
@@ -301,6 +319,8 @@ def run() -> None:
             time.sleep(step)
             remaining -= step
 
+    if feed is not None:
+        feed.stop()
     logger.info("Bot stopped.")
     notifier.send(f"🔴 Bot berhenti ({mode.upper()}) — {_pnl_summary(risk)}")
     notifier.close()

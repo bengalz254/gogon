@@ -67,6 +67,20 @@ class FeeConfig:
 
 
 @dataclass
+class MarketDataConfig:
+    # Stream order books over Polymarket's market WebSocket (REST stays the
+    # fallback whenever the socket is down).
+    websocket: bool = True
+    ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+    # No message on the socket for this long means it's dead: use REST.
+    stale_after_seconds: float = 30.0
+    # Tokens subscribed on the socket; held positions come first.
+    max_ws_assets: int = 400
+    # Tokens per REST /books request.
+    rest_batch_size: int = 100
+
+
+@dataclass
 class NotificationConfig:
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
@@ -96,6 +110,7 @@ class Settings:
     polling_interval_seconds: int = 15
     fees: FeeConfig = field(default_factory=FeeConfig)
     notifications: NotificationConfig = field(default_factory=NotificationConfig)
+    market_data: MarketDataConfig = field(default_factory=MarketDataConfig)
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
@@ -124,6 +139,7 @@ def load_settings(config_path: str | None = None, env_path: str | None = None) -
     thr_raw = strategies_raw.get("threshold", {}) or {}
     fees_raw = raw.get("fees", {}) or {}
     notify_raw = raw.get("notifications", {}) or {}
+    md_raw = raw.get("market_data", {}) or {}
 
     # A category_taker_rates mapping in the YAML replaces the built-in one
     # entirely, so removing a category there really removes it.
@@ -179,6 +195,13 @@ def load_settings(config_path: str | None = None, env_path: str | None = None) -
             telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID") or None,
             fills=bool(notify_raw.get("fills", True)),
             heartbeat_hours=float(notify_raw.get("heartbeat_hours", 6.0)),
+        ),
+        market_data=MarketDataConfig(
+            websocket=bool(md_raw.get("websocket", True)),
+            ws_url=str(md_raw.get("ws_url", MarketDataConfig.ws_url)),
+            stale_after_seconds=float(md_raw.get("stale_after_seconds", 30.0)),
+            max_ws_assets=int(md_raw.get("max_ws_assets", 400)),
+            rest_batch_size=int(md_raw.get("rest_batch_size", 100)),
         ),
     )
 
