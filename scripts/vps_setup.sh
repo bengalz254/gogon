@@ -11,8 +11,8 @@
 # switched on in BOTH .env and config/updown.yaml), updown-bot-15m (15-minute
 # markets, always paper: an experiment) and updown-dashboard (listens on
 # 127.0.0.1 only; view it through an SSH tunnel, with a switch between the
-# two). Also adds four commands: updown-update, updown-log, updown-status and
-# updown-report. Safe to run again.
+# two). Also adds five commands: updown-update, updown-log, updown-status,
+# updown-report and updown-reset. Safe to run again.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -127,7 +127,37 @@ if [ -d data/15m ]; then
     venv/bin/python scripts/updown_report.py --data-dir data/15m
 fi
 EOF
-$SUDO chmod 755 /usr/local/bin/updown-update /usr/local/bin/updown-log /usr/local/bin/updown-status /usr/local/bin/updown-report
+$SUDO tee /usr/local/bin/updown-reset >/dev/null <<EOF
+#!/usr/bin/env bash
+# Start a bot's paper results from zero: stop it, move its journals to
+# data/archive/<date>-<bot>/ (nothing is deleted), start it again.
+#   updown-reset        the 5-minute bot (data/)
+#   updown-reset 15m    the 15-minute bot (data/15m/)
+set -e
+cd "$REPO"
+case "\${1:-5m}" in
+    5m)  unit=updown-bot;     dir=data ;;
+    15m) unit=updown-bot-15m; dir=data/15m ;;
+    *)   echo "Usage: updown-reset [5m|15m]"; exit 2 ;;
+esac
+dest="data/archive/\$(date +%Y%m%d-%H%M%S)-\${1:-5m}"
+systemctl stop "\$unit"
+mkdir -p "\$dest"
+moved=0
+for f in trades.csv updown_decisions.jsonl updown_snapshots.jsonl updown_settlements.csv updown_status.json; do
+    if [ -f "\$dir/\$f" ]; then mv "\$dir/\$f" "\$dest/"; moved=\$((moved + 1)); fi
+done
+systemctl start "\$unit"
+if [ "\$moved" -gt 0 ]; then
+    echo "Old results moved to \$dest (delete that folder once you no longer need it)."
+else
+    rmdir "\$dest"
+    echo "There were no results to move."
+fi
+echo "\$unit restarted: its P&L, win rate and report now start from zero."
+EOF
+$SUDO chmod 755 /usr/local/bin/updown-update /usr/local/bin/updown-log /usr/local/bin/updown-status \
+    /usr/local/bin/updown-report /usr/local/bin/updown-reset
 
 if [ ! -d /run/systemd/system ]; then
     say "systemd is not available on this server"
@@ -206,6 +236,7 @@ The bots now run by themselves, also after a reboot or a crash:
   updown-log      recent connection events (paste this into the chat)
   updown-update   download the latest version and restart
   updown-report   results so far for both: P&L, model vs market, settlement rule
+  updown-reset    start the 5-minute bot's results from zero (updown-reset 15m: the other one)
 Dashboard: on your PC run  ssh -N -L 8767:127.0.0.1:8766 $RUN_USER@<server-ip>
            then open http://127.0.0.1:8767  (or double-click vps_dashboard.bat)
            The switch at the top shows the 5- or the 15-minute bot.

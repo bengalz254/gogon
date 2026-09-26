@@ -16,5 +16,6 @@ data/recordings/
 data/backtest/
 data/sim/
 data/15m/
+data/archive/
 .DS_Store
 vps_address.txt

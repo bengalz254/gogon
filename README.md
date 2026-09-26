@@ -240,7 +240,7 @@ start on boot and restart after a crash:
 - `updown-dashboard`: listens on the server's 127.0.0.1 only, with a switch
   between the two engines.
 
-It also adds four commands:
+It also adds five commands:
 
 | Command | What it does |
 |---|---|
@@ -248,6 +248,7 @@ It also adds four commands:
 | `updown-log` | recent connection events and the last stall report, per engine |
 | `updown-report` | results so far for both engines: P&L per strategy, model vs market, settlement rule |
 | `updown-update` | `git pull`, then re-run the setup (tests, services restart) |
+| `updown-reset` | start the 5-minute bot's results from zero (`updown-reset 15m`: the 15-minute one). Its journals move to `data/archive/`, nothing is deleted |
 
 To see the dashboard from Windows, double-click `vps_dashboard.bat`. It asks
 for the server address once (e.g. `root@203.0.113.5`), opens an SSH tunnel
