@@ -58,9 +58,12 @@ class ThresholdStrategy:
             if drop_pct >= self.cfg.buy_drop_pct:
                 max_usd = self.risk.max_affordable_usd(market.condition_id)
                 if max_usd >= self.risk.cfg.min_order_size_usd and book.best_ask > 0:
-                    # The budget has to cover the taker fee as well as the price.
+                    # The budget has to cover the taker fee as well as the price,
+                    # and a fill-or-kill order can't take more than the best level holds.
                     fee_per_share = fees.taker_fee(1.0, book.best_ask)
-                    shares = round_down_shares(max_usd / (book.best_ask + fee_per_share))
+                    shares = round_down_shares(
+                        min(max_usd / (book.best_ask + fee_per_share), book.best_ask_size)
+                    )
                     signals.append(
                         Signal(
                             strategy=self.name,
@@ -79,7 +82,8 @@ class ThresholdStrategy:
                             outcome_count=len(market.tokens),
                         )
                     )
-            elif rise_pct >= self.cfg.sell_rise_pct and existing and existing.size > 0:
+            elif rise_pct >= self.cfg.sell_rise_pct and existing and existing.size > 0 and book.best_bid_size > 0:
+                size = min(existing.size, book.best_bid_size)
                 signals.append(
                     Signal(
                         strategy=self.name,
@@ -88,10 +92,10 @@ class ThresholdStrategy:
                         outcome=token.outcome,
                         side="SELL",
                         limit_price=book.best_bid,
-                        size_shares=existing.size,
-                        size_usd=existing.size * book.best_bid,
+                        size_shares=size,
+                        size_usd=size * book.best_bid,
                         reason=f"mid {mid:.3f} is {rise_pct:.1%} above avg {avg:.3f}; closing",
-                        fee_usd=fees.taker_fee(existing.size, book.best_bid),
+                        fee_usd=fees.taker_fee(size, book.best_bid),
                         outcome_count=len(market.tokens),
                     )
                 )

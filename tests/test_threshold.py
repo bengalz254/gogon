@@ -90,3 +90,26 @@ def test_buy_size_leaves_room_for_the_taker_fee():
     assert buy.size_usd + buy.fee_usd <= risk.cfg.max_position_usd + 1e-9
     allowed, _ = risk.can_open(buy.market_id, buy.size_usd + buy.fee_usd)
     assert allowed
+
+
+def test_buy_size_is_capped_by_the_best_ask_size():
+    strat, _ = make_strategy(lookback=3, buy_drop_pct=0.1)
+    market = make_market()
+    stable = {"tokYES": BookLevel(0.60, 0.61, 100, 100), "tokNO": BookLevel(0.39, 0.40, 100, 100)}
+    for _ in range(3):
+        strat.generate_signals(market, lambda tid: stable[tid])
+    thin = {"tokYES": BookLevel(0.40, 0.41, 7, 7), "tokNO": BookLevel(0.39, 0.40, 100, 100)}
+    buy = next(s for s in strat.generate_signals(market, lambda tid: thin[tid]) if s.side == "BUY")
+    assert buy.size_shares == 7
+
+
+def test_sell_size_is_capped_by_the_best_bid_size():
+    strat, risk = make_strategy(lookback=3, sell_rise_pct=0.1)
+    market = make_market()
+    risk.record_open("mkt1", "tokYES", "YES", size=10.0, cost_usd=4.0)
+    stable = {"tokYES": BookLevel(0.40, 0.41, 100, 100), "tokNO": BookLevel(0.59, 0.60, 100, 100)}
+    for _ in range(3):
+        strat.generate_signals(market, lambda tid: stable[tid])
+    risen = {"tokYES": BookLevel(0.60, 0.61, 4, 100), "tokNO": BookLevel(0.39, 0.40, 100, 100)}
+    sell = next(s for s in strat.generate_signals(market, lambda tid: risen[tid]) if s.side == "SELL")
+    assert sell.size_shares == 4

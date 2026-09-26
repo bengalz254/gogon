@@ -16,6 +16,7 @@ from bot.fees import FeeModel
 from bot.journal import TradeJournal
 from bot.logger import setup_logging
 from bot.market_data import iter_active_markets
+from bot.merge import merge_market
 from bot.notify import Notifier
 from bot.reconcile import reconcile
 from bot.risk import RiskManager
@@ -101,6 +102,34 @@ def _settle_resolved(
         notifier.send(
             f"🏁 [{mode.upper()}] Market {market_id[:12]} sudah selesai — posisi ditutup, P&L {_usd(pnl)}{redeem_note}"
         )
+
+
+def _handle_complete_sets(
+    settings, risk: RiskManager, journal: TradeJournal, store: StateStore, notifier: Notifier, mode: str
+) -> None:
+    """Paper: merge complete sets right away. Live: say when they're worth merging."""
+    sets_by_market = risk.markets_with_complete_sets()
+    if not sets_by_market:
+        return
+    if mode == "paper":
+        if not settings.merge.paper_auto_merge:
+            return
+        for market_id in sets_by_market:
+            merge_market(risk, journal, market_id, mode)
+        try:
+            store.save(risk.snapshot())
+        except Exception:
+            logger.exception("Failed to persist risk state after merging")
+        return
+    for market_id, sets in sets_by_market.items():
+        if sets >= settings.merge.live_alert_min_sets:
+            notifier.send(
+                f"🔁 {sets:.2f} set lengkap (semua outcome) di market {market_id} bisa di-merge jadi "
+                f"${sets:.2f} pUSD. Merge di Polymarket, lalu hentikan bot dan catat dengan:\n"
+                f"python scripts/positions.py --live merge {market_id}",
+                key=f"merge:{market_id}",
+                cooldown_s=24 * 3600,
+            )
 
 
 def _reconcile_positions(address: str, risk: RiskManager, notifier: Notifier) -> None:
@@ -292,6 +321,8 @@ def run() -> None:
         elif kill_switch_on:
             kill_switch_on = False
             notifier.send(f"✅ Batas rugi harian tidak aktif lagi — bot boleh membuka posisi.\n{_pnl_summary(risk)}")
+
+        _guarded(notifier, "merge", _handle_complete_sets, settings, risk, journal, store, notifier, mode)
 
         if time.time() - last_settle >= SETTLE_INTERVAL_SECONDS:
             last_settle = time.time()

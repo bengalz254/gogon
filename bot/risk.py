@@ -38,6 +38,32 @@ class Position:
 
 
 @dataclass
+class MergeLeg:
+    """One outcome's share of a merge: `size` shares returned for `proceeds_usd`."""
+
+    token_id: str
+    outcome: str
+    size: float
+    proceeds_usd: float
+    pnl: float
+
+
+def _complete_sets(positions: list["Position"]) -> float:
+    """Complete sets among one market's positions: the shares held of every
+    outcome, or 0 unless every outcome of the market is held."""
+    if not positions:
+        return 0.0
+    outcome_count = positions[0].outcome_count
+    if (
+        outcome_count is None
+        or len(positions) != outcome_count
+        or any(p.outcome_count != outcome_count for p in positions)
+    ):
+        return 0.0
+    return min(p.size for p in positions)
+
+
+@dataclass
 class RiskState:
     """Everything RiskManager needs to survive a restart."""
 
@@ -195,13 +221,7 @@ class RiskManager:
 
         pnl = 0.0
         for positions in by_market.values():
-            outcome_count = positions[0].outcome_count
-            complete = (
-                outcome_count is not None
-                and len(positions) == outcome_count
-                and all(p.outcome_count == outcome_count for p in positions)
-            )
-            sets = min(p.size for p in positions) if complete else 0.0
+            sets = _complete_sets(positions)
             value = sets * 1.0
             for p in positions:
                 mark = marks.get(p.token_id)
@@ -215,6 +235,34 @@ class RiskManager:
         """Store current marks (they feed unrealized_pnl and the kill switch)."""
         self._marks = dict(marks)
         return self.unrealized_pnl
+
+    # -- merging complete sets -------------------------------------------------
+    def complete_sets(self, market_id: str) -> float:
+        return _complete_sets([p for p in self.positions.values() if p.market_id == market_id])
+
+    def markets_with_complete_sets(self) -> dict[str, float]:
+        return {m: sets for m in {p.market_id for p in self.positions.values()} if (sets := self.complete_sets(m)) > 0}
+
+    def record_merge(self, market_id: str, sets: float | None = None) -> list[MergeLeg]:
+        """Turn complete sets back into $1 of collateral each, as Polymarket's
+        Merge does. Every outcome's position shrinks by the merged amount at
+        its average cost; the $1 per set is split across the outcomes in
+        proportion to their cost so each one's P&L share is fair. Returns one
+        MergeLeg per outcome (empty if there was nothing to merge)."""
+        available = self.complete_sets(market_id)
+        sets = available if sets is None else min(sets, available)
+        if sets <= 1e-9:
+            return []
+        positions = [p for p in self.positions.values() if p.market_id == market_id]
+        costs = [p.avg_price * sets for p in positions]
+        total_cost = sum(costs)
+        legs = []
+        for pos, cost in zip(positions, costs):
+            proceeds = sets * (cost / total_cost) if total_cost > 0 else sets / len(positions)
+            token_id, outcome = pos.token_id, pos.outcome
+            pnl = self.record_close(token_id, sets, proceeds)
+            legs.append(MergeLeg(token_id, outcome, sets, proceeds, pnl))
+        return legs
 
     # -- persistence -------------------------------------------------------
     def snapshot(self) -> RiskState:

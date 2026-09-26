@@ -121,10 +121,10 @@ def read_status(tmp_path):
     return json.loads((tmp_path / "data" / "status.json").read_text(encoding="utf-8"))
 
 
-def prepare(tmp_path, monkeypatch, client):
+def prepare(tmp_path, monkeypatch, client, extra_settings=""):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "config").mkdir()
-    (tmp_path / "config" / "settings.yaml").write_text(SETTINGS, encoding="utf-8")
+    (tmp_path / "config" / "settings.yaml").write_text(SETTINGS + extra_settings, encoding="utf-8")
     monkeypatch.setenv("BOT_CONFIG_PATH", "config/settings.yaml")
     # Set explicitly so a developer's real .env can't switch on live trading
     # or Telegram during the test.
@@ -136,9 +136,15 @@ def prepare(tmp_path, monkeypatch, client):
     monkeypatch.setattr(main_mod.signal_module, "signal", lambda *args: None)
 
 
+NO_MERGE = """
+merge:
+  paper_auto_merge: false
+"""
+
+
 def test_paper_cycle_trades_persists_and_survives_a_restart(tmp_path, monkeypatch):
     client = FakeClient()
-    prepare(tmp_path, monkeypatch, client)
+    prepare(tmp_path, monkeypatch, client, NO_MERGE)
 
     run_one_cycle(monkeypatch)
     assert client.batch_requests == 1  # both books came in one /books request
@@ -196,3 +202,22 @@ def test_failing_housekeeping_step_does_not_stop_the_bot(tmp_path, monkeypatch):
     messages = RecordingNotifier.instances[0].messages
     assert any("'settlement' gagal (OSError)" in m for m in messages)
     assert read_status(tmp_path)["cycles"] == 1  # the cycle still ran
+
+
+def test_paper_merges_complete_sets_and_books_the_profit(tmp_path, monkeypatch):
+    prepare(tmp_path, monkeypatch, FakeClient())
+
+    run_one_cycle(monkeypatch)
+
+    trades = read_trades(tmp_path)
+    assert [(t["strategy"], t["side"]) for t in trades] == [
+        ("arbitrage", "BUY"),
+        ("arbitrage", "BUY"),
+        ("merge", "SELL"),
+        ("merge", "SELL"),
+    ]
+    # journal amounts are rounded to 4 decimals per row
+    assert abs(sum(float(t["size_usd"]) for t in trades if t["strategy"] == "merge") - 26.04) < 1e-3
+    status = read_status(tmp_path)
+    assert status["open_positions"] == 0
+    assert abs(status["realized_pnl_today_usd"] - 26.04 * 0.04) < 1e-6

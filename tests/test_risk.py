@@ -187,3 +187,31 @@ def test_closed_position_stops_counting_as_unrealized_right_away():
     risk.record_close("tokA", size=100.0, proceeds_usd=0.0)  # resolved against us
     assert risk.unrealized_pnl == 0.0
     assert risk.daily_pnl == -50.0  # the loss counts once, not -$55
+
+
+def test_record_merge_turns_complete_sets_into_a_dollar_each():
+    risk = make_risk()
+    risk.record_open("mkt1", "yes", "YES", size=10.0, cost_usd=4.87, outcome_count=2)
+    risk.record_open("mkt1", "no", "NO", size=12.0, cost_usd=6.12, outcome_count=2)
+    assert risk.complete_sets("mkt1") == 10.0
+    legs = risk.record_merge("mkt1", sets=4.0)
+    assert [leg.size for leg in legs] == [4.0, 4.0]
+    assert abs(sum(leg.proceeds_usd for leg in legs) - 4.0) < 1e-12
+    # cost basis of 4 sets = 4 * 0.487 + 4 * 0.51 = 3.988 -> $0.012 profit
+    assert abs(sum(leg.pnl for leg in legs) - 0.012) < 1e-9
+    assert abs(risk.realized_pnl_today - 0.012) < 1e-9
+    assert (risk.positions["yes"].size, risk.positions["no"].size) == (6.0, 8.0)
+
+    risk.record_merge("mkt1")  # the rest: 6 sets
+    assert set(risk.positions) == {"no"} and risk.positions["no"].size == 2.0
+    assert risk.record_merge("mkt1") == []  # nothing left to merge
+
+
+def test_only_markets_with_every_outcome_have_complete_sets():
+    risk = make_risk()
+    risk.record_open("mkt1", "yes", "YES", size=10.0, cost_usd=5.0, outcome_count=2)
+    risk.record_open("mkt2", "a", "A", size=5.0, cost_usd=1.0, outcome_count=3)
+    risk.record_open("mkt2", "b", "B", size=5.0, cost_usd=1.0, outcome_count=3)
+    assert risk.markets_with_complete_sets() == {}
+    risk.record_open("mkt1", "no", "NO", size=3.0, cost_usd=1.5, outcome_count=2)
+    assert risk.markets_with_complete_sets() == {"mkt1": 3.0}
