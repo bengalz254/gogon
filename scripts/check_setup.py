@@ -1,6 +1,8 @@
 """Sanity-check your .env / config before running the bot live.
 
-Usage: python scripts/check_setup.py
+Usage: python scripts/check_setup.py [--telegram-test]
+
+--telegram-test also sends a test message to your Telegram chat.
 """
 from __future__ import annotations
 
@@ -37,6 +39,29 @@ def main() -> int:
     print(f"  Max position:      ${settings.risk.max_position_usd}")
     print(f"  Max exposure:      ${settings.risk.max_total_exposure_usd}")
     print(f"  Max daily loss:    ${settings.risk.max_daily_loss_usd}")
+    print(
+        f"  Taker fee rates:   default {settings.fees.default_taker_rate}, "
+        f"{len(settings.fees.category_taker_rates)} categories (verify against Polymarket's fee page)"
+    )
+    telegram_on = bool(settings.notifications.telegram_bot_token and settings.notifications.telegram_chat_id)
+    print(f"  Telegram alerts:   {'on' if telegram_on else 'off (set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env)'}")
+
+    if "--telegram-test" in sys.argv:
+        from bot.notify import NotificationError, Notifier
+
+        notifier = Notifier(settings.notifications.telegram_bot_token, settings.notifications.telegram_chat_id)
+        try:
+            notifier.send_now("✅ Tes notifikasi dari bot gogon — Telegram sudah tersambung.")
+            print("[OK] Telegram test message sent — check your chat.")
+        except NotificationError as e:
+            print(f"[FAIL] Telegram test failed: {e}")
+            return 1
+        except Exception as e:
+            # Only the type: request errors embed the URL, which holds the token.
+            print(f"[FAIL] Telegram test failed ({type(e).__name__}) — check your network and token.")
+            return 1
+        finally:
+            notifier.close(timeout=1)
 
     if settings.wallet.live_trading:
         print("\nAttempting to connect and derive API credentials (LIVE mode)...")

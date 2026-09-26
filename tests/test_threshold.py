@@ -1,4 +1,5 @@
-from bot.config import RiskConfig, ThresholdConfig
+from bot.config import FeeConfig, RiskConfig, ThresholdConfig
+from bot.fees import FeeModel
 from bot.market_data import BookLevel, MarketInfo, TokenInfo
 from bot.risk import RiskManager
 from bot.strategies.threshold import ThresholdStrategy
@@ -14,14 +15,14 @@ def make_market():
     )
 
 
-def make_strategy(lookback=5, buy_drop_pct=0.1, sell_rise_pct=0.1):
+def make_strategy(lookback=5, buy_drop_pct=0.1, sell_rise_pct=0.1, fees=None):
     cfg = ThresholdConfig(
         enabled=True, lookback_ticks=lookback, buy_drop_pct=buy_drop_pct, sell_rise_pct=sell_rise_pct
     )
     risk = RiskManager(
         RiskConfig(max_position_usd=100.0, max_total_exposure_usd=100.0, max_daily_loss_usd=100.0, min_order_size_usd=1.0)
     )
-    return ThresholdStrategy(cfg, risk), risk
+    return ThresholdStrategy(cfg, risk, fees or FeeModel.zero()), risk
 
 
 def test_no_signal_without_enough_history():
@@ -69,7 +70,23 @@ def test_sell_signal_on_price_rise_when_holding_position():
 def test_disabled_strategy_returns_nothing():
     cfg = ThresholdConfig(enabled=False, lookback_ticks=5, buy_drop_pct=0.1, sell_rise_pct=0.1)
     risk = RiskManager(RiskConfig(max_position_usd=100, max_total_exposure_usd=100, max_daily_loss_usd=100, min_order_size_usd=1))
-    strat = ThresholdStrategy(cfg, risk)
+    strat = ThresholdStrategy(cfg, risk, FeeModel.zero())
     market = make_market()
     book = {"tokYES": BookLevel(0.1, 0.2, 100, 100), "tokNO": BookLevel(0.8, 0.9, 100, 100)}
     assert strat.generate_signals(market, lambda tid: book[tid]) == []
+
+
+def test_buy_size_leaves_room_for_the_taker_fee():
+    strat, risk = make_strategy(lookback=3, buy_drop_pct=0.1, fees=FeeModel(FeeConfig()))
+    market = make_market()  # untagged -> default 0.07 rate
+
+    stable_book = {"tokYES": BookLevel(0.60, 0.61, 100, 100), "tokNO": BookLevel(0.39, 0.40, 100, 100)}
+    for _ in range(3):
+        strat.generate_signals(market, lambda tid: stable_book[tid])
+    dropped_book = {"tokYES": BookLevel(0.40, 0.41, 1000, 1000), "tokNO": BookLevel(0.39, 0.40, 100, 100)}
+    buy = next(s for s in strat.generate_signals(market, lambda tid: dropped_book[tid]) if s.side == "BUY")
+
+    assert buy.fee_usd > 0
+    assert buy.size_usd + buy.fee_usd <= risk.cfg.max_position_usd + 1e-9
+    allowed, _ = risk.can_open(buy.market_id, buy.size_usd + buy.fee_usd)
+    assert allowed

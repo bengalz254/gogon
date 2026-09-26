@@ -1,0 +1,28 @@
+# Run the bot 24/7:   docker compose up -d --build
+# Follow its logs:    docker compose logs -f
+# Stop it:            docker compose down
+services:
+  bot:
+    build: .
+    container_name: gogon-bot
+    # Restart after crashes and after the server reboots.
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./config:/app/config:ro
+      - ./data:/app/data
+      - ./logs:/app/logs
+    # Let the bot finish its current scan cycle when stopping.
+    stop_grace_period: 2m
+    healthcheck:
+      # Healthy while the bot keeps rewriting data/status.json every cycle.
+      test: ["CMD", "python", "-c", "import json,sys,time; sys.exit(0 if time.time() - json.load(open('data/status.json'))['updated_ts'] < 900 else 1)"]
+      interval: 60s
+      timeout: 10s
+      start_period: 5m
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -32,6 +32,8 @@ class MarketInfo:
     closed: bool = False
     volume_usd: float = 0.0
     liquidity_usd: float = 0.0
+    # Category labels (e.g. "Crypto", "Sports") — used to pick the taker-fee rate.
+    tags: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -74,7 +76,29 @@ def _parse_market(raw: dict) -> MarketInfo | None:
         closed=bool(raw.get("closed", False)),
         volume_usd=_num("volume", "volume24hr", "volumeNum"),
         liquidity_usd=_num("liquidity", "liquidityNum"),
+        tags=_parse_tags(raw),
     )
+
+
+def _parse_tags(raw: dict) -> list[str]:
+    """Collect category labels from a market payload.
+
+    Tags arrive either as plain strings or as objects with a label/slug,
+    depending on the endpoint; a top-level "category" string is included too.
+    Anything unrecognized is ignored (the fee model then uses its
+    conservative default rate).
+    """
+    tags: list[str] = []
+    for t in raw.get("tags") or []:
+        if isinstance(t, str):
+            tags.append(t)
+        elif isinstance(t, dict):
+            for key in ("label", "slug", "name"):
+                if isinstance(t.get(key), str):
+                    tags.append(t[key])
+    if isinstance(raw.get("category"), str):
+        tags.append(raw["category"])
+    return [t for t in (s.strip() for s in tags) if t]
 
 
 def iter_active_markets(client, cfg: MarketFilterConfig):

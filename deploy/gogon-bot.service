@@ -1,0 +1,30 @@
+# systemd unit to run the bot 24/7 on a Linux VPS without Docker.
+#
+# Install (adjust User and paths to where you cloned the repo):
+#   sudo cp deploy/gogon-bot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now gogon-bot
+# Logs:  journalctl -u gogon-bot -f     (and logs/bot.log)
+# Stop:  sudo systemctl stop gogon-bot
+
+[Unit]
+Description=gogon Polymarket trading bot
+After=network-online.target
+Wants=network-online.target
+# Keep retrying forever instead of giving up after a few quick failures
+# (e.g. the network isn't up yet after a reboot).
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=gogon
+WorkingDirectory=/opt/gogon
+ExecStart=/opt/gogon/venv/bin/python -m bot.main
+Restart=always
+RestartSec=10
+# The bot stops cleanly on SIGTERM after its current cycle.
+TimeoutStopSec=120
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

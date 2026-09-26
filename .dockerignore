@@ -1,0 +1,11 @@
+# Secrets never go into the image — docker-compose.yml passes .env at runtime.
+.env
+.git
+venv
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+data
+logs
+tests

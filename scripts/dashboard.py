@@ -34,8 +34,17 @@ def load_trades() -> list[dict]:
         return list(csv.DictReader(f))
 
 
+def _fee(row: dict) -> float:
+    """Taker fee of a row; blank for rows logged before fees were tracked."""
+    try:
+        return float(row.get("fee_usd") or 0.0)
+    except ValueError:
+        return 0.0
+
+
 def build_summary(rows: list[dict]) -> dict:
     filled_rows = [r for r in rows if r.get("filled", "").strip().lower() == "true"]
+    total_fees_usd = sum(_fee(r) for r in filled_rows)
 
     total_volume_usd = sum(float(r["size_usd"]) for r in filled_rows)
 
@@ -46,8 +55,9 @@ def build_summary(rows: list[dict]) -> dict:
         s["volume_usd"] += float(r["size_usd"])
 
     # Replay fills chronologically to reconstruct open positions / realized
-    # P&L, using the same average-cost accounting as bot/risk.py — this is a
-    # read-only, independent view computed straight from the trade log.
+    # P&L, using the same average-cost accounting as bot/risk.py (fees are
+    # added to the cost of buys and taken out of the proceeds of sells) —
+    # this is a read-only, independent view computed straight from the trade log.
     positions: dict[str, dict] = defaultdict(
         lambda: {"size": 0.0, "cost_usd": 0.0, "market_id": "", "outcome": ""}
     )
@@ -65,12 +75,12 @@ def build_summary(rows: list[dict]) -> dict:
 
         if r["side"] == "BUY":
             pos["size"] += size
-            pos["cost_usd"] += usd
+            pos["cost_usd"] += usd + _fee(r)
         else:  # SELL
             sell_size = min(size, pos["size"])
             avg_price = pos["cost_usd"] / pos["size"] if pos["size"] else 0.0
             cost_basis = avg_price * sell_size
-            realized_pnl += usd - cost_basis
+            realized_pnl += usd - _fee(r) - cost_basis
             pos["size"] -= sell_size
             pos["cost_usd"] -= cost_basis
 
@@ -92,6 +102,7 @@ def build_summary(rows: list[dict]) -> dict:
         "open_positions_count": len(open_positions),
         "open_exposure_usd": round(open_exposure_usd, 4),
         "realized_pnl_usd": round(realized_pnl, 4),
+        "total_fees_usd": round(total_fees_usd, 4),
         "by_strategy": by_strategy,
         "timeline": timeline,
         "recent_trades": recent_trades,
@@ -152,7 +163,7 @@ INDEX_HTML = """<!doctype html>
 
   .kpis {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 14px;
     margin-bottom: 24px;
   }
@@ -173,7 +184,11 @@ INDEX_HTML = """<!doctype html>
     gap: 16px;
     margin-bottom: 16px;
   }
-  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .grid.even { grid-template-columns: 1fr 1fr; }
+  /* let wide tables scroll inside their panel instead of widening the page */
+  .grid > * { min-width: 0; }
+  @media (max-width: 900px) { .grid, .grid.even { grid-template-columns: 1fr; } }
+  @media (max-width: 600px) { body { padding: 16px 16px 40px; } }
 
   .panel {
     background: var(--panel);
@@ -258,6 +273,7 @@ INDEX_HTML = """<!doctype html>
   <div class="kpi"><div class="label">Eksposur Terbuka</div><div class="value" id="k-exposure">&ndash;</div></div>
   <div class="kpi"><div class="label">Posisi Terbuka</div><div class="value" id="k-positions">&ndash;</div></div>
   <div class="kpi"><div class="label">Realized P&amp;L</div><div class="value" id="k-pnl">&ndash;</div></div>
+  <div class="kpi"><div class="label">Total Fee</div><div class="value" id="k-fees">&ndash;</div></div>
 </div>
 
 <div class="grid">
@@ -271,7 +287,7 @@ INDEX_HTML = """<!doctype html>
   </div>
 </div>
 
-<div class="grid" style="grid-template-columns: 1fr 1fr;">
+<div class="grid even">
   <div class="panel">
     <h2>Posisi Terbuka</h2>
     <div class="table-scroll">
@@ -310,6 +326,7 @@ function renderKpis(d) {
   document.getElementById('k-volume').textContent = fmtUsd(d.total_volume_usd);
   document.getElementById('k-exposure').textContent = fmtUsd(d.open_exposure_usd);
   document.getElementById('k-positions').textContent = d.open_positions_count;
+  document.getElementById('k-fees').textContent = fmtUsd(d.total_fees_usd);
 
   const pnlEl = document.getElementById('k-pnl');
   pnlEl.textContent = fmtUsd(d.realized_pnl_usd);

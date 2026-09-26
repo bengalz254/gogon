@@ -20,8 +20,10 @@ risk:
   max_position_usd: 25
   # Max USD committed across all open positions at any time.
   max_total_exposure_usd: 200
-  # Bot stops opening new positions for the day once realized+unrealized
-  # loss reaches this amount (resets at UTC midnight).
+  # Kill switch: the bot stops opening new positions once today's realized
+  # P&L plus the current unrealized P&L of open positions (marked at the
+  # best bid; complete YES+NO sets count as $1) reaches -this amount. It
+  # lifts when that total recovers, and realized P&L resets at UTC midnight.
   max_daily_loss_usd: 50
   # Polymarket's practical minimum order size.
   min_order_size_usd: 1
@@ -29,10 +31,11 @@ risk:
 strategies:
   arbitrage:
     enabled: true
-    # Minimum discount below $1.00 (combined YES+NO ask price) required
-    # before acting, net of fee_buffer. E.g. 0.015 = at least 1.5c edge.
+    # Minimum guaranteed profit per YES+NO set, after taker fees (see
+    # `fees:` below) and fee_buffer. E.g. 0.015 = at least 1.5c per $1 set.
     min_edge: 0.015
-    # Extra safety margin subtracted from the edge to account for fees/slippage.
+    # Extra safety margin on top of the modeled taker fees (slippage, fee
+    # schedule changes).
     fee_buffer: 0.005
 
   threshold:
@@ -43,3 +46,37 @@ strategies:
     buy_drop_pct: 0.08
     # Sell/close when price rises this fraction above the recent average.
     sell_rise_pct: 0.08
+
+fees:
+  # Polymarket charges takers fee = shares * rate * price * (1 - price);
+  # makers pay nothing. The bot's orders are fill-or-kill, so it is always
+  # the taker. Source: https://docs.polymarket.com/trading/fees — CHECK IT
+  # BEFORE GOING LIVE, Polymarket changes these (sports: 0.03 -> 0.05 in
+  # July 2026).
+  #
+  # A market's rate comes from its tags (case-insensitive); if several match,
+  # the highest wins. Markets matching none use default_taker_rate, kept at
+  # the highest known rate so an unrecognized market is never under-costed.
+  default_taker_rate: 0.07
+  # This list replaces the built-in one entirely.
+  category_taker_rates:
+    crypto: 0.07
+    sports: 0.05
+    economics: 0.05
+    culture: 0.05
+    weather: 0.05
+    politics: 0.04
+    finance: 0.04
+    tech: 0.04
+    mentions: 0.04
+    geopolitics: 0.0
+
+notifications:
+  # Telegram alerts. Put TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env to
+  # turn them on (see .env.example). Alerts for errors, the kill switch,
+  # half-filled arbitrage and position mismatches are always sent.
+  # Also send a message for every filled trade:
+  fills: true
+  # Send an "I'm still alive" status message every N hours (0 = off). If
+  # these stop arriving, the bot or its server is down.
+  heartbeat_hours: 6

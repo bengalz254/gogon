@@ -5,7 +5,10 @@ __pycache__/
 venv/
 .venv/
 *.egg-info/
-logs/*.log
-data/*.csv
-data/*.sqlite3
+# Everything the bot writes at runtime (trade log, state DBs, status file,
+# rotated logs, backups) stays out of git.
+logs/*
+!logs/.gitkeep
+data/*
+!data/.gitkeep
 .DS_Store

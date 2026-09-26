@@ -39,6 +39,43 @@ class ThresholdConfig:
     sell_rise_pct: float = 0.08
 
 
+# Polymarket taker-fee rates per market category (Sept 2026 schedule). Keep in
+# sync with https://docs.polymarket.com/trading/fees — Polymarket does change
+# them (sports went from 0.03 to 0.05 in July 2026).
+DEFAULT_CATEGORY_TAKER_RATES: dict[str, float] = {
+    "crypto": 0.07,
+    "sports": 0.05,
+    "economics": 0.05,
+    "culture": 0.05,
+    "weather": 0.05,
+    "politics": 0.04,
+    "finance": 0.04,
+    "tech": 0.04,
+    "mentions": 0.04,
+    "geopolitics": 0.0,
+}
+
+
+@dataclass
+class FeeConfig:
+    # Used for markets whose tags match no category. It is the highest known
+    # rate on purpose, so an unrecognized market is never under-costed.
+    default_taker_rate: float = 0.07
+    category_taker_rates: dict[str, float] = field(
+        default_factory=lambda: dict(DEFAULT_CATEGORY_TAKER_RATES)
+    )
+
+
+@dataclass
+class NotificationConfig:
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
+    # Send a message for every filled trade (in addition to alerts).
+    fills: bool = True
+    # Send an "I'm alive" status message this often; 0 disables it.
+    heartbeat_hours: float = 6.0
+
+
 @dataclass
 class WalletConfig:
     private_key: str | None
@@ -57,6 +94,8 @@ class Settings:
     arbitrage: ArbitrageConfig
     threshold: ThresholdConfig
     polling_interval_seconds: int = 15
+    fees: FeeConfig = field(default_factory=FeeConfig)
+    notifications: NotificationConfig = field(default_factory=NotificationConfig)
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
@@ -83,6 +122,21 @@ def load_settings(config_path: str | None = None, env_path: str | None = None) -
     strategies_raw = raw.get("strategies", {}) or {}
     arb_raw = strategies_raw.get("arbitrage", {}) or {}
     thr_raw = strategies_raw.get("threshold", {}) or {}
+    fees_raw = raw.get("fees", {}) or {}
+    notify_raw = raw.get("notifications", {}) or {}
+
+    # A category_taker_rates mapping in the YAML replaces the built-in one
+    # entirely, so removing a category there really removes it.
+    category_rates_raw = fees_raw.get("category_taker_rates")
+    if category_rates_raw is None:
+        category_rates_raw = DEFAULT_CATEGORY_TAKER_RATES
+    fees = FeeConfig(
+        default_taker_rate=float(fees_raw.get("default_taker_rate", 0.07)),
+        category_taker_rates={str(k): float(v) for k, v in category_rates_raw.items()},
+    )
+    for name, rate in [("default_taker_rate", fees.default_taker_rate), *fees.category_taker_rates.items()]:
+        if not 0.0 <= rate < 1.0:
+            raise ValueError(f"fees: taker rate for {name!r} must be in [0, 1), got {rate}")
 
     wallet = WalletConfig(
         private_key=os.getenv("POLY_PRIVATE_KEY") or None,
@@ -119,6 +173,13 @@ def load_settings(config_path: str | None = None, env_path: str | None = None) -
             sell_rise_pct=float(thr_raw.get("sell_rise_pct", 0.08)),
         ),
         polling_interval_seconds=int(raw.get("polling_interval_seconds", 15)),
+        fees=fees,
+        notifications=NotificationConfig(
+            telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN") or None,
+            telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID") or None,
+            fills=bool(notify_raw.get("fills", True)),
+            heartbeat_hours=float(notify_raw.get("heartbeat_hours", 6.0)),
+        ),
     )
 
     if wallet.live_trading:
