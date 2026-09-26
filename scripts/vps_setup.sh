@@ -1,0 +1,243 @@
+#!/usr/bin/env bash
+# One-time setup of the Up/Down bot on an Ubuntu/Debian VPS.
+#
+#   git clone https://github.com/bengalz254/gogon.git && cd gogon
+#   git checkout claude/epic-brahmagupta-gxpbv2
+#   bash scripts/vps_setup.sh
+#
+# Installs Python, creates the venv, installs the requirements, runs the tests,
+# then installs three systemd services that start on boot and restart after a
+# crash: updown-bot (5-minute markets; paper mode unless live trading is
+# switched on in BOTH .env and config/updown.yaml), updown-bot-15m (15-minute
+# markets, always paper: an experiment) and updown-dashboard (listens on
+# 127.0.0.1 only; view it through an SSH tunnel, with a switch between the
+# two). Also adds five commands: updown-update, updown-log, updown-status,
+# updown-report and updown-reset. Safe to run again.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+REPO="$(pwd)"
+RUN_USER="${SUDO_USER:-$(id -un)}"
+SUDO=""
+if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
+
+say() { printf '\n==> %s\n' "$*"; }
+
+if ! command -v apt-get >/dev/null 2>&1; then
+    echo "This script supports Ubuntu/Debian (apt-get) only." >&2
+    exit 1
+fi
+
+say "Installing Python and git"
+# Non-interactive: Ubuntu's needrestart would otherwise stop and ask which services to restart.
+$SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update -y -q
+$SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y -q python3 python3-venv python3-pip git curl
+
+python3 - <<'PY'
+import sys
+if sys.version_info < (3, 10):
+    sys.exit(f"Python {sys.version.split()[0]} is too old: use Ubuntu 22.04+ or Debian 12+ (Python 3.10 or newer).")
+PY
+
+say "Creating the virtual environment and installing the requirements"
+python3 -m venv venv
+venv/bin/pip install -q --upgrade pip
+venv/bin/pip install -q -r requirements.txt
+
+if [ ! -f .env ]; then
+    cp .env.example .env
+    echo "Created .env from .env.example (paper mode: LIVE_TRADING=false)."
+fi
+chmod 600 .env
+mkdir -p data logs
+
+say "Running the tests"
+venv/bin/python -m pytest -q
+
+say "Checking the connection to Polymarket from this server"
+if t=$(curl -sS -o /dev/null --max-time 15 -w 'connect %{time_connect}s, first byte %{time_starttransfer}s' \
+        https://clob.polymarket.com/time 2>/dev/null); then
+    echo "clob.polymarket.com: $t"
+else
+    echo "clob.polymarket.com: not reachable"
+fi
+echo "Region check (live trading must be allowed where this server is):"
+region="$(curl -s --max-time 15 https://polymarket.com/api/geoblock | head -c 300 || true)"
+echo "${region:-(no answer)}"
+if printf '%s' "$region" | grep -q '"blocked":true'; then
+    echo "=> Polymarket does not allow trading from this server's location: paper mode only here."
+    echo "   The bot refuses to start in live mode on this server."
+fi
+
+say "Installing the helper commands"
+$SUDO tee /usr/local/bin/updown-update >/dev/null <<EOF
+#!/usr/bin/env bash
+# Download the latest bot version, then re-run the setup: it installs new
+# requirements, runs the tests and restarts the services. (exec: the setup
+# rewrites this very file.)
+set -e
+cd "$REPO"
+git pull
+exec bash scripts/vps_setup.sh
+EOF
+$SUDO tee /usr/local/bin/updown-log >/dev/null <<EOF
+#!/usr/bin/env bash
+# Recent connection events, plus where the event loop was last stuck (if ever),
+# for each engine (5-minute: logs/bot.log, 15-minute: logs/bot-15m.log).
+cd "$REPO"
+[ -f logs/bot.log ] || [ -f logs/bot-15m.log ] || { echo "No log yet (logs/bot.log)"; exit 0; }
+for log in logs/bot.log logs/bot-15m.log; do
+    [ -f "\$log" ] || continue
+    echo "===== \$log ====="
+    grep -E "Strategies enabled|clob feed (connected|disconnected)|Event loop|No Up/Down window found" "\$log" | tail -n 15
+    if grep -q "stuck here" "\$log"; then
+        echo
+        echo "Last place the event loop was stuck:"
+        grep -A 14 "stuck here" "\$log" | tail -n 15
+    fi
+    echo
+done
+EOF
+$SUDO tee /usr/local/bin/updown-status >/dev/null <<EOF
+#!/usr/bin/env bash
+# Are the bots running, which version, and their last log lines.
+cd "$REPO"
+echo "Version: \$(git log --oneline -1)"
+systemctl is-active updown-bot >/dev/null 2>&1 && echo "Bot 5 min: running" || echo "Bot 5 min: NOT running"
+systemctl is-active updown-bot-15m >/dev/null 2>&1 && echo "Bot 15 min: running" || echo "Bot 15 min: NOT running"
+systemctl is-active updown-dashboard >/dev/null 2>&1 && echo "Dashboard: running" || echo "Dashboard: NOT running"
+echo
+echo "--- logs/bot.log (5 min) ---"
+tail -n 12 logs/bot.log 2>/dev/null || true
+echo
+echo "--- logs/bot-15m.log (15 min) ---"
+tail -n 8 logs/bot-15m.log 2>/dev/null || true
+EOF
+$SUDO tee /usr/local/bin/updown-report >/dev/null <<EOF
+#!/usr/bin/env bash
+# Results so far: P&L per strategy, model vs market (Brier), settlement-rule
+# check. Without arguments: the 5-minute engine, then the 15-minute one.
+cd "$REPO"
+[ \$# -eq 0 ] || exec venv/bin/python scripts/updown_report.py "\$@"
+echo "===== 5-minute markets ====="
+venv/bin/python scripts/updown_report.py
+if [ -d data/15m ]; then
+    echo
+    echo "===== 15-minute markets ====="
+    venv/bin/python scripts/updown_report.py --data-dir data/15m
+fi
+EOF
+$SUDO tee /usr/local/bin/updown-reset >/dev/null <<EOF
+#!/usr/bin/env bash
+# Start a bot's paper results from zero: stop it, move its journals to
+# data/archive/<date>-<bot>/ (nothing is deleted), start it again.
+#   updown-reset        the 5-minute bot (data/)
+#   updown-reset 15m    the 15-minute bot (data/15m/)
+set -e
+cd "$REPO"
+case "\${1:-5m}" in
+    5m)  unit=updown-bot;     dir=data ;;
+    15m) unit=updown-bot-15m; dir=data/15m ;;
+    *)   echo "Usage: updown-reset [5m|15m]"; exit 2 ;;
+esac
+dest="data/archive/\$(date +%Y%m%d-%H%M%S)-\${1:-5m}"
+systemctl stop "\$unit"
+mkdir -p "\$dest"
+moved=0
+for f in trades.csv updown_decisions.jsonl updown_snapshots.jsonl updown_settlements.csv updown_status.json; do
+    if [ -f "\$dir/\$f" ]; then mv "\$dir/\$f" "\$dest/"; moved=\$((moved + 1)); fi
+done
+systemctl start "\$unit"
+if [ "\$moved" -gt 0 ]; then
+    echo "Old results moved to \$dest (delete that folder once you no longer need it)."
+else
+    rmdir "\$dest"
+    echo "There were no results to move."
+fi
+echo "\$unit restarted: its P&L, win rate and report now start from zero."
+EOF
+$SUDO chmod 755 /usr/local/bin/updown-update /usr/local/bin/updown-log /usr/local/bin/updown-status \
+    /usr/local/bin/updown-report /usr/local/bin/updown-reset
+
+if [ ! -d /run/systemd/system ]; then
+    say "systemd is not available on this server"
+    echo "Start the bots by hand and keep them running after you log out:"
+    echo "  cd $REPO && nohup venv/bin/python -m bot.updown --record > logs/console.log 2>&1 &"
+    echo "  cd $REPO && nohup venv/bin/python -m bot.updown --paper --config config/updown-15m.yaml --log-file logs/bot-15m.log > logs/console-15m.log 2>&1 &"
+    exit 0
+fi
+
+say "Installing the systemd services"
+$SUDO tee /etc/systemd/system/updown-bot.service >/dev/null <<EOF
+[Unit]
+Description=Polymarket Up/Down bot (paper unless live is enabled in .env and config/updown.yaml)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=$RUN_USER
+WorkingDirectory=$REPO
+ExecStart=$REPO/venv/bin/python -m bot.updown --record
+Restart=always
+RestartSec=10
+# 2 = configuration error, 3 = live trading refused (region): restarting won't help
+RestartPreventExitStatus=2 3
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+EOF
+# The 15-minute engine is an experiment: --paper keeps it off the real money
+# even once the 5-minute one trades live. No --record: recordings are large.
+$SUDO tee /etc/systemd/system/updown-bot-15m.service >/dev/null <<EOF
+[Unit]
+Description=Polymarket Up/Down bot, 15-minute markets (always paper)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=$RUN_USER
+WorkingDirectory=$REPO
+ExecStart=$REPO/venv/bin/python -m bot.updown --paper --config config/updown-15m.yaml --log-file logs/bot-15m.log
+Restart=always
+RestartSec=10
+RestartPreventExitStatus=2 3
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+EOF
+$SUDO tee /etc/systemd/system/updown-dashboard.service >/dev/null <<EOF
+[Unit]
+Description=Up/Down bot dashboard (127.0.0.1:8766, read-only)
+After=network.target
+
+[Service]
+User=$RUN_USER
+WorkingDirectory=$REPO
+ExecStart=$REPO/venv/bin/python scripts/updown_dashboard.py --no-browser --source "5 menit=data" --source "15 menit=data/15m"
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+$SUDO systemctl daemon-reload
+$SUDO systemctl enable updown-bot updown-bot-15m updown-dashboard >/dev/null
+$SUDO systemctl restart updown-bot updown-bot-15m updown-dashboard
+sleep 3
+systemctl --no-pager --lines=0 status updown-bot updown-bot-15m updown-dashboard || true
+
+say "Done"
+cat <<EOF
+The bots now run by themselves, also after a reboot or a crash:
+  5-minute markets (updown-bot) and 15-minute markets (updown-bot-15m, always paper).
+  updown-status   are they running + last log lines
+  updown-log      recent connection events (paste this into the chat)
+  updown-update   download the latest version and restart
+  updown-report   results so far for both: P&L, model vs market, settlement rule
+  updown-reset    start the 5-minute bot's results from zero (updown-reset 15m: the other one)
+Dashboard: on your PC run  ssh -N -L 8767:127.0.0.1:8766 $RUN_USER@<server-ip>
+           then open http://127.0.0.1:8767  (or double-click vps_dashboard.bat)
+           The switch at the top shows the 5- or the 15-minute bot.
+EOF

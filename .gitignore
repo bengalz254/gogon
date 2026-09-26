@@ -6,6 +6,16 @@ venv/
 .venv/
 *.egg-info/
 logs/*.log
+logs/*.log.*
 data/*.csv
 data/*.sqlite3
+data/*.jsonl
+data/updown_status.json*
+data/*.csv.bak.*
+data/recordings/
+data/backtest/
+data/sim/
+data/15m/
+data/archive/
 .DS_Store
+vps_address.txt

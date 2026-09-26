@@ -38,6 +38,26 @@ def main() -> int:
     print(f"  Max exposure:      ${settings.risk.max_total_exposure_usd}")
     print(f"  Max daily loss:    ${settings.risk.max_daily_loss_usd}")
 
+    try:
+        from bot.updown.config import load_updown_config
+
+        ud = load_updown_config()
+        enabled = [n for n in ("fair_value", "late_certainty", "constellation", "pair_barbell", "cheap_asymmetric")
+                   if getattr(ud.strategies, n).enabled]
+        print("\nUp/Down engine (python -m bot.updown):")
+        print(f"  Assets / interval: {', '.join(ud.markets.assets)} / {ud.markets.interval}")
+        print(f"  Settlement rule:   {ud.settlement.rule}"
+              + (f" ({ud.settlement.twap_seconds}s)" if ud.settlement.rule == "twap" else ""))
+        print(f"  Strategies:        {', '.join(enabled) or '(none)'}")
+        print(f"  Bankroll / Kelly:  ${ud.risk.bankroll_usd} / {ud.risk.kelly_fraction}")
+        print(f"  Max daily loss:    ${ud.risk.max_daily_loss_usd}")
+        print(f"  allow_live:        {ud.execution.allow_live}")
+        if settings.wallet.live_trading and not ud.execution.allow_live:
+            print("  [NOTE] LIVE_TRADING=true but execution.allow_live=false: the Up/Down engine will refuse to start live.")
+    except Exception as e:
+        print(f"[FAIL] Up/Down config invalid: {e}")
+        return 1
+
     if settings.wallet.live_trading:
         print("\nAttempting to connect and derive API credentials (LIVE mode)...")
         try:
