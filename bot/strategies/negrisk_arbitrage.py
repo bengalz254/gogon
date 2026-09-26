@@ -42,6 +42,9 @@ class NegRiskArbitrageStrategy:
             if market.seconds_delay > 0:
                 return []  # a delayed taker leg's outcome isn't known when it's accepted
             yes = market.tokens[0]
+            held = self.risk.positions.get(yes.token_id)
+            if held is not None and held.set_id != event.set_id:
+                return []  # shares held for another purpose would get mixed into the set
             book = get_book(yes.token_id)
             if book.best_ask is None or book.best_ask_size <= 0:
                 return []

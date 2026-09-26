@@ -458,8 +458,15 @@ class Bot:
 
     def _select_mm_markets(self, markets: list[MarketInfo]) -> None:
         self.last_mm_select = time.time()
+        # Markets holding legs of a multi-outcome set stay out: quoting there
+        # would mix inventory into the set's positions.
+        in_sets = {p.market_id for p in self.risk.positions.values() if p.set_id is not None}
         chosen = select_markets(
-            markets, self.books.book, self.mm_cfg, datetime.now(timezone.utc), self.risk.cfg.max_position_usd
+            [m for m in markets if m.condition_id not in in_sets],
+            self.books.book,
+            self.mm_cfg,
+            datetime.now(timezone.utc),
+            self.risk.cfg.max_position_usd,
         )
         chosen_ids = {m.condition_id for m in chosen}
         for market in self.mm_markets:

@@ -36,6 +36,11 @@ def main() -> int:
     print(f"  Polling interval:  {settings.polling_interval_seconds}s")
     print(f"  Arbitrage enabled: {settings.arbitrage.enabled}")
     print(f"  Threshold enabled: {settings.threshold.enabled}")
+    print(f"  Market maker:      {settings.market_maker.enabled}")
+    print(f"  Multi-outcome arb: {settings.negrisk_arbitrage.enabled}")
+    print(f"  WebSocket books:   {settings.market_data.websocket}")
+    if settings.market_maker.enabled and not settings.market_data.websocket:
+        print("[WARN] market_maker needs market_data.websocket: true — it will stay off.")
     print(f"  Max position:      ${settings.risk.max_position_usd}")
     print(f"  Max exposure:      ${settings.risk.max_total_exposure_usd}")
     print(f"  Max daily loss:    ${settings.risk.max_daily_loss_usd}")

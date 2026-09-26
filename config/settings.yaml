@@ -47,16 +47,69 @@ strategies:
     # Sell/close when price rises this fraction above the recent average.
     sell_rise_pct: 0.08
 
+  # Quote both sides of liquidity-reward markets to earn the spread, maker
+  # rebates and daily rewards (see README "Market making"). Needs
+  # market_data.websocket. Run it in paper mode first.
+  market_maker:
+    enabled: false
+    # How many reward markets to quote at once, and how often to re-pick them.
+    max_markets: 3
+    reselect_minutes: 30
+    # How often quotes and fills are refreshed.
+    refresh_seconds: 5
+    # Shares per quote; raised to a market's reward minimum when that's
+    # higher (markets whose minimum doesn't fit risk.max_position_usd are skipped).
+    order_size: 20
+    # Distance from the midpoint as a fraction of the market's reward
+    # max_spread. Closer earns more rewards but gets picked off more often.
+    spread_fraction: 0.6
+    # Half-spread for markets that publish no max_spread.
+    default_half_spread: 0.02
+    # Stop buying more of a side once net inventory reaches this many shares.
+    max_inventory: 100
+    # Lean quotes against inventory: 0 = none, 1 = a full half-spread at max_inventory.
+    inventory_skew: 0.5
+    # Only quote while the midpoint is inside this band.
+    min_mid: 0.15
+    max_mid: 0.85
+    # Skip markets ending within this many days, and sports games starting
+    # within this many hours (or already started).
+    min_days_to_end: 3
+    avoid_game_start_hours: 6
+    # Pull quotes and pause a market for cooldown_minutes when its midpoint
+    # moves more than max_mid_move within volatility_window_seconds.
+    max_mid_move: 0.03
+    volatility_window_seconds: 60
+    cooldown_minutes: 15
+    # Live orders expire on their own about this long (+60 s) after the bot
+    # stops refreshing them.
+    order_ttl_seconds: 120
+    # Replace a resting quote only when its ideal price moved this many ticks.
+    requote_ticks: 1
+
+  # Buy the YES of every outcome of a multi-outcome event when the whole set
+  # costs under $1 after fees. More legs = more ways to end up half-filled;
+  # run it in paper mode first.
+  negrisk_arbitrage:
+    enabled: false
+    min_edge: 0.02
+    fee_buffer: 0.005
+    max_outcomes: 10
+    max_events: 50
+    refresh_minutes: 10
+
 fees:
-  # Polymarket charges takers fee = shares * rate * price * (1 - price);
-  # makers pay nothing. The bot's orders are fill-or-kill, so it is always
-  # the taker. Source: https://docs.polymarket.com/trading/fees — CHECK IT
-  # BEFORE GOING LIVE, Polymarket changes these (sports: 0.03 -> 0.05 in
-  # July 2026).
+  # Polymarket charges takers fee = shares * rate * (price * (1 - price))^exponent
+  # (exponent 1 for the standard schedule); makers pay nothing unless a
+  # market says so. The bot reads each market's own terms from Polymarket
+  # first; the rates below are the fallback when that lookup fails.
+  # Source: https://docs.polymarket.com/trading/fees — CHECK IT BEFORE
+  # GOING LIVE, Polymarket changes these (sports: 0.03 -> 0.05 in July 2026).
   #
-  # A market's rate comes from its tags (case-insensitive); if several match,
-  # the highest wins. Markets matching none use default_taker_rate, kept at
-  # the highest known rate so an unrecognized market is never under-costed.
+  # Fallback: a market's rate comes from its tags (case-insensitive); if
+  # several match, the highest wins. Markets matching none use
+  # default_taker_rate, kept at the highest known rate so an unrecognized
+  # market is never under-costed.
   default_taker_rate: 0.07
   # This list replaces the built-in one entirely.
   category_taker_rates:
@@ -80,3 +133,24 @@ notifications:
   # Send an "I'm still alive" status message every N hours (0 = off). If
   # these stop arriving, the bot or its server is down.
   heartbeat_hours: 6
+
+market_data:
+  # Stream order books over Polymarket's market WebSocket; REST is used
+  # whenever the socket is down. Market making requires it.
+  websocket: true
+  ws_url: wss://ws-subscriptions-clob.polymarket.com/ws/market
+  # Nothing heard on the socket for this long = dead; fall back to REST.
+  stale_after_seconds: 30
+  # Tokens streamed (held positions and quoted markets come first).
+  max_ws_assets: 400
+  # Tokens per REST /books request.
+  rest_batch_size: 100
+
+merge:
+  # Paper mode: turn complete YES+NO sets back into $1 each right away, as
+  # Polymarket's Merge button does. Live merging is manual for now: the bot
+  # alerts you, you press Merge on Polymarket, then record it with
+  # scripts/positions.py.
+  paper_auto_merge: true
+  # Live: alert (at most daily per market) once this many sets are mergeable.
+  live_alert_min_sets: 5

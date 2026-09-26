@@ -197,3 +197,11 @@ def test_fee_schedule_per_leg_is_used():
     signals = strat.generate_signals(ev, lambda t: b[t])
     fees = {s.market_id: s.fee_usd for s in signals}
     assert fees["0xc0"] == 0 and fees["0xc2"] > 0
+
+
+def test_event_is_skipped_when_a_leg_is_already_held_outside_the_set():
+    strat, risk = make_strategy()
+    ev, _ = parse_negrisk_event(event())
+    risk.record_open("0xc1", "yes1", "Yes", 10.0, 3.0, outcome_count=2)  # e.g. market-making inventory
+    b = books([0.30, 0.30, 0.34])
+    assert strat.generate_signals(ev, lambda t: b[t]) == []
