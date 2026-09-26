@@ -1,4 +1,9 @@
-"""Thin wrapper around py-clob-client's ClobClient.
+"""Thin wrapper around Polymarket's CLOB V2 client (py-clob-client-v2).
+
+Polymarket moved trading to CLOB V2 on April 28, 2026: new exchange
+contracts, a new signed-order format and pUSD (Polymarket USD, backed 1:1 by
+USDC) as collateral. Orders signed by the old py-clob-client are rejected,
+so the bot uses the V2 SDK.
 
 In paper mode we never construct a signing client at all — market data
 (order books, prices) is public/read-only, so we use an unauthenticated
@@ -8,7 +13,7 @@ from __future__ import annotations
 
 import logging
 
-from py_clob_client.client import ClobClient
+from py_clob_client_v2 import ClobClient
 
 from bot.config import WalletConfig
 
@@ -25,16 +30,15 @@ def build_client(wallet: WalletConfig) -> ClobClient:
     if wallet.live_trading:
         client = ClobClient(
             wallet.clob_host,
-            key=wallet.private_key,
             chain_id=wallet.chain_id,
+            key=wallet.private_key,
             signature_type=wallet.signature_type,
             funder=wallet.funder_address,
         )
-        creds = client.create_or_derive_api_creds()
-        client.set_api_creds(creds)
-        logger.info("Live ClobClient initialized with API credentials.")
+        client.set_api_creds(client.create_or_derive_api_key())
+        logger.info("Live ClobClient (CLOB V2) initialized with API credentials.")
         return client
 
     client = ClobClient(wallet.clob_host, chain_id=wallet.chain_id)
-    logger.info("Read-only ClobClient initialized (paper trading mode).")
+    logger.info("Read-only ClobClient (CLOB V2) initialized (paper trading mode).")
     return client

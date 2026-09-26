@@ -1,5 +1,5 @@
 from bot.config import FeeConfig
-from bot.fees import FeeModel, taker_fee_usd
+from bot.fees import FeeModel, FeeSchedule, parse_fee_details, taker_fee_usd
 from bot.market_data import MarketInfo, _parse_market
 
 
@@ -59,3 +59,46 @@ def test_market_tags_parsed_from_strings_objects_and_category():
 
 def test_market_without_tags_parses_to_empty_list():
     assert _parse_market({"condition_id": "0xabc", "tokens": []}).tags == []
+
+
+# -- fee terms from Polymarket's market info ------------------------------------
+
+
+def test_parse_fee_details_reads_rate_exponent_and_maker_flag():
+    sched = parse_fee_details({"t": [], "fd": {"r": 0.05, "e": 2, "to": False}})
+    assert (sched.rate, sched.exponent, sched.taker_only, sched.source) == (0.05, 2.0, False, "api")
+    assert parse_fee_details({"fd": {"r": 0.04}}).exponent == 1.0  # missing exponent = standard
+    assert parse_fee_details({"fd": {"r": 0.04, "e": 0}}).exponent == 0.0  # explicit flat fee kept
+    assert parse_fee_details({"t": []}) is None  # no fee block: fall back to config
+    assert parse_fee_details({"fd": {"r": "bad"}}) is None
+    assert parse_fee_details(None) is None
+
+
+def test_exponent_and_maker_fee():
+    sched = FeeSchedule(rate=0.08, exponent=2, taker_only=True)
+    assert abs(sched.taker_fee(100, 0.5) - 100 * 0.08 * 0.25 ** 2) < 1e-12
+    assert sched.maker_fee(100, 0.5) == 0.0
+    assert FeeSchedule(rate=0.08, taker_only=False).maker_fee(100, 0.5) == 2.0
+
+
+def test_api_fee_terms_win_over_tags_and_are_cached():
+    calls = []
+
+    def market_info(condition_id):
+        calls.append(condition_id)
+        return {"t": [], "fd": {"r": 0.03, "e": 1, "to": True}}
+
+    fees = FeeModel(FeeConfig(), market_info=market_info)
+    assert fees.schedule(market(["Crypto"])).rate == 0.03
+    assert fees.schedule(market(["Crypto"])).rate == 0.03
+    assert calls == ["mkt1"]  # second lookup served from cache
+
+
+def test_api_failure_falls_back_to_config():
+    def broken(condition_id):
+        raise ConnectionError("down")
+
+    fees = FeeModel(FeeConfig(), market_info=broken)
+    sched = fees.schedule(market(["Sports"]))
+    assert (sched.rate, sched.source) == (0.05, "tags")
+    assert fees.schedule(market([])).source == "default"

@@ -63,26 +63,43 @@ def main() -> int:
         finally:
             notifier.close(timeout=1)
 
-    if settings.wallet.live_trading:
-        print("\nAttempting to connect and derive API credentials (LIVE mode)...")
-        try:
-            from bot.client import build_client
+    from bot.client import build_client
 
+    if settings.wallet.live_trading:
+        print("\nConnecting to the Polymarket CLOB (V2) and deriving API credentials (LIVE mode)...")
+        try:
             client = build_client(settings.wallet)
             print("[OK] Connected and authenticated with the Polymarket CLOB.")
-            try:
-                book = client.get_sampling_markets()
-                n = len(book.get("data", [])) if isinstance(book, dict) else 0
-                print(f"[OK] Fetched sampling markets ({n} returned).")
-            except Exception as e:
-                print(f"[WARN] Could not fetch sampling markets: {e}")
         except Exception as e:
             print(f"[FAIL] Could not connect/authenticate: {e}")
             return 1
+        try:
+            from py_clob_client_v2 import AssetType, BalanceAllowanceParams
+
+            resp = client.get_balance_allowance(BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
+            balance = float(resp.get("balance", 0)) / 1e6 if isinstance(resp, dict) else 0.0
+            print(f"[OK] Trading balance: {balance:,.2f} pUSD")
+            if balance <= 0:
+                print(
+                    "[WARN] No pUSD to trade with. Deposits through polymarket.com are converted to pUSD\n"
+                    "       automatically; USDC.e sent straight to the wallet has to be wrapped into pUSD first."
+                )
+        except Exception as e:
+            print(f"[WARN] Could not read the pUSD balance: {e}")
     else:
+        client = build_client(settings.wallet)
         print("\nPaper trading mode — skipping live authentication check.")
         print("Set LIVE_TRADING=true in .env (with POLY_PRIVATE_KEY and")
         print("POLY_FUNDER_ADDRESS filled in) when you're ready to go live.")
+
+    print("\nChecking public market data...")
+    try:
+        markets = client.get_sampling_markets()
+        n = len(markets.get("data", [])) if isinstance(markets, dict) else 0
+        print(f"[OK] Fetched sampling markets ({n} returned).")
+    except Exception as e:
+        print(f"[FAIL] Could not fetch market data from {settings.wallet.clob_host}: {e}")
+        return 1
 
     print("\nAll checks passed.")
     return 0

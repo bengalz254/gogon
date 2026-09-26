@@ -1,7 +1,8 @@
 import random
 
 from bot.config import RiskConfig
-from bot.execution import OrderExecutor
+from bot.execution import OrderExecutor, order_filled
+from bot.orderbook import OrderBook
 from bot.risk import RiskManager
 from bot.strategies.base import Signal
 
@@ -31,22 +32,35 @@ class FakeNotifier:
         return True
 
 
+MATCHED = {"success": True, "status": "matched", "orderID": "0x1", "tradeIDs": ["t1"]}
+NOT_FILLED = {"success": False, "errorMsg": "order couldn't be fully filled. FOK orders are fully filled or killed."}
+
+
 class FakeLiveClient:
-    """Live-mode client whose post_order results are scripted, call by call."""
+    """CLOB V2 client stand-in whose responses are scripted, request by request.
+
+    Each scripted result answers one request: a dict for post_order, a list
+    of dicts for post_orders, or an Exception to raise."""
 
     def __init__(self, results):
         self.results = list(results)
-        self.posted = []
+        self.requests = []  # one entry per HTTP request: the orders it carried
 
     def create_order(self, order_args):
         return order_args
 
-    def post_order(self, order, order_type):
-        self.posted.append(order)
+    def _respond(self, orders):
+        self.requests.append(orders)
         result = self.results.pop(0)
         if isinstance(result, Exception):
             raise result
         return result
+
+    def post_order(self, order, order_type):
+        return self._respond([order])
+
+    def post_orders(self, args):
+        return self._respond([arg.order for arg in args])
 
 
 def make_risk(**overrides):
@@ -144,20 +158,29 @@ def test_sell_proceeds_are_net_of_fees():
     assert abs(risk.realized_pnl_today - (6.0 - 0.168 - 4.0)) < 1e-9
 
 
-def test_live_group_stops_after_the_first_failed_leg():
+def test_live_legs_go_to_the_exchange_in_one_request():
     risk = make_risk()
-    client = FakeLiveClient([{"error": "order couldn't be fully filled"}])
+    client = FakeLiveClient([[MATCHED, MATCHED]])
+    executor, journal, store, notifier = make_executor(risk, live=True, client=client)
+    assert executor.execute_group([leg("NO", 0.49, 10), leg("YES", 0.47, 10)])
+    assert len(client.requests) == 1 and len(client.requests[0]) == 2
+    assert set(risk.positions) == {"tokNO", "tokYES"}
+    assert [filled for _, _, filled in journal.rows] == [True, True]
+
+
+def test_live_pair_where_neither_leg_fills_changes_nothing():
+    risk = make_risk()
+    client = FakeLiveClient([[NOT_FILLED, NOT_FILLED]])
     executor, journal, _, notifier = make_executor(risk, live=True, client=client)
     assert not executor.execute_group([leg("NO", 0.49, 10), leg("YES", 0.47, 10)])
-    assert len(client.posted) == 1  # the second leg is never sent
     assert risk.positions == {}
-    assert [filled for _, _, filled in journal.rows] == [False]
+    assert [filled for _, _, filled in journal.rows] == [False, False]
     assert notifier.messages == []  # nothing filled, nothing to alert
 
 
 def test_live_half_filled_pair_is_tracked_and_alerted():
     risk = make_risk()
-    client = FakeLiveClient([{"success": True, "orderID": "1"}, RuntimeError("timeout")])
+    client = FakeLiveClient([[MATCHED, NOT_FILLED]])
     executor, journal, store, notifier = make_executor(risk, live=True, client=client)
     assert not executor.execute_group([leg("NO", 0.49, 10), leg("YES", 0.47, 10)])
     assert set(risk.positions) == {"tokNO"}  # the filled leg is still tracked
@@ -165,6 +188,41 @@ def test_live_half_filled_pair_is_tracked_and_alerted():
     assert len(store.saved) == 1
     assert len(notifier.messages) == 1
     assert "TIDAK terlindung" in notifier.messages[0]
+
+
+def test_live_request_failure_counts_as_not_filled():
+    risk = make_risk()
+    client = FakeLiveClient([RuntimeError("connection reset")])
+    executor, journal, _, _ = make_executor(risk, live=True, client=client)
+    assert not executor.execute_group([leg("NO", 0.49, 10), leg("YES", 0.47, 10)])
+    assert risk.positions == {}
+
+
+def test_order_filled_reads_clob_v2_responses():
+    assert order_filled(MATCHED)
+    assert order_filled({"success": True, "status": "MATCHED"})
+    assert not order_filled(NOT_FILLED)
+    assert not order_filled({"success": True, "status": "delayed"})  # taker delay: outcome unknown
+    assert not order_filled({"success": True, "status": "live"})
+    assert not order_filled({"success": True, "status": "matched", "errorMsg": "partial"})
+    assert not order_filled(None)
+    assert not order_filled("ok")
+
+
+def test_paper_fill_needs_the_size_in_the_latest_book():
+    books = {
+        "tokYES": OrderBook("tokYES", asks={0.47: 4.0, 0.48: 100.0}),
+        "tokNO": OrderBook("tokNO", asks={0.49: 100.0}),
+    }
+    risk = make_risk()
+    journal = FakeJournal()
+    executor = OrderExecutor(None, risk, journal, live=False, book_lookup=books.get)
+    # only 4 YES shares at <= 0.47: the 10-share leg can't fill, so nothing is recorded
+    assert not executor.execute_group([leg("YES", 0.47, 10), leg("NO", 0.49, 10)])
+    assert risk.positions == {}
+    assert [filled for _, _, filled in journal.rows] == [False]
+    # 0.48 reaches the deeper level: both legs fill
+    assert executor.execute_group([leg("YES", 0.48, 10), leg("NO", 0.49, 10)])
 
 
 def test_execute_signals_keeps_groups_together_and_runs_singles():
@@ -182,7 +240,7 @@ def test_live_fill_is_tracked_even_if_the_journal_write_fails():
             raise OSError("No space left on device")
 
     risk = make_risk()
-    client = FakeLiveClient([{"success": True, "orderID": "1"}])
+    client = FakeLiveClient([MATCHED])
     executor = OrderExecutor(client, risk, BrokenJournal(), live=True, store=FakeStore())
     assert executor.execute(leg("YES", 0.47, 10, group=None))
     assert set(risk.positions) == {"tokYES"}  # the real fill still counts against the caps

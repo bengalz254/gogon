@@ -14,6 +14,9 @@ Fees decide whether an opportunity is real: both legs are bought as a
 taker, and near 50c prices the fee on one set is about rate * 0.5 — 3.5c in
 a 0.07-rate crypto market, more than a typical 2c discount. So the edge is
 always computed net of fees (see bot/fees.py).
+
+Markets that hold taker orders before matching (sports, `seconds_delay`)
+are skipped: a fill-or-kill leg's outcome isn't known when it's accepted.
 """
 from __future__ import annotations
 
@@ -21,7 +24,7 @@ import logging
 import uuid
 
 from bot.config import ArbitrageConfig
-from bot.fees import FeeModel, taker_fee_usd
+from bot.fees import FeeModel, FeeSchedule
 from bot.market_data import MarketInfo
 from bot.risk import RiskManager
 from bot.strategies.base import GetBook, Signal, round_down_shares
@@ -29,22 +32,11 @@ from bot.strategies.base import GetBook, Signal, round_down_shares
 logger = logging.getLogger("polybot.strategy.arbitrage")
 
 
-def guaranteed_profit_per_set(prices: list[float], fee_rate: float) -> float:
-    """Worst-case profit of one complete set (one share of every outcome)
-    bought as a taker at `prices`.
-
-    Polymarket may collect the taker fee in USD on top of the price, or by
-    delivering fewer shares than bought. The two give different payouts, so
-    this returns the lower of them:
-      - fee in USD:    1 - sum(p) - rate * sum(p * (1 - p))
-      - fee in shares: each leg keeps 1 - rate * (1 - p) shares per share
-                       bought, so the scarcest leg bounds the $1 payout:
-                       min(1 - rate * (1 - p)) - sum(p)
-    """
-    total = sum(prices)
-    fee_in_usd = 1.0 - total - sum(taker_fee_usd(1.0, p, fee_rate) for p in prices)
-    fee_in_shares = min(1.0 - fee_rate * (1.0 - p) for p in prices) - total
-    return min(fee_in_usd, fee_in_shares)
+def guaranteed_profit_per_set(prices: list[float], fees: FeeSchedule) -> float:
+    """Profit of one complete set (one share of every outcome) bought as a
+    taker at `prices`: it pays exactly $1, and costs the prices plus the
+    taker fee on each leg (charged in collateral on top of the price)."""
+    return 1.0 - sum(prices) - sum(fees.taker_fee(1.0, p) for p in prices)
 
 
 class ArbitrageStrategy:
@@ -61,6 +53,8 @@ class ArbitrageStrategy:
         # Only handles simple binary (two-outcome) markets for now.
         if len(market.tokens) != 2:
             return []
+        if market.seconds_delay > 0 or not market.accepting_orders:
+            return []
 
         token_a, token_b = market.tokens[0], market.tokens[1]
         book_a = get_book(token_a.token_id)
@@ -71,11 +65,11 @@ class ArbitrageStrategy:
         if book_a.best_ask_size <= 0 or book_b.best_ask_size <= 0:
             return []
 
-        rate = self.fees.taker_rate(market)
+        fees = self.fees.schedule(market)
         prices = [book_a.best_ask, book_b.best_ask]
         combined_ask = sum(prices)
-        fee_per_set = sum(taker_fee_usd(1.0, p, rate) for p in prices)
-        edge = guaranteed_profit_per_set(prices, rate) - self.cfg.fee_buffer
+        fee_per_set = sum(fees.taker_fee(1.0, p) for p in prices)
+        edge = guaranteed_profit_per_set(prices, fees) - self.cfg.fee_buffer
         if edge < self.cfg.min_edge:
             return []
 
@@ -100,7 +94,7 @@ class ArbitrageStrategy:
 
         group_id = str(uuid.uuid4())
         reason = (
-            f"combined ask {combined_ask:.4f} + fees {fee_per_set:.4f}/set (rate {rate:g}); "
+            f"combined ask {combined_ask:.4f} + fees {fee_per_set:.4f}/set (rate {fees.rate:g}, {fees.source}); "
             f"net edge {edge:.4f} after {self.cfg.fee_buffer:.4f} buffer"
         )
 
@@ -129,7 +123,7 @@ class ArbitrageStrategy:
                 size_usd=shares * book.best_ask,
                 reason=reason,
                 group_id=group_id,
-                fee_usd=taker_fee_usd(shares, book.best_ask, rate),
+                fee_usd=fees.taker_fee(shares, book.best_ask),
                 outcome_count=len(market.tokens),
             )
             for token, book in legs

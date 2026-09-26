@@ -173,7 +173,8 @@ def run() -> None:
             risk.total_exposure_usd,
             risk.realized_pnl_today,
         )
-    fees = FeeModel(settings.fees)
+    # Exact per-market fee terms from Polymarket when available, else config rates.
+    fees = FeeModel(settings.fees, market_info=getattr(client, "get_clob_market_info", None))
     journal = TradeJournal()
     executor = OrderExecutor(
         client,

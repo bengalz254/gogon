@@ -4,12 +4,31 @@ orders on the Polymarket CLOB (live mode), and updates risk/position state.
 from __future__ import annotations
 
 import logging
+from typing import Callable
 
 from bot.journal import TradeJournal
+from bot.orderbook import OrderBook
+from bot.paper import fok_fillable
 from bot.risk import RiskManager
 from bot.strategies.base import Signal
 
 logger = logging.getLogger("polybot.execution")
+
+
+def order_filled(response) -> bool:
+    """Whether a CLOB V2 order response confirms a fill-or-kill order matched.
+
+    Filled: success is true and the status is "matched" (or trades were
+    created). Anything else — an error message, "live", "delayed" (a taker
+    delay hides the outcome), "unmatched" or an unknown shape — counts as not
+    filled; the hourly reconciliation catches the rare case where that's wrong.
+    """
+    if not isinstance(response, dict) or response.get("success") is not True:
+        return False
+    if response.get("errorMsg"):
+        return False
+    status = str(response.get("status", "")).lower()
+    return status == "matched" or bool(response.get("tradeIDs") or response.get("transactionsHashes"))
 
 
 class OrderExecutor:
@@ -22,6 +41,7 @@ class OrderExecutor:
         store=None,
         notifier=None,
         notify_fills: bool = True,
+        book_lookup: Callable[[str], OrderBook | None] | None = None,
     ):
         self.client = client
         self.risk = risk
@@ -30,6 +50,8 @@ class OrderExecutor:
         self.store = store  # bot.state.StateStore, saved after every fill
         self.notifier = notifier  # bot.notify.Notifier
         self.notify_fills = notify_fills
+        # Paper mode checks fills against the latest book (with depth) when given.
+        self.book_lookup = book_lookup
 
     @property
     def mode(self) -> str:
@@ -53,7 +75,8 @@ class OrderExecutor:
                 logger.info("Skipping BUY %s/%s: %s", signal.market_id, signal.outcome, reason)
                 return False
 
-        filled = self._fill(signal)
+        filled = self._send([signal])[0]
+        self._record(signal, filled)
         if filled:
             self._notify_fill([signal])
         return filled
@@ -64,8 +87,10 @@ class OrderExecutor:
         The whole group is risk-checked once, up front: checking legs one by
         one let the first leg's fill push the second over a cap (float noise
         in an order sized exactly to the budget was enough), leaving an
-        unhedged position. Legs are then sent in order, and sending stops at
-        the first leg that doesn't fill.
+        unhedged position. Live, all legs go to the exchange in one request so
+        they reach the matching engine together; in paper mode they're
+        simulated in order and simulation stops at the first leg that
+        wouldn't fill.
         """
         market_ids = {leg.market_id for leg in legs}
         if len(market_ids) != 1:
@@ -74,7 +99,7 @@ class OrderExecutor:
         market_id = market_ids.pop()
 
         # Every leg must be a valid order on its own, or it would be rejected
-        # after the legs before it had already filled.
+        # while the others fill.
         min_order = self.risk.cfg.min_order_size_usd
         too_small = [leg for leg in legs if leg.size_usd < min_order - 1e-9]
         if too_small:
@@ -95,23 +120,36 @@ class OrderExecutor:
                 logger.info("Skipping %d-leg group in %s: %s", len(legs), market_id, reason)
                 return False
 
-        filled: list[Signal] = []
-        for leg in legs:
-            if not self._fill(leg):
-                break
-            filled.append(leg)
+        results = self._send(legs)
+        filled = []
+        for leg, ok in zip(legs, results):
+            self._record(leg, ok)
+            if ok:
+                filled.append(leg)
 
         if len(filled) == len(legs):
             self._notify_fill(legs)
             return True
-
         if filled:
-            self._alert_legged(filled, legs[len(filled)])
+            unfilled = next(leg for leg, ok in zip(legs, results) if not ok)
+            self._alert_legged(filled, unfilled)
         return False
 
-    # -- shared fill path ---------------------------------------------------
-    def _fill(self, signal: Signal) -> bool:
-        filled = self._execute_live(signal) if self.live else self._execute_paper(signal)
+    # -- sending -------------------------------------------------------------
+    def _send(self, signals: list[Signal]) -> list[bool]:
+        """Fill result per signal. Paper mode stops at the first leg that
+        wouldn't fill (later legs get no result and aren't recorded)."""
+        if self.live:
+            return self._execute_live(signals)
+        results = []
+        for signal in signals:
+            ok = self._execute_paper(signal)
+            results.append(ok)
+            if not ok:
+                break
+        return results
+
+    def _record(self, signal: Signal, filled: bool) -> None:
         if filled:
             # Track the position before anything that can fail (like the
             # journal write): the order has already happened on the exchange.
@@ -120,7 +158,6 @@ class OrderExecutor:
             self.journal.record(signal, mode=self.mode, filled=filled)
         except Exception:
             logger.exception("Failed to write the trade journal for %s/%s", signal.market_id, signal.outcome)
-        return filled
 
     def _apply_fill(self, signal: Signal) -> None:
         """Update positions for a fill and persist them. Fees are part of the
@@ -143,8 +180,19 @@ class OrderExecutor:
             except Exception:
                 logger.exception("Failed to persist risk state after fill")
 
-    # -- paper mode: assume the observed best bid/ask fills immediately -----
+    # -- paper mode: fill if the latest book has the size at the limit price --
     def _execute_paper(self, signal: Signal) -> bool:
+        book = self.book_lookup(signal.token_id) if self.book_lookup is not None else None
+        if book is not None and not fok_fillable(book, signal.side, signal.limit_price, signal.size_shares):
+            logger.info(
+                "[PAPER] %s %.2f %s @ %.4f would not fill: not enough size in the book (market=%s)",
+                signal.side,
+                signal.size_shares,
+                signal.outcome,
+                signal.limit_price,
+                signal.market_id,
+            )
+            return False
         logger.info(
             "[PAPER] %s %.4f %s shares @ %.4f + fee $%.4f (market=%s) — %s",
             signal.side,
@@ -157,47 +205,58 @@ class OrderExecutor:
         )
         return True
 
-    # -- live mode: sign and submit a real fill-or-kill order --------------
-    def _execute_live(self, signal: Signal) -> bool:
-        from py_clob_client.clob_types import OrderArgs, OrderType
-        from py_clob_client.order_builder.constants import BUY, SELL
-
-        side = BUY if signal.side == "BUY" else SELL
-        order_args = OrderArgs(
-            token_id=signal.token_id,
-            price=round(signal.limit_price, 4),
-            size=round(signal.size_shares, 2),
-            side=side,
-        )
+    # -- live mode: sign and submit real fill-or-kill orders ----------------
+    def _execute_live(self, signals: list[Signal]) -> list[bool]:
+        """Sign and submit fill-or-kill orders (CLOB V2). FOK fills completely
+        and immediately or not at all, so no resting order is left behind.
+        Several orders go in one request, so the legs of a hedged trade reach
+        the matching engine together."""
+        from py_clob_client_v2 import OrderArgs, OrderType, PostOrdersV2Args
 
         try:
-            signed_order = self.client.create_order(order_args)
-            # FOK: fills completely and immediately, or not at all — no resting
-            # order is left on the book, which minimizes one-leg-only arb risk.
-            response = self.client.post_order(signed_order, OrderType.FOK)
+            signed = [
+                self.client.create_order(
+                    OrderArgs(
+                        token_id=s.token_id,
+                        price=round(s.limit_price, 4),
+                        size=round(s.size_shares, 2),
+                        side=s.side,
+                    )
+                )
+                for s in signals
+            ]
+            if len(signed) == 1:
+                responses = [self.client.post_order(signed[0], OrderType.FOK)]
+            else:
+                responses = self.client.post_orders(
+                    [PostOrdersV2Args(order=order, orderType=OrderType.FOK) for order in signed]
+                )
         except Exception:
-            logger.exception("Order submission failed for %s/%s", signal.market_id, signal.outcome)
-            return False
+            logger.exception(
+                "Order submission failed for %s (%s)",
+                signals[0].market_id,
+                ", ".join(s.outcome for s in signals),
+            )
+            return [False] * len(signals)
 
-        # NOTE: verify this against the actual API response shape before
-        # relying on it — reconcile positions periodically via
-        # client.get_trades()/get_orders() rather than trusting this alone.
-        success = bool(response) and not (isinstance(response, dict) and response.get("error"))
-
-        logger.info(
-            "[LIVE] %s %.4f %s shares @ %.4f (market=%s) -> response=%s",
-            signal.side,
-            signal.size_shares,
-            signal.outcome,
-            signal.limit_price,
-            signal.market_id,
-            response,
-        )
-
-        if not success:
-            logger.warning("Order for %s/%s did not confirm success: %s", signal.market_id, signal.outcome, response)
-
-        return success
+        if not isinstance(responses, list):
+            responses = [responses]
+        results = []
+        for i, signal in enumerate(signals):
+            response = responses[i] if i < len(responses) else None
+            filled = order_filled(response)
+            logger.info(
+                "[LIVE] %s %.4f %s shares @ %.4f (market=%s) -> filled=%s response=%s",
+                signal.side,
+                signal.size_shares,
+                signal.outcome,
+                signal.limit_price,
+                signal.market_id,
+                filled,
+                response,
+            )
+            results.append(filled)
+        return results
 
     # -- notifications -------------------------------------------------------
     def _notify_fill(self, legs: list[Signal]) -> None:
@@ -218,7 +277,7 @@ class OrderExecutor:
         )
 
     def _alert_legged(self, filled: list[Signal], failed: Signal) -> None:
-        """One leg of a hedged trade filled and a later one didn't: the bot now
+        """One leg of a hedged trade filled and another didn't: the bot now
         holds a directional position it never intended to."""
         filled_desc = ", ".join(f"{s.side} {s.size_shares:.2f} {s.outcome}" for s in filled)
         logger.critical(

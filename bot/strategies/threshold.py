@@ -13,7 +13,7 @@ import logging
 from collections import deque
 
 from bot.config import ThresholdConfig
-from bot.fees import FeeModel, taker_fee_usd
+from bot.fees import FeeModel
 from bot.market_data import MarketInfo
 from bot.risk import RiskManager
 from bot.strategies.base import GetBook, Signal, round_down_shares
@@ -40,7 +40,7 @@ class ThresholdStrategy:
             return []
 
         signals: list[Signal] = []
-        rate = self.fees.taker_rate(market)
+        fees = self.fees.schedule(market)
         for token in market.tokens:
             book = get_book(token.token_id)
             if book.best_bid is None or book.best_ask is None:
@@ -59,7 +59,7 @@ class ThresholdStrategy:
                 max_usd = self.risk.max_affordable_usd(market.condition_id)
                 if max_usd >= self.risk.cfg.min_order_size_usd and book.best_ask > 0:
                     # The budget has to cover the taker fee as well as the price.
-                    fee_per_share = taker_fee_usd(1.0, book.best_ask, rate)
+                    fee_per_share = fees.taker_fee(1.0, book.best_ask)
                     shares = round_down_shares(max_usd / (book.best_ask + fee_per_share))
                     signals.append(
                         Signal(
@@ -91,7 +91,7 @@ class ThresholdStrategy:
                         size_shares=existing.size,
                         size_usd=existing.size * book.best_bid,
                         reason=f"mid {mid:.3f} is {rise_pct:.1%} above avg {avg:.3f}; closing",
-                        fee_usd=taker_fee_usd(existing.size, book.best_bid, rate),
+                        fee_usd=fees.taker_fee(existing.size, book.best_bid),
                         outcome_count=len(market.tokens),
                     )
                 )

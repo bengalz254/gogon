@@ -1,5 +1,5 @@
 from bot.config import ArbitrageConfig, FeeConfig, RiskConfig
-from bot.fees import FeeModel
+from bot.fees import FeeModel, FeeSchedule
 from bot.market_data import BookLevel, MarketInfo, TokenInfo
 from bot.risk import RiskManager
 from bot.strategies.arbitrage import ArbitrageStrategy, guaranteed_profit_per_set
@@ -189,17 +189,40 @@ def test_thinner_book_leg_comes_first():
     assert [s.outcome for s in signals] == ["NO", "YES"]
 
 
-def test_guaranteed_profit_takes_the_worse_fee_collection_model():
-    # Balanced prices: both models agree closely.
-    balanced = guaranteed_profit_per_set([0.49, 0.49], 0.07)
-    assert abs(balanced - (1 - 0.98 - 0.07 * 0.51)) < 1e-12  # fee-in-shares is the lower one
-    # Lopsided prices: taking the fee in shares shrinks the cheap leg a lot,
-    # so the guaranteed payout is much lower than the USD-fee view suggests.
-    lopsided = guaranteed_profit_per_set([0.95, 0.03], 0.07)
-    usd_view = 1 - 0.98 - 0.07 * (0.95 * 0.05 + 0.03 * 0.97)
-    assert usd_view > 0 > lopsided
-    # No fees: plain 1 - sum of prices.
-    assert abs(guaranteed_profit_per_set([0.47, 0.49], 0.0) - 0.04) < 1e-12
+def test_guaranteed_profit_is_one_dollar_minus_prices_and_fees():
+    crypto = FeeSchedule(rate=0.07)
+    assert abs(guaranteed_profit_per_set([0.49, 0.49], crypto) - (1 - 0.98 - 2 * 0.07 * 0.49 * 0.51)) < 1e-12
+    # lopsided prices pay much less fee than 50/50 ones
+    lopsided = guaranteed_profit_per_set([0.95, 0.03], crypto)
+    assert abs(lopsided - (1 - 0.98 - 0.07 * (0.95 * 0.05 + 0.03 * 0.97))) < 1e-12
+    assert lopsided > 0
+    # an exponent of 2 shrinks the fee further
+    assert guaranteed_profit_per_set([0.49, 0.49], FeeSchedule(rate=0.07, exponent=2)) > guaranteed_profit_per_set(
+        [0.49, 0.49], crypto
+    )
+    assert abs(guaranteed_profit_per_set([0.47, 0.49], FeeSchedule(rate=0.0)) - 0.04) < 1e-12
+
+
+def test_markets_that_delay_taker_orders_are_skipped():
+    strat, _ = make_strategy()
+    books = {
+        "tokYES": BookLevel(best_bid=0.45, best_ask=0.47, best_bid_size=100, best_ask_size=100),
+        "tokNO": BookLevel(best_bid=0.47, best_ask=0.49, best_bid_size=100, best_ask_size=100),
+    }
+    market = make_market()
+    market.seconds_delay = 3
+    assert strat.generate_signals(market, lambda tid: books[tid]) == []
+
+
+def test_fee_terms_from_polymarket_override_the_config():
+    # the API says this market is fee-free: a 2c discount is enough
+    api = FeeModel(FeeConfig(), market_info=lambda cid: {"t": [], "fd": {"r": 0.0, "e": 1, "to": True}})
+    strat, _ = make_strategy(fees=api)
+    books = {
+        "tokYES": BookLevel(best_bid=0.47, best_ask=0.49, best_bid_size=100, best_ask_size=100),
+        "tokNO": BookLevel(best_bid=0.47, best_ask=0.49, best_bid_size=100, best_ask_size=100),
+    }
+    assert strat.generate_signals(make_market(tags=["Crypto"]), lambda tid: books[tid]) != []
 
 
 def test_no_signal_when_the_cheap_leg_is_below_the_minimum_order():
