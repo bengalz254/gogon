@@ -70,7 +70,7 @@ class OrderExecutor:
 
     def execute(self, signal: Signal) -> bool:
         if signal.side == "BUY":
-            allowed, reason = self.risk.can_open(signal.market_id, signal.size_usd + signal.fee_usd)
+            allowed, reason = self.risk.can_open(signal.risk_key, signal.size_usd + signal.fee_usd)
             if not allowed:
                 logger.info("Skipping BUY %s/%s: %s", signal.market_id, signal.outcome, reason)
                 return False
@@ -92,11 +92,12 @@ class OrderExecutor:
         simulated in order and simulation stops at the first leg that
         wouldn't fill.
         """
-        market_ids = {leg.market_id for leg in legs}
-        if len(market_ids) != 1:
-            logger.error("Refusing group %s spanning several markets: %s", legs[0].group_id, market_ids)
+        # One risk bucket per group: a market, or a multi-market set (set_id).
+        risk_keys = {leg.risk_key for leg in legs}
+        if len(risk_keys) != 1:
+            logger.error("Refusing group %s spanning several markets: %s", legs[0].group_id, risk_keys)
             return False
-        market_id = market_ids.pop()
+        market_id = risk_keys.pop()
 
         # Every leg must be a valid order on its own, or it would be rejected
         # while the others fill.
@@ -170,6 +171,7 @@ class OrderExecutor:
                 signal.size_shares,
                 signal.size_usd + signal.fee_usd,
                 outcome_count=signal.outcome_count,
+                set_id=signal.set_id,
             )
         else:
             self.risk.record_close(signal.token_id, signal.size_shares, signal.size_usd - signal.fee_usd)

@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS positions (
     size          REAL NOT NULL,
     cost_usd      REAL NOT NULL,
     opened_at     TEXT NOT NULL,
-    outcome_count INTEGER
+    outcome_count INTEGER,
+    set_id        TEXT
 );
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
@@ -44,6 +45,10 @@ class StateStore:
         self._conn = sqlite3.connect(path)
         with self._conn:
             self._conn.executescript(_SCHEMA)
+            # Databases written before set_id existed get the column added.
+            columns = {row[1] for row in self._conn.execute("PRAGMA table_info(positions)")}
+            if "set_id" not in columns:
+                self._conn.execute("ALTER TABLE positions ADD COLUMN set_id TEXT")
 
     def save(self, state: RiskState) -> None:
         """Replace the stored state with `state` in one transaction, so a crash
@@ -51,10 +56,19 @@ class StateStore:
         with self._conn:
             self._conn.execute("DELETE FROM positions")
             self._conn.executemany(
-                "INSERT INTO positions (token_id, market_id, outcome, size, cost_usd, opened_at, outcome_count) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO positions (token_id, market_id, outcome, size, cost_usd, opened_at, outcome_count, set_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 [
-                    (p.token_id, p.market_id, p.outcome, p.size, p.cost_usd, p.opened_at.isoformat(), p.outcome_count)
+                    (
+                        p.token_id,
+                        p.market_id,
+                        p.outcome,
+                        p.size,
+                        p.cost_usd,
+                        p.opened_at.isoformat(),
+                        p.outcome_count,
+                        p.set_id,
+                    )
                     for p in state.positions
                 ],
             )
@@ -69,7 +83,7 @@ class StateStore:
         if "day" not in meta:
             return None
         rows = self._conn.execute(
-            "SELECT token_id, market_id, outcome, size, cost_usd, opened_at, outcome_count "
+            "SELECT token_id, market_id, outcome, size, cost_usd, opened_at, outcome_count, set_id "
             "FROM positions ORDER BY token_id"
         )
         positions = [
@@ -81,8 +95,9 @@ class StateStore:
                 cost_usd=cost_usd,
                 opened_at=datetime.fromisoformat(opened_at),
                 outcome_count=outcome_count,
+                set_id=set_id,
             )
-            for token_id, market_id, outcome, size, cost_usd, opened_at, outcome_count in rows
+            for token_id, market_id, outcome, size, cost_usd, opened_at, outcome_count, set_id in rows
         ]
         return RiskState(
             day=date.fromisoformat(meta["day"]),

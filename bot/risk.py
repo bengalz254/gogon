@@ -31,10 +31,19 @@ class Position:
     # Number of outcomes in the market (None if unknown). When every outcome
     # of a market is held, the overlapping shares form complete sets worth $1.
     outcome_count: int | None = None
+    # Groups positions spread over several markets that together form
+    # complete sets (the YES of every outcome of a multi-outcome event).
+    # Exposure caps and complete-set valuation then work per group.
+    set_id: str | None = None
 
     @property
     def avg_price(self) -> float:
         return self.cost_usd / self.size if self.size else 0.0
+
+    @property
+    def risk_key(self) -> str:
+        """What exposure caps and complete sets are counted per."""
+        return self.set_id or self.market_id
 
 
 @dataclass
@@ -92,8 +101,9 @@ class RiskManager:
     def total_exposure_usd(self) -> float:
         return sum(p.cost_usd for p in self.positions.values())
 
-    def market_exposure_usd(self, market_id: str) -> float:
-        return sum(p.cost_usd for p in self.positions.values() if p.market_id == market_id)
+    def market_exposure_usd(self, key: str) -> float:
+        """Exposure of one market (or one multi-market set, by its set_id)."""
+        return sum(p.cost_usd for p in self.positions.values() if p.risk_key == key)
 
     @property
     def unrealized_pnl(self) -> float:
@@ -167,6 +177,7 @@ class RiskManager:
         size: float,
         cost_usd: float,
         outcome_count: int | None = None,
+        set_id: str | None = None,
     ) -> None:
         existing = self.positions.get(token_id)
         if existing is None:
@@ -177,6 +188,7 @@ class RiskManager:
                 size=size,
                 cost_usd=cost_usd,
                 outcome_count=outcome_count,
+                set_id=set_id,
             )
         else:
             existing.size += size
@@ -215,12 +227,12 @@ class RiskManager:
         hedged arbitrage position isn't shown as a loss just because of the
         bid/ask spread.
         """
-        by_market: dict[str, list[Position]] = defaultdict(list)
+        by_key: dict[str, list[Position]] = defaultdict(list)
         for pos in self.positions.values():
-            by_market[pos.market_id].append(pos)
+            by_key[pos.risk_key].append(pos)
 
         pnl = 0.0
-        for positions in by_market.values():
+        for positions in by_key.values():
             sets = _complete_sets(positions)
             value = sets * 1.0
             for p in positions:
@@ -237,11 +249,15 @@ class RiskManager:
         return self.unrealized_pnl
 
     # -- merging complete sets -------------------------------------------------
-    def complete_sets(self, market_id: str) -> float:
-        return _complete_sets([p for p in self.positions.values() if p.market_id == market_id])
+    def complete_sets(self, key: str) -> float:
+        return _complete_sets([p for p in self.positions.values() if p.risk_key == key])
 
     def markets_with_complete_sets(self) -> dict[str, float]:
-        return {m: sets for m in {p.market_id for p in self.positions.values()} if (sets := self.complete_sets(m)) > 0}
+        """Mergeable complete sets per market. Sets spanning several markets
+        (multi-outcome events) are left out: they can't be merged, only held
+        until the event resolves."""
+        keys = {p.market_id for p in self.positions.values() if p.set_id is None}
+        return {k: sets for k in keys if (sets := self.complete_sets(k)) > 0}
 
     def record_merge(self, market_id: str, sets: float | None = None) -> list[MergeLeg]:
         """Turn complete sets back into $1 of collateral each, as Polymarket's
@@ -249,11 +265,13 @@ class RiskManager:
         its average cost; the $1 per set is split across the outcomes in
         proportion to their cost so each one's P&L share is fair. Returns one
         MergeLeg per outcome (empty if there was nothing to merge)."""
-        available = self.complete_sets(market_id)
+        positions = [p for p in self.positions.values() if p.risk_key == market_id]
+        if any(p.set_id is not None for p in positions):
+            return []  # a multi-market set can't be merged
+        available = _complete_sets(positions)
         sets = available if sets is None else min(sets, available)
         if sets <= 1e-9:
             return []
-        positions = [p for p in self.positions.values() if p.market_id == market_id]
         costs = [p.avg_price * sets for p in positions]
         total_cost = sum(costs)
         legs = []

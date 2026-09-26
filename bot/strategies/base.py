@@ -41,6 +41,13 @@ class Signal:
     # Number of outcomes in the market, so holdings of every outcome can be
     # valued as complete sets (worth exactly $1 each).
     outcome_count: int | None = None
+    # Set for legs spread over several markets that form one complete set
+    # (multi-outcome events): risk is then checked and counted per set.
+    set_id: str | None = None
+
+    @property
+    def risk_key(self) -> str:
+        return self.set_id or self.market_id
 
 
 GetBook = Callable[[str], BookLevel]

@@ -13,6 +13,7 @@ from bot.client import build_client
 from bot.config import Settings, load_settings
 from bot.execution import OrderExecutor
 from bot.fees import FeeModel
+from bot.gamma import fetch_negrisk_events
 from bot.heartbeat import Heartbeat
 from bot.journal import TradeJournal
 from bot.logger import setup_logging
@@ -26,6 +27,7 @@ from bot.settlement import settle_resolved_markets
 from bot.state import StateStore, state_path
 from bot.strategies import ArbitrageStrategy, ThresholdStrategy
 from bot.strategies.market_maker import MidTracker, compute_quotes, select_markets, skip_reason
+from bot.strategies.negrisk_arbitrage import NegRiskArbitrageStrategy
 from bot.ws_market import MarketFeed
 
 logger = logging.getLogger("polybot.main")
@@ -241,6 +243,13 @@ class Bot:
             self.strategies.append(ArbitrageStrategy(settings.arbitrage, self.risk, self.fees))
         if settings.threshold.enabled:
             self.strategies.append(ThresholdStrategy(settings.threshold, self.risk, self.fees))
+        self.negrisk = (
+            NegRiskArbitrageStrategy(settings.negrisk_arbitrage, self.risk, self.fees)
+            if settings.negrisk_arbitrage.enabled
+            else None
+        )
+        self.negrisk_events = []
+        self.last_negrisk_fetch = 0.0
 
         self.mm_cfg = settings.market_maker
         self.mm_enabled = self.mm_cfg.enabled
@@ -258,7 +267,7 @@ class Bot:
         self.cooldown_until: dict[str, float] = {}
         self.last_mm_select = 0.0
 
-        if not self.strategies and not self.mm_enabled:
+        if not self.strategies and not self.mm_enabled and self.negrisk is None:
             logger.warning("No strategies enabled in config/settings.yaml — bot will idle.")
 
         self.cycles = 0
@@ -346,6 +355,8 @@ class Bot:
                     break
                 for strategy in self.strategies:
                     self.executor.execute_signals(strategy.generate_signals(market, self.books.top))
+            if self.negrisk is not None and not _stop:
+                self._scan_negrisk_events()
             self.risk.update_marks(_marks_for_positions(self.risk, self.books.top))
             logger.info(
                 "Cycle complete: scanned %d markets | open_positions=%d | "
@@ -401,6 +412,20 @@ class Bot:
             )
         except OSError:
             logger.exception("Failed to write %s", STATUS_PATH)
+
+    def _scan_negrisk_events(self) -> None:
+        cfg = self.settings.negrisk_arbitrage
+        if time.time() - self.last_negrisk_fetch >= cfg.refresh_minutes * 60:
+            self.last_negrisk_fetch = time.time()
+            try:
+                self.negrisk_events = fetch_negrisk_events(max_events=cfg.max_events, max_outcomes=cfg.max_outcomes)
+            except Exception as exc:
+                logger.warning("Fetching multi-outcome events failed (%s); keeping the previous list", type(exc).__name__)
+        self.books.prefetch([m.tokens[0].token_id for event in self.negrisk_events for m in event.outcomes])
+        for event in self.negrisk_events:
+            if _stop:
+                break
+            self.executor.execute_signals(self.negrisk.generate_signals(event, self.books.top))
 
     def _check_kill_switch(self) -> None:
         if self.risk.daily_loss_limit_hit:

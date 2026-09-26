@@ -40,6 +40,20 @@ class ThresholdConfig:
 
 
 @dataclass
+class NegRiskArbitrageConfig:
+    enabled: bool = False
+    # Minimum guaranteed profit per complete set (one YES of every outcome),
+    # after taker fees and fee_buffer.
+    min_edge: float = 0.02
+    fee_buffer: float = 0.005
+    # Events with more outcomes than this are skipped (more legs, more risk).
+    max_outcomes: int = 10
+    # How many events to watch, and how often the list is refreshed.
+    max_events: int = 50
+    refresh_minutes: float = 10.0
+
+
+@dataclass
 class MarketMakerConfig:
     enabled: bool = False
     # Reward markets quoted at once, and how often they're re-picked.
@@ -157,6 +171,7 @@ class Settings:
     threshold: ThresholdConfig
     polling_interval_seconds: int = 15
     market_maker: MarketMakerConfig = field(default_factory=MarketMakerConfig)
+    negrisk_arbitrage: NegRiskArbitrageConfig = field(default_factory=NegRiskArbitrageConfig)
     fees: FeeConfig = field(default_factory=FeeConfig)
     notifications: NotificationConfig = field(default_factory=NotificationConfig)
     market_data: MarketDataConfig = field(default_factory=MarketDataConfig)
@@ -170,15 +185,19 @@ def _bool_env(name: str, default: bool = False) -> bool:
     return val.strip().lower() in ("1", "true", "yes", "on")
 
 
-def _market_maker_config(raw: dict) -> MarketMakerConfig:
-    defaults = MarketMakerConfig()
+def _typed_config(cls, raw: dict):
+    """Build a flat config dataclass from YAML, casting each value to the
+    type of its default (unknown keys are ignored)."""
     values = {}
-    for name, default in vars(defaults).items():
-        if name not in raw or raw[name] is None:
-            continue
-        caster = bool if isinstance(default, bool) else type(default)
-        values[name] = caster(raw[name])
-    cfg = MarketMakerConfig(**values)
+    for name, default in vars(cls()).items():
+        if name in raw and raw[name] is not None:
+            caster = bool if isinstance(default, bool) else type(default)
+            values[name] = caster(raw[name])
+    return cls(**values)
+
+
+def _market_maker_config(raw: dict) -> MarketMakerConfig:
+    cfg = _typed_config(MarketMakerConfig, raw)
     if not 0 < cfg.min_mid < cfg.max_mid < 1:
         raise ValueError("strategies.market_maker: need 0 < min_mid < max_mid < 1")
     if cfg.spread_fraction <= 0 or cfg.order_size <= 0 or cfg.max_inventory <= 0:
@@ -204,6 +223,7 @@ def load_settings(config_path: str | None = None, env_path: str | None = None) -
     arb_raw = strategies_raw.get("arbitrage", {}) or {}
     thr_raw = strategies_raw.get("threshold", {}) or {}
     mm_raw = strategies_raw.get("market_maker", {}) or {}
+    nr_raw = strategies_raw.get("negrisk_arbitrage", {}) or {}
     fees_raw = raw.get("fees", {}) or {}
     notify_raw = raw.get("notifications", {}) or {}
     md_raw = raw.get("market_data", {}) or {}
@@ -258,6 +278,7 @@ def load_settings(config_path: str | None = None, env_path: str | None = None) -
         ),
         polling_interval_seconds=int(raw.get("polling_interval_seconds", 15)),
         market_maker=_market_maker_config(mm_raw),
+        negrisk_arbitrage=_typed_config(NegRiskArbitrageConfig, nr_raw),
         fees=fees,
         notifications=NotificationConfig(
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN") or None,
