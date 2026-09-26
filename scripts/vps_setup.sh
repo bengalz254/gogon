@@ -6,11 +6,13 @@
 #   bash scripts/vps_setup.sh
 #
 # Installs Python, creates the venv, installs the requirements, runs the tests,
-# then installs two systemd services that start on boot and restart after a
-# crash: updown-bot (paper mode unless live trading is switched on in BOTH .env
-# and config/updown.yaml) and updown-dashboard (listens on 127.0.0.1 only; view
-# it through an SSH tunnel). Also adds four commands: updown-update,
-# updown-log, updown-status and updown-report. Safe to run again.
+# then installs three systemd services that start on boot and restart after a
+# crash: updown-bot (5-minute markets; paper mode unless live trading is
+# switched on in BOTH .env and config/updown.yaml), updown-bot-15m (15-minute
+# markets, always paper: an experiment) and updown-dashboard (listens on
+# 127.0.0.1 only; view it through an SSH tunnel, with a switch between the
+# two). Also adds four commands: updown-update, updown-log, updown-status and
+# updown-report. Safe to run again.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -80,38 +82,58 @@ exec bash scripts/vps_setup.sh
 EOF
 $SUDO tee /usr/local/bin/updown-log >/dev/null <<EOF
 #!/usr/bin/env bash
-# Recent connection events, plus where the event loop was last stuck (if ever).
+# Recent connection events, plus where the event loop was last stuck (if ever),
+# for each engine (5-minute: logs/bot.log, 15-minute: logs/bot-15m.log).
 cd "$REPO"
-[ -f logs/bot.log ] || { echo "logs/bot.log does not exist yet"; exit 0; }
-grep -E "Strategies enabled|clob feed (connected|disconnected)|Event loop" logs/bot.log | tail -n 15
-if grep -q "stuck here" logs/bot.log; then
+[ -f logs/bot.log ] || [ -f logs/bot-15m.log ] || { echo "No log yet (logs/bot.log)"; exit 0; }
+for log in logs/bot.log logs/bot-15m.log; do
+    [ -f "\$log" ] || continue
+    echo "===== \$log ====="
+    grep -E "Strategies enabled|clob feed (connected|disconnected)|Event loop|No Up/Down window found" "\$log" | tail -n 15
+    if grep -q "stuck here" "\$log"; then
+        echo
+        echo "Last place the event loop was stuck:"
+        grep -A 14 "stuck here" "\$log" | tail -n 15
+    fi
     echo
-    echo "Last place the event loop was stuck:"
-    grep -A 14 "stuck here" logs/bot.log | tail -n 15
-fi
+done
 EOF
 $SUDO tee /usr/local/bin/updown-status >/dev/null <<EOF
 #!/usr/bin/env bash
-# Is the bot running, which version, and its last log lines.
+# Are the bots running, which version, and their last log lines.
 cd "$REPO"
 echo "Version: \$(git log --oneline -1)"
-systemctl is-active updown-bot >/dev/null 2>&1 && echo "Bot: running" || echo "Bot: NOT running"
+systemctl is-active updown-bot >/dev/null 2>&1 && echo "Bot 5 min: running" || echo "Bot 5 min: NOT running"
+systemctl is-active updown-bot-15m >/dev/null 2>&1 && echo "Bot 15 min: running" || echo "Bot 15 min: NOT running"
 systemctl is-active updown-dashboard >/dev/null 2>&1 && echo "Dashboard: running" || echo "Dashboard: NOT running"
 echo
-tail -n 20 logs/bot.log 2>/dev/null || true
+echo "--- logs/bot.log (5 min) ---"
+tail -n 12 logs/bot.log 2>/dev/null || true
+echo
+echo "--- logs/bot-15m.log (15 min) ---"
+tail -n 8 logs/bot-15m.log 2>/dev/null || true
 EOF
 $SUDO tee /usr/local/bin/updown-report >/dev/null <<EOF
 #!/usr/bin/env bash
-# Results so far: P&L per strategy, model vs market (Brier), settlement-rule check.
+# Results so far: P&L per strategy, model vs market (Brier), settlement-rule
+# check. Without arguments: the 5-minute engine, then the 15-minute one.
 cd "$REPO"
-venv/bin/python scripts/updown_report.py "\$@"
+[ \$# -eq 0 ] || exec venv/bin/python scripts/updown_report.py "\$@"
+echo "===== 5-minute markets ====="
+venv/bin/python scripts/updown_report.py
+if [ -d data/15m ]; then
+    echo
+    echo "===== 15-minute markets ====="
+    venv/bin/python scripts/updown_report.py --data-dir data/15m
+fi
 EOF
 $SUDO chmod 755 /usr/local/bin/updown-update /usr/local/bin/updown-log /usr/local/bin/updown-status /usr/local/bin/updown-report
 
 if [ ! -d /run/systemd/system ]; then
     say "systemd is not available on this server"
-    echo "Start the bot by hand and keep it running after you log out:"
+    echo "Start the bots by hand and keep them running after you log out:"
     echo "  cd $REPO && nohup venv/bin/python -m bot.updown --record > logs/console.log 2>&1 &"
+    echo "  cd $REPO && nohup venv/bin/python -m bot.updown --paper --config config/updown-15m.yaml --log-file logs/bot-15m.log > logs/console-15m.log 2>&1 &"
     exit 0
 fi
 
@@ -135,6 +157,26 @@ TimeoutStopSec=30
 [Install]
 WantedBy=multi-user.target
 EOF
+# The 15-minute engine is an experiment: --paper keeps it off the real money
+# even once the 5-minute one trades live. No --record: recordings are large.
+$SUDO tee /etc/systemd/system/updown-bot-15m.service >/dev/null <<EOF
+[Unit]
+Description=Polymarket Up/Down bot, 15-minute markets (always paper)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=$RUN_USER
+WorkingDirectory=$REPO
+ExecStart=$REPO/venv/bin/python -m bot.updown --paper --config config/updown-15m.yaml --log-file logs/bot-15m.log
+Restart=always
+RestartSec=10
+RestartPreventExitStatus=2 3
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+EOF
 $SUDO tee /etc/systemd/system/updown-dashboard.service >/dev/null <<EOF
 [Unit]
 Description=Up/Down bot dashboard (127.0.0.1:8766, read-only)
@@ -143,7 +185,7 @@ After=network.target
 [Service]
 User=$RUN_USER
 WorkingDirectory=$REPO
-ExecStart=$REPO/venv/bin/python scripts/updown_dashboard.py --no-browser
+ExecStart=$REPO/venv/bin/python scripts/updown_dashboard.py --no-browser --source "5 menit=data" --source "15 menit=data/15m"
 Restart=always
 RestartSec=10
 
@@ -151,18 +193,20 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 $SUDO systemctl daemon-reload
-$SUDO systemctl enable updown-bot updown-dashboard >/dev/null
-$SUDO systemctl restart updown-bot updown-dashboard
+$SUDO systemctl enable updown-bot updown-bot-15m updown-dashboard >/dev/null
+$SUDO systemctl restart updown-bot updown-bot-15m updown-dashboard
 sleep 3
-systemctl --no-pager --lines=0 status updown-bot updown-dashboard || true
+systemctl --no-pager --lines=0 status updown-bot updown-bot-15m updown-dashboard || true
 
 say "Done"
 cat <<EOF
-The bot now runs by itself, also after a reboot or a crash.
-  updown-status   is it running + last log lines
+The bots now run by themselves, also after a reboot or a crash:
+  5-minute markets (updown-bot) and 15-minute markets (updown-bot-15m, always paper).
+  updown-status   are they running + last log lines
   updown-log      recent connection events (paste this into the chat)
   updown-update   download the latest version and restart
-  updown-report   results so far: P&L, model vs market, settlement rule
+  updown-report   results so far for both: P&L, model vs market, settlement rule
 Dashboard: on your PC run  ssh -N -L 8767:127.0.0.1:8766 $RUN_USER@<server-ip>
            then open http://127.0.0.1:8767  (or double-click vps_dashboard.bat)
+           The switch at the top shows the 5- or the 15-minute bot.
 EOF

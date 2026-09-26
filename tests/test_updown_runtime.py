@@ -2,6 +2,7 @@
 block it, and when something else does, the watchdog says where."""
 import io
 import logging
+import os
 import threading
 import time
 
@@ -110,3 +111,66 @@ def test_live_mode_refuses_to_start_where_polymarket_blocks_trading(tmp_path, mo
         assert asyncio.run(live.run()) == runner_mod.EXIT_REFUSED
     finally:
         live.journal.close()
+
+
+def test_paper_flag_keeps_an_experimental_engine_off_real_money(tmp_path, monkeypatch):
+    from bot.updown import __main__ as entry
+    from bot.updown import runner as runner_mod
+
+    seen = []
+
+    class FakeRunner:
+        def __init__(self, cfg, wallet, record=False):
+            seen.append((cfg.markets.interval, wallet.live_trading))
+
+        async def run(self):
+            return 0
+
+    monkeypatch.setattr(runner_mod, "Runner", FakeRunner)
+    monkeypatch.setenv("LIVE_TRADING", "true")
+    monkeypatch.setenv("POLY_PRIVATE_KEY", "0x" + "1" * 64)
+    monkeypatch.setenv("POLY_FUNDER_ADDRESS", "0x" + "2" * 40)
+    config = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "updown-15m.yaml")
+
+    polybot, rootlog = logging.getLogger("polybot"), logging.getLogger()
+    saved = (polybot.handlers[:], polybot.propagate, polybot.level, rootlog.handlers[:])
+    polybot.handlers.clear()
+    log_file = tmp_path / "logs" / "bot-15m.log"
+    try:
+        # The shipped configs keep execution.allow_live off: live refuses to start ...
+        assert entry.main(["--config", config, "--log-file", str(log_file)]) == 2
+        # ... while --paper runs the engine on paper whatever .env says.
+        assert entry.main(["--paper", "--config", config, "--log-file", str(log_file)]) == 0
+        assert seen == [("15m", False)]
+        assert "PAPER mode" in log_file.read_text(encoding="utf-8")
+    finally:
+        for h in polybot.handlers:
+            if getattr(h, "listener", None) is not None:
+                h.listener.stop()
+            h.close()
+        polybot.handlers[:], polybot.propagate, polybot.level = saved[0], saved[1], saved[2]
+        rootlog.handlers[:] = saved[3]
+        logging.captureWarnings(False)
+
+
+def test_warns_when_discovery_finds_no_window(tmp_path, caplog):
+    from bot.config import WalletConfig
+    from bot.updown import runner as runner_mod
+    from bot.updown.config import UpDownConfig
+
+    cfg = UpDownConfig()
+    cfg.markets.interval = "15m"
+    cfg.journal.dir = str(tmp_path)
+    cfg.journal.trades_csv = str(tmp_path / "trades.csv")
+    r = runner_mod.Runner(cfg, WalletConfig(None, 137, "http://127.0.0.1:1", 0, None, False))
+    try:
+        t0 = r._listed_at
+        with caplog.at_level("WARNING", logger="polybot.updown.runner"):
+            r._warn_if_nothing_listed(t0 + 25 * 60, "btc-updown-15m-1")  # < 2 windows: normal
+            assert not caplog.records
+            r._warn_if_nothing_listed(t0 + 31 * 60, "btc-updown-15m-2")
+            r._warn_if_nothing_listed(t0 + 40 * 60, "btc-updown-15m-3")  # once an hour, not every loop
+        assert len(caplog.records) == 1
+        assert "btc-updown-15m-2" in caplog.text and "slug_template" in caplog.text
+    finally:
+        r.journal.close()

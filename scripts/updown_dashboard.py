@@ -4,6 +4,7 @@ Run it in a second terminal while the bot runs:
 
     python scripts/updown_dashboard.py
     python scripts/updown_dashboard.py --host 0.0.0.0     # also reachable from your phone on the same network
+    python scripts/updown_dashboard.py --source "5 menit=data" --source "15 menit=data/15m"   # two engines, one switch
 
 It reads data/updown_status.json (written by `python -m bot.updown` every
 second) and the journals in data/, and serves a page at
@@ -20,6 +21,7 @@ import threading
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
@@ -147,6 +149,10 @@ INDEX_HTML = r"""<!doctype html>
   button.plain { background: none; border: 1px solid var(--border); color: var(--ink-2); border-radius: 8px;
                  padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; }
   button.plain:hover { color: var(--ink); }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { background: none; border: 0; color: var(--ink-2); padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--page); font-weight: 600; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
   .banner { border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; background: var(--surface);
             border: 1px solid var(--border); display: none; }
@@ -216,6 +222,7 @@ INDEX_HTML = r"""<!doctype html>
   <header>
     <h1>Up/Down Bot <span>&mdash; Pantau</span></h1>
     <div class="row">
+      <span id="sources"></span>
       <span id="conn" class="status s-neutral"><span class="icon">·</span><span>memuat…</span></span>
       <span id="mode" class="pill">&ndash;</span>
       <span id="region"></span>
@@ -266,7 +273,7 @@ INDEX_HTML = r"""<!doctype html>
 <script>
 "use strict";
 const NS = "http://www.w3.org/2000/svg";
-const state = { live: null, summary: null, pnlTable: false };
+const state = { live: null, summary: null, pnlTable: false, src: 0, sources: [] };
 // Coin cards re-render every second; remember what the pointer is over so the
 // crosshair and tooltip survive the refresh.
 const hover = { id: null, x: 0, y: 0 };
@@ -637,14 +644,43 @@ function renderTrades(summary) {
 // ---------- loop ----------
 async function getJson(url) { const r = await fetch(url, {cache: "no-store"}); if (!r.ok) throw new Error(r.status); return r.json(); }
 async function tickLive() {
-  try { state.live = await getJson("/api/live"); }
-  catch (e) { state.live = null; }
+  const src = state.src;
+  let live = null;
+  try { live = await getJson("/api/live?src=" + src); } catch (e) { live = null; }
+  if (src !== state.src) return;  // switched to another market while this was loading
+  state.live = live;
   const st = state.live && state.live.status;
   renderHeader(state.live); renderKpis(st, state.summary); renderCoins(st); renderFeeds(st);
 }
 async function tickSummary() {
-  try { state.summary = await getJson("/api/summary"); } catch (e) { return; }
+  const src = state.src;
+  let summary;
+  try { summary = await getJson("/api/summary?src=" + src); } catch (e) { return; }
+  if (src !== state.src) return;
+  state.summary = summary;
   renderPnl(state.summary); renderStrategies(state.summary); renderCalibration(state.summary); renderTrades(state.summary);
+}
+
+// ---------- market switch (engines running side by side, e.g. 5 and 15 minutes) ----------
+function renderSources() {
+  const names = state.sources;
+  if (names.length < 2) { fill("sources"); return; }
+  fill("sources", el("span", {class: "seg", role: "group", "aria-label": "Pilih pasar"},
+    names.map((name, i) => el("button", {"aria-pressed": String(i === state.src), text: name, onclick: () => pickSource(i)}))));
+  document.title = "Pantau Up/Down \u00b7 " + names[state.src];
+}
+function pickSource(i) {
+  if (i === state.src) return;
+  state.src = i; state.live = null; state.summary = null;
+  try { localStorage.setItem("updown-src", String(i)); } catch (e) {}
+  renderSources(); tickLive(); tickSummary();
+}
+async function loadSources() {
+  try { state.sources = (await getJson("/api/sources")).sources || []; } catch (e) { state.sources = []; }
+  let saved = 0;
+  try { saved = Number(localStorage.getItem("updown-src") || 0); } catch (e) {}
+  state.src = Number.isInteger(saved) && saved >= 0 && saved < state.sources.length ? saved : 0;
+  renderSources();
 }
 document.getElementById("coins").addEventListener("pointerleave", () => { hover.id = null; hideTip(); });
 document.getElementById("pnl-toggle").addEventListener("click", (e) => {
@@ -658,7 +694,7 @@ document.getElementById("theme").addEventListener("click", () => {
 try { const t = localStorage.getItem("updown-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
 let resizeTimer = null;
 addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => renderPnl(state.summary), 150); });
-tickLive(); tickSummary();
+loadSources().then(() => { tickLive(); tickSummary(); });
 setInterval(tickLive, 1000); setInterval(tickSummary, 15000);
 </script>
 </body>
@@ -666,7 +702,21 @@ setInterval(tickLive, 1000); setInterval(tickSummary, 15000);
 """
 
 
-def make_handler(source: DataSource):
+def make_handler(sources):
+    """`sources`: one DataSource, or [(label, DataSource), ...] when several
+    engines run side by side (e.g. 5- and 15-minute markets). The page shows
+    a switch for them and asks for one with ?src=<index>."""
+    if isinstance(sources, DataSource):
+        sources = [("", sources)]
+    labels = json.dumps({"sources": [label for label, _ in sources]}).encode("utf-8")
+
+    def pick(query: str) -> DataSource:
+        try:
+            i = int(parse_qs(query).get("src", ["0"])[0])
+        except ValueError:
+            i = 0
+        return sources[i][1] if 0 <= i < len(sources) else sources[0][1]
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):  # noqa: A002 - keep the console quiet
             pass
@@ -680,12 +730,14 @@ def make_handler(source: DataSource):
             self.wfile.write(body)
 
         def do_GET(self) -> None:
-            path = self.path.split("?", 1)[0]
+            path, _, query = self.path.partition("?")
             try:
                 if path == "/api/live":
-                    self._send(200, json.dumps(source.live()).encode("utf-8"), "application/json")
+                    self._send(200, json.dumps(pick(query).live()).encode("utf-8"), "application/json")
                 elif path == "/api/summary":
-                    self._send(200, json.dumps(source.summary()).encode("utf-8"), "application/json")
+                    self._send(200, json.dumps(pick(query).summary()).encode("utf-8"), "application/json")
+                elif path == "/api/sources":
+                    self._send(200, labels, "application/json")
                 elif path in ("/", "/index.html"):
                     self._send(200, INDEX_HTML.encode("utf-8"), "text/html; charset=utf-8")
                 else:
@@ -699,12 +751,21 @@ def make_handler(source: DataSource):
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default=os.path.join(_ROOT, "data"))
+    ap.add_argument("--source", action="append", default=[], metavar="LABEL=DIR",
+                    help='several engines, one switch on the page: --source "5 menit=data" '
+                         '--source "15 menit=data/15m" (relative DIRs are inside the repo; replaces --data-dir)')
     ap.add_argument("--host", default="127.0.0.1", help="0.0.0.0 = reachable from other devices on your network (no login!)")
     ap.add_argument("--port", type=int, default=int(os.environ.get("UPDOWN_DASHBOARD_PORT", "8766")))
     ap.add_argument("--no-browser", action="store_true")
     args = ap.parse_args()
 
-    server = ThreadingHTTPServer((args.host, args.port), make_handler(DataSource(args.data_dir)))
+    sources = []
+    for spec in args.source:
+        label, sep, data_dir = spec.partition("=")
+        if not sep or not label.strip() or not data_dir.strip():
+            ap.error(f"--source {spec!r}: use LABEL=DIR, e.g. \"15 menit=data/15m\"")
+        sources.append((label.strip(), DataSource(os.path.join(_ROOT, data_dir.strip()))))
+    server = ThreadingHTTPServer((args.host, args.port), make_handler(sources or DataSource(args.data_dir)))
     url = f"http://127.0.0.1:{args.port}"
     print(f"Dashboard Up/Down jalan di {url}  (Ctrl+C untuk berhenti)")
     if args.host not in ("127.0.0.1", "localhost"):

@@ -448,11 +448,34 @@ def validate(cfg: UpDownConfig) -> None:
 
 
 def load_updown_config(path: str | None = None) -> UpDownConfig:
-    path = path or os.getenv("UPDOWN_CONFIG_PATH", "config/updown.yaml")
+    explicit = path or os.getenv("UPDOWN_CONFIG_PATH")
+    path = explicit or "config/updown.yaml"
     cfg = UpDownConfig()
     if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            raw = yaml.safe_load(f) or {}
-        _apply(cfg, raw, "updown")
+        for raw in _read_layers(path):
+            _apply(cfg, raw, "updown")
+    elif explicit:
+        # A mistyped --config must not quietly run the defaults.
+        raise ConfigError(f"config file {path} does not exist")
     validate(cfg)
     return cfg
+
+
+def _read_layers(path: str, seen: tuple = ()) -> list[dict]:
+    """The YAML mappings to apply for `path`, in order. A file may start with
+    `extends: other.yaml` (relative to itself): the other file is applied
+    first, then this one on top, so it only lists what differs."""
+    real = os.path.realpath(path)
+    if real in seen:
+        raise ConfigError(f"{path}: 'extends' loops back to a file that extends it")
+    with open(path, "r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{path}: expected a mapping, got {type(raw).__name__}")
+    base = raw.pop("extends", None)
+    if base is None:
+        return [raw]
+    base_path = os.path.join(os.path.dirname(path), str(base))
+    if not os.path.exists(base_path):
+        raise ConfigError(f"{path}: extends {base}, which does not exist")
+    return _read_layers(base_path, seen + (real,)) + [raw]

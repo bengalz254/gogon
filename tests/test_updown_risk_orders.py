@@ -174,6 +174,47 @@ def test_shipped_yaml_config_loads():
     assert cfg.risk.loss_streak_decay <= 1
 
 
+def test_shipped_15m_config_extends_the_5m_one():
+    import os
+
+    from bot.updown.config import load_updown_config
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    five = load_updown_config(os.path.join(root, "config", "updown.yaml"))
+    fifteen = load_updown_config(os.path.join(root, "config", "updown-15m.yaml"))
+    assert (five.markets.interval, fifteen.markets.interval) == ("5m", "15m")
+    # Its own journals, so the two engines never write the same files.
+    ours = {fifteen.journal.dir, fifteen.journal.trades_csv, fifteen.journal.record_dir}
+    assert not ours & {five.journal.dir, five.journal.trades_csv, five.journal.record_dir}
+    assert all(p.startswith("data/15m") for p in ours)
+    # Everything it doesn't list comes from updown.yaml.
+    assert fifteen.risk == five.risk and fifteen.model == five.model and fifteen.execution == five.execution
+    assert fifteen.strategies.fair_value.enabled and not five.strategies.fair_value.enabled
+    assert fifteen.strategies.fair_value.overrides == five.strategies.fair_value.overrides
+
+
+def test_config_extends_layers_and_refuses_loops_and_missing_files(tmp_path):
+    from bot.updown.config import load_updown_config
+
+    (tmp_path / "base.yaml").write_text(
+        "markets: {interval: 5m, assets: [btc, eth]}\nrisk: {bankroll_usd: 300, max_usd_per_trade: 7}\n", encoding="utf-8")
+    (tmp_path / "child.yaml").write_text("extends: base.yaml\nrisk: {bankroll_usd: 100}\n", encoding="utf-8")
+    cfg = load_updown_config(str(tmp_path / "child.yaml"))
+    assert cfg.markets.assets == ["btc", "eth"]  # from the base
+    assert cfg.risk.bankroll_usd == 100 and cfg.risk.max_usd_per_trade == 7  # merged, not replaced
+
+    (tmp_path / "a.yaml").write_text("extends: b.yaml\n", encoding="utf-8")
+    (tmp_path / "b.yaml").write_text("extends: a.yaml\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="loops"):
+        load_updown_config(str(tmp_path / "a.yaml"))
+    (tmp_path / "orphan.yaml").write_text("extends: gone.yaml\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="gone.yaml"):
+        load_updown_config(str(tmp_path / "orphan.yaml"))
+    # A mistyped --config must not quietly run the defaults.
+    with pytest.raises(ConfigError, match="does not exist"):
+        load_updown_config(str(tmp_path / "updown-15n.yaml"))
+
+
 def test_fixed_size_skips_kelly_but_keeps_caps_and_bans():
     risk = UpDownRisk(_roomy(max_usd_per_window=20), now=T0)
     d = _size(risk, p_win=0.45, price=0.49, max_shares=10, fixed_size=True, taker=False)

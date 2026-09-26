@@ -97,11 +97,17 @@ rules around it.
 
 | # | Strategy | Default | Idea |
 |---|----------|---------|------|
-| 1 | `fair_value` | on | Buy the side the model says is underpriced by >= `min_edge` after fee, spread and slippage. Never flips sides inside a window. |
+| 1 | `fair_value` | off* | Buy the side the model says is underpriced by >= `min_edge` after fee, spread and slippage. Never flips sides inside a window. |
 | 2 | `late_certainty` | on (small) | 20-70s left, the TWAP is clearly on one side and not drifting back (projected z-score), vol isn't spiking: rest a **maker** bid on the winner at 0.92-0.985. High win rate, but each loss is big, so size is tiny. |
-| 3 | `constellation` | on | Between T+60s and T+120s, >= 4 coins have moved the same way and one coin is still flat with its share near 50c: buy the laggard in the consensus direction. Skipped when BTC moved >= 2% in the last hour. |
+| 3 | `constellation` | off* | Between T+60s and T+120s, >= 4 coins have moved the same way and one coin is still flat with its share near 50c: buy the laggard in the consensus direction. Skipped when BTC moved >= 2% in the last hour. |
 | 4 | `pair_barbell` | off | Maker bids on both Up and Down near 50c at the open (pair cost <= 0.99), then add to the side the model confirms and hold to expiry. Needs low latency. |
 | 5 | `cheap_asymmetric` | off | Buy the cheap side (0.18-0.42) only with >= 90s left, when the model says it's still alive and the market overprices the expensive side. Small fixed size. |
+
+\* Off in `config/updown.yaml` since the first real paper run (1010 windows):
+the market mid out-predicted the model at every time to close, so
+`fair_value`, which trades exactly where the two disagree, lost $207 and won
+32% of its windows; `constellation` lost $26 over 16 windows. The 15-minute
+engine below keeps `fair_value` on as an experiment.
 
 Every strategy can be tuned per coin and per UTC session with `overrides`
 in `config/updown.yaml`. Asia and US hours have different microstructure,
@@ -153,6 +159,7 @@ While `python -m bot.updown` runs, start the monitor in a second terminal:
 ```bash
 python scripts/updown_dashboard.py                  # opens http://127.0.0.1:8766
 python scripts/updown_dashboard.py --host 0.0.0.0   # also reachable from a phone on the same Wi-Fi
+python scripts/updown_dashboard.py --source "5 menit=data" --source "15 menit=data/15m"   # two engines, one switch
 ```
 
 Every second it shows each coin's live window: price vs price to beat, model
@@ -170,6 +177,32 @@ network you trust.
 
 The older `python scripts/dashboard.py` still shows the engine's fills and
 settlements too.
+
+### A second engine: 15-minute markets (paper experiment)
+
+The first paper run lost because the market out-predicted the model, most of
+all near the end of a window. That points at our oracle prices arriving a
+little later than other traders'. Over a 15-minute window a few seconds
+matter less, so a second engine paper trades the 15-minute markets next to
+the 5-minute one:
+
+```bash
+python -m bot.updown --paper --config config/updown-15m.yaml --log-file logs/bot-15m.log
+python scripts/updown_report.py --data-dir data/15m
+```
+
+- `config/updown-15m.yaml` starts with `extends: updown.yaml`: the base file
+  is applied first and this one on top, so it only lists what differs
+  (interval, its own `data/15m` journals, `fair_value` on). A `--config` that
+  doesn't exist is an error, not a silent fallback to the defaults.
+- `--paper` keeps an engine on paper even with `LIVE_TRADING=true`, so the
+  experiment can never trade the real wallet next to a live 5-minute engine.
+- `--log-file` gives it its own log; the report's calibration table adds
+  180-300s, 300-600s and >=600s rows for the longer windows.
+
+If the model still doesn't beat the market mid there, the edge isn't there
+either. Check the 15-minute markets' rules and fees on polymarket.com; the
+report's settlement-rule check shows which rule matches.
 
 ### Windows: double-click instead of typing
 
@@ -199,19 +232,21 @@ bash scripts/vps_setup.sh
 
 The script installs Python, creates the venv, installs the requirements and
 runs the tests. It also prints the latency to Polymarket and Polymarket's
-region check for the server. Then it installs two systemd services that start
-on boot and restart after a crash:
-- `updown-bot`: paper mode unless live trading is switched on in both `.env`
-  and `config/updown.yaml`.
-- `updown-dashboard`: listens on the server's 127.0.0.1 only.
+region check for the server. Then it installs three systemd services that
+start on boot and restart after a crash:
+- `updown-bot`: the 5-minute markets, paper mode unless live trading is
+  switched on in both `.env` and `config/updown.yaml`.
+- `updown-bot-15m`: the 15-minute markets, always paper (see above).
+- `updown-dashboard`: listens on the server's 127.0.0.1 only, with a switch
+  between the two engines.
 
 It also adds four commands:
 
 | Command | What it does |
 |---|---|
-| `updown-status` | is the bot running, which version, last log lines |
-| `updown-log` | recent connection events and the last stall report |
-| `updown-report` | results so far: P&L per strategy, model vs market, settlement rule |
+| `updown-status` | are the bots running, which version, last log lines |
+| `updown-log` | recent connection events and the last stall report, per engine |
+| `updown-report` | results so far for both engines: P&L per strategy, model vs market, settlement rule |
 | `updown-update` | `git pull`, then re-run the setup (tests, services restart) |
 
 To see the dashboard from Windows, double-click `vps_dashboard.bat`. It asks
@@ -368,6 +403,7 @@ scripts/updown_backtest.py # replay recorded events through the engine
 scripts/updown_report.py   # P&L, calibration and settlement-rule report
 scripts/updown_dashboard.py # live Up/Down monitor (per-coin model vs market, P&L, feeds)
 config/updown.yaml         # Up/Down engine config (strategies, risk, model)
+config/updown-15m.yaml     # second engine on the 15-minute markets (extends updown.yaml)
 bot/updown/                # Up/Down engine (see "Up/Down engine" above)
 tests/                      # pytest unit tests, no network required
 ```

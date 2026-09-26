@@ -8,7 +8,8 @@ import os
 from collections import defaultdict
 from datetime import datetime
 
-BUCKETS = [(0, 30), (30, 60), (60, 120), (120, 180), (180, 10**9)]
+# Time left in the window. The long buckets only fill for 15-minute (and longer) markets.
+BUCKETS = [(0, 30), (30, 60), (60, 120), (120, 180), (180, 300), (300, 600), (600, 10**9)]
 
 
 def load_settlements(path: str) -> tuple[dict, list]:

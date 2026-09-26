@@ -15,5 +15,6 @@ data/*.csv.bak.*
 data/recordings/
 data/backtest/
 data/sim/
+data/15m/
 .DS_Store
 vps_address.txt

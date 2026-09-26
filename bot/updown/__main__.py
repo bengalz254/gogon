@@ -1,10 +1,12 @@
-"""Entry point: python -m bot.updown [--config config/updown.yaml] [--record]"""
+"""Entry point: python -m bot.updown [--config config/updown.yaml] [--record] [--log-file logs/bot.log] [--paper]"""
 from __future__ import annotations
 
 import argparse
 import asyncio
 import logging
+import os
 import sys
+from dataclasses import replace
 
 from bot.config import load_wallet_config
 from bot.logger import setup_logging
@@ -16,15 +18,22 @@ def main(argv=None) -> int:
     parser.add_argument("--config", default=None, help="path to updown.yaml (default: config/updown.yaml)")
     parser.add_argument("--record", action="store_true", help="record all input events for backtesting")
     parser.add_argument("--debug", action="store_true", help="verbose logging")
+    parser.add_argument("--log-file", default=os.path.join("logs", "bot.log"),
+                        help="log file (default: logs/bot.log); give a second engine its own")
+    parser.add_argument("--paper", action="store_true",
+                        help="always paper trade, even with LIVE_TRADING=true (for experiments running next to a live engine)")
     args = parser.parse_args(argv)
 
-    logger = setup_logging(level=logging.DEBUG if args.debug else logging.INFO)
+    logger = setup_logging(os.path.dirname(args.log_file) or ".", filename=os.path.basename(args.log_file),
+                           level=logging.DEBUG if args.debug else logging.INFO)
     try:
         wallet = load_wallet_config()
         cfg = load_updown_config(args.config)
     except (ConfigError, ValueError) as e:
         logger.error("Configuration error: %s", e)
         return 2
+    if args.paper:
+        wallet = replace(wallet, live_trading=False)
 
     if wallet.live_trading and not cfg.execution.allow_live:
         logger.error(

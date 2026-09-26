@@ -143,6 +143,8 @@ class Runner:
         self._exec_queue: asyncio.Queue = asyncio.Queue()
         self._known_slugs: set = set()
         self._missed: dict = {}
+        self._listed_at = time.time()  # last time discovery found a window (startup counts)
+        self._quiet_warned_at = 0.0
         self._ptb_polled: dict = {}
         self._res_polled: dict = {}
         self.clob: ClobMarketFeed | None = None
@@ -340,6 +342,7 @@ class Runner:
         interval = m.interval_seconds
         while True:
             now = time.time()
+            slug = ""
             for start in slot_starts(now, interval, m.discover_ahead):
                 if start + interval <= now + 5:
                     continue
@@ -358,11 +361,27 @@ class Runner:
                         self._missed[slug] = now
                         continue
                     self._known_slugs.add(slug)
+                    self._listed_at = now
                     self.emit(WindowListed(spec))
                     if self.live and self.cfg.execution.prewarm:
                         asyncio.create_task(asyncio.to_thread(self.broker.prewarm, [spec.up_token, spec.down_token]))
             self._missed = {s: t for s, t in self._missed.items() if now - t < 3600}
+            self._warn_if_nothing_listed(now, slug)
             await asyncio.sleep(self.cfg.markets.discovery_interval_s)
+
+    def _warn_if_nothing_listed(self, now: float, example_slug: str) -> None:
+        """A wrong interval or slug template finds nothing, silently: say so
+        (at most hourly) once no window has turned up for a while."""
+        m = self.cfg.markets
+        quiet = now - self._listed_at
+        if quiet < max(2 * m.interval_seconds, 600) or now - self._quiet_warned_at < 3600:
+            return
+        self._quiet_warned_at = now
+        logger.warning(
+            "No Up/Down window found for %s in the last %.0f minutes (looked up e.g. %s). Check "
+            "markets.interval and markets.slug_template against the market URLs on polymarket.com.",
+            ", ".join(m.assets), quiet / 60, example_slug or "nothing",
+        )
 
     async def _resolution_loop(self) -> None:
         """Official price_to_beat (early in a window) and official outcomes."""

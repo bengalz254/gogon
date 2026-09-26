@@ -15,7 +15,8 @@ import queue
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 
 
-def setup_logging(log_dir: str = "logs", level: int = logging.INFO, console_stream=None) -> logging.Logger:
+def setup_logging(log_dir: str = "logs", level: int = logging.INFO, console_stream=None,
+                  filename: str = "bot.log") -> logging.Logger:
     os.makedirs(log_dir, exist_ok=True)
     logger = logging.getLogger("polybot")
     logger.setLevel(level)
@@ -38,7 +39,7 @@ def setup_logging(log_dir: str = "logs", level: int = logging.INFO, console_stre
     # Explicit UTF-8: on Windows the default would be the locale code page,
     # which can't encode every character that shows up in market names.
     file_handler = RotatingFileHandler(
-        os.path.join(log_dir, "bot.log"), maxBytes=5_000_000, backupCount=5, encoding="utf-8"
+        os.path.join(log_dir, filename), maxBytes=5_000_000, backupCount=5, encoding="utf-8"
     )
     file_handler.setFormatter(fmt)
     logger.addHandler(to_console)

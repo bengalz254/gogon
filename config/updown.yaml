@@ -1,6 +1,6 @@
 # Up/Down engine configuration (python -m bot.updown).
 # Secrets stay in .env. Unknown keys are rejected on startup (typo protection).
-# Every value below is the built-in default -- delete a line to fall back to it.
+# Delete a line to fall back to its built-in default.
 
 markets:
   # Coins to watch. Constellation uses all of them as peers; a coin is only
@@ -108,7 +108,10 @@ journal:
 strategies:
   # 1. Fair value vs Polymarket price: the core strategy.
   fair_value:
-    enabled: true
+    # Off after the first paper run (1010 windows): -$207, 32% of windows won.
+    # The market mid out-predicted the model at every time to close, so
+    # trading their disagreements meant trading the model's errors.
+    enabled: false
     min_edge: 0.05                  # 4-8c per the design; after fees, spread and slippage
     min_remaining_s: 10
     max_remaining_s: 240              # skip the first minute (~50/50, highest fees)
@@ -145,7 +148,7 @@ strategies:
 
   # 3. Constellation / cross-coin laggard.
   constellation:
-    enabled: true
+    enabled: false                  # off after the first paper run: -$26 over 16 windows
     eval_start_s: 60
     eval_end_s: 120
     move_threshold: 0.0003          # 0.03%

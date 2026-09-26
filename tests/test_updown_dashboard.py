@@ -77,6 +77,27 @@ def test_dashboard_serves_page_and_json(tmp_path):
         server.shutdown()
 
 
+def test_one_dashboard_switches_between_engines(tmp_path):
+    five, fifteen = tmp_path / "data", tmp_path / "data" / "15m"
+    fifteen.mkdir(parents=True)
+    for d, mode in ((five, "paper"), (fifteen, "paper-15m")):
+        (d / "updown_status.json").write_text(json.dumps({"ts": 1790000000.0, "mode": mode}), encoding="utf-8")
+    dash = _load_dashboard()
+    handler = dash.make_handler([("5 menit", dash.DataSource(str(five))), ("15 menit", dash.DataSource(str(fifteen)))])
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    get = lambda path: json.load(urllib.request.urlopen(base + path))  # noqa: E731
+    try:
+        assert get("/api/sources") == {"sources": ["5 menit", "15 menit"]}
+        assert get("/api/live")["status"]["mode"] == "paper"  # no ?src: the first engine
+        assert get("/api/live?src=1")["status"]["mode"] == "paper-15m"
+        assert get("/api/live?src=7")["status"]["mode"] == "paper"  # unknown: the first, not an error
+        assert get("/api/summary?src=1")["by_strategy"] == {}  # no results yet: empty, not a crash
+    finally:
+        server.shutdown()
+
+
 def test_runner_writes_the_status_file(tmp_path):
     from bot.config import WalletConfig
     from bot.updown.config import UpDownConfig

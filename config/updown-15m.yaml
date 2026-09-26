@@ -1,0 +1,27 @@
+# Second paper engine: the same bot on Polymarket's 15-minute Up/Down markets,
+# running next to the 5-minute one:
+#   python -m bot.updown --config config/updown-15m.yaml --log-file logs/bot-15m.log
+# Everything not listed here comes from updown.yaml.
+#
+# Why: the 5-minute paper run lost because the market out-predicted the model,
+# most of all close to the end of a window. That points at our oracle prices
+# arriving a little later than other traders'; a few seconds matter less over
+# 15 minutes. The Brier table in `scripts/updown_report.py --data-dir data/15m`
+# shows whether the model keeps up with the market here.
+# VERIFY the market rules (settlement, fees) on polymarket.com: the report's
+# settlement-rule check shows which rule matches the official results.
+extends: updown.yaml
+
+markets:
+  interval: 15m
+
+journal:
+  dir: data/15m
+  trades_csv: data/15m/trades.csv
+  record_dir: data/15m/recordings
+  snapshot_every_s: 10              # the dashboard's history then covers the whole window
+
+strategies:
+  fair_value:
+    enabled: true                   # on here: its P&L is the other half of the test
+    max_remaining_s: 780            # skip the first two minutes
