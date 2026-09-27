@@ -1,7 +1,7 @@
 @echo off
 rem Download the latest version of the bot from GitHub.
 cd /d "%~dp0"
-title Update Up/Down bot
+title Update Radar v3
 git pull
 echo.
 echo Versi sekarang:

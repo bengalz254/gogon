@@ -1,4 +1,4 @@
-"""Research report for the Up/Down engine: is the model actually smart?
+"""Research report for Radar v3 (the Up/Down engine): is the model actually smart?
 
     python scripts/updown_report.py                 # reads data/
     python scripts/updown_report.py --data-dir data/sim
@@ -76,7 +76,7 @@ def main() -> int:
     ap.add_argument("--data-dir", default="data")
     args = ap.parse_args()
     outcomes, rows = load_settlements(os.path.join(args.data_dir, "updown_settlements.csv"))
-    lines = [f"Up/Down report for {args.data_dir}/ ({len(outcomes)} windows with outcomes)", ""]
+    lines = [f"Radar v3 report for {args.data_dir}/ ({len(outcomes)} windows with outcomes)", ""]
     lines += pnl_section(rows)
     lines += calibration_sections(os.path.join(args.data_dir, "updown_snapshots.jsonl"), outcomes)
     lines += rule_section(rows)

@@ -14,7 +14,7 @@ from bot.updown.config import ConfigError, load_updown_config
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Polymarket crypto Up/Down engine")
+    parser = argparse.ArgumentParser(description="Radar v3: Polymarket crypto Up/Down engine")
     parser.add_argument("--config", default=None, help="path to updown.yaml (default: config/updown.yaml)")
     parser.add_argument("--record", action="store_true", help="record all input events for backtesting")
     parser.add_argument("--debug", action="store_true", help="verbose logging")
@@ -43,7 +43,7 @@ def main(argv=None) -> int:
         )
         return 2
     if wallet.live_trading:
-        logger.warning("*** LIVE TRADING ENABLED for the Up/Down engine: real orders, real money ***")
+        logger.warning("*** LIVE TRADING ENABLED for Radar v3: real orders, real money ***")
     else:
         logger.info("PAPER mode: fills are simulated against the live order books; no orders are sent.")
 

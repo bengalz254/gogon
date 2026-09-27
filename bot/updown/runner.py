@@ -261,7 +261,7 @@ class Runner:
             if self.cfg.execution.heartbeat:
                 tasks.append(asyncio.create_task(self._heartbeat_loop(), name="heartbeat"))
 
-        logger.info("Up/Down engine running in %s mode (Ctrl+C to stop)", self.mode.upper())
+        logger.info("Radar v3 (Up/Down engine) running in %s mode (Ctrl+C to stop)", self.mode.upper())
         await self.stop.wait()
         logger.info("Stopping: cancelling resting orders...")
         await self._shutdown(tasks)
@@ -279,7 +279,7 @@ class Runner:
         self.journal.close()
         if self.watchdog is not None:
             self.watchdog.stop()
-        logger.info("Up/Down engine stopped. %s", self.engine.status_line())
+        logger.info("Radar v3 stopped. %s", self.engine.status_line())
 
     # -- loops --------------------------------------------------------------------------
     async def _step_loop(self) -> None:

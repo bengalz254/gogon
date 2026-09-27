@@ -39,7 +39,10 @@ The threshold (mean-reversion) strategy is included as a second option but
 ships **disabled**, because it's directional and can lose money in a
 trending market — only turn it on if you understand that risk.
 
-## Up/Down engine (crypto 5-minute markets)
+## Radar v3: the Up/Down engine (crypto 5- and 15-minute markets)
+
+The bot is called **Radar v3**. Its code, commands and services keep the
+`updown` name (`python -m bot.updown`, `updown-report`, `updown-bot`).
 
 `python -m bot.updown` is a second, separate engine for Polymarket's
 short-horizon crypto markets ("Bitcoin Up or Down - 5 minute", ETH, SOL,
@@ -405,6 +408,6 @@ scripts/updown_report.py   # P&L, calibration and settlement-rule report
 scripts/updown_dashboard.py # live Up/Down monitor (per-coin model vs market, P&L, feeds)
 config/updown.yaml         # Up/Down engine config (strategies, risk, model)
 config/updown-15m.yaml     # second engine on the 15-minute markets (extends updown.yaml)
-bot/updown/                # Up/Down engine (see "Up/Down engine" above)
+bot/updown/                # Radar v3, the Up/Down engine (see above)
 tests/                      # pytest unit tests, no network required
 ```

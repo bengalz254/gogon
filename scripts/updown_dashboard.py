@@ -1,4 +1,4 @@
-"""Live monitoring dashboard for the Up/Down engine (local, read-only).
+"""Live monitoring dashboard for Radar v3, the Up/Down engine (local, read-only).
 
 Run it in a second terminal while the bot runs:
 
@@ -106,7 +106,7 @@ INDEX_HTML = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pantau Up/Down</title>
+<title>Radar v3</title>
 <link rel="icon" href="data:,">
 <style>
   :root {
@@ -220,7 +220,7 @@ INDEX_HTML = r"""<!doctype html>
 <body>
 <main>
   <header>
-    <h1>Up/Down Bot <span>&mdash; Pantau</span></h1>
+    <h1>Radar v3 <span>&mdash; Pantau</span></h1>
     <div class="row">
       <span id="sources"></span>
       <span id="conn" class="status s-neutral"><span class="icon">·</span><span>memuat…</span></span>
@@ -667,7 +667,7 @@ function renderSources() {
   if (names.length < 2) { fill("sources"); return; }
   fill("sources", el("span", {class: "seg", role: "group", "aria-label": "Pilih pasar"},
     names.map((name, i) => el("button", {"aria-pressed": String(i === state.src), text: name, onclick: () => pickSource(i)}))));
-  document.title = "Pantau Up/Down \u00b7 " + names[state.src];
+  document.title = "Radar v3 \u00b7 " + names[state.src];
 }
 function pickSource(i) {
   if (i === state.src) return;
@@ -767,7 +767,7 @@ def main() -> int:
         sources.append((label.strip(), DataSource(os.path.join(_ROOT, data_dir.strip()))))
     server = ThreadingHTTPServer((args.host, args.port), make_handler(sources or DataSource(args.data_dir)))
     url = f"http://127.0.0.1:{args.port}"
-    print(f"Dashboard Up/Down jalan di {url}  (Ctrl+C untuk berhenti)")
+    print(f"Dashboard Radar v3 jalan di {url}  (Ctrl+C untuk berhenti)")
     if args.host not in ("127.0.0.1", "localhost"):
         print("PERINGATAN: bisa dibuka dari perangkat lain di jaringanmu tanpa login (hanya-baca).")
     if not args.no_browser:

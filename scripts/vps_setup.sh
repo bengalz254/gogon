@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time setup of the Up/Down bot on an Ubuntu/Debian VPS.
+# One-time setup of Radar v3 (the Up/Down bot) on an Ubuntu/Debian VPS.
 #
 #   git clone https://github.com/bengalz254/gogon.git && cd gogon
 #   git checkout claude/epic-brahmagupta-gxpbv2
@@ -170,7 +170,7 @@ fi
 say "Installing the systemd services"
 $SUDO tee /etc/systemd/system/updown-bot.service >/dev/null <<EOF
 [Unit]
-Description=Polymarket Up/Down bot (paper unless live is enabled in .env and config/updown.yaml)
+Description=Radar v3, 5-minute Up/Down markets (paper unless live is enabled in .env and config/updown.yaml)
 Wants=network-online.target
 After=network-online.target
 
@@ -191,7 +191,7 @@ EOF
 # even once the 5-minute one trades live. No --record: recordings are large.
 $SUDO tee /etc/systemd/system/updown-bot-15m.service >/dev/null <<EOF
 [Unit]
-Description=Polymarket Up/Down bot, 15-minute markets (always paper)
+Description=Radar v3, 15-minute Up/Down markets (always paper)
 Wants=network-online.target
 After=network-online.target
 
@@ -209,7 +209,7 @@ WantedBy=multi-user.target
 EOF
 $SUDO tee /etc/systemd/system/updown-dashboard.service >/dev/null <<EOF
 [Unit]
-Description=Up/Down bot dashboard (127.0.0.1:8766, read-only)
+Description=Radar v3 dashboard (127.0.0.1:8766, read-only)
 After=network.target
 
 [Service]
@@ -230,7 +230,7 @@ systemctl --no-pager --lines=0 status updown-bot updown-bot-15m updown-dashboard
 
 say "Done"
 cat <<EOF
-The bots now run by themselves, also after a reboot or a crash:
+Radar v3 now runs by itself, also after a reboot or a crash:
   5-minute markets (updown-bot) and 15-minute markets (updown-bot-15m, always paper).
   updown-status   are they running + last log lines
   updown-log      recent connection events (paste this into the chat)

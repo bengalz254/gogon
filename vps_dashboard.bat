@@ -3,7 +3,7 @@ rem Open the dashboard of the bot running on your VPS. The VPS dashboard only
 rem listens on the server's own 127.0.0.1, so this opens an SSH tunnel to it
 rem and shows it at http://127.0.0.1:8767 on this PC.
 cd /d "%~dp0"
-title Up/Down dashboard (VPS)
+title Radar v3 dashboard (VPS)
 set "VPS="
 if exist vps_address.txt set /p VPS=<vps_address.txt
 if not defined VPS set /p VPS=Alamat VPS (contoh root@203.0.113.5): 
