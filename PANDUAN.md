@@ -62,15 +62,12 @@ sudo docker compose version
 
 ```bash
 cd ~
-git clone https://github.com/bengalz254/gogon.git
+git clone -b claude/crypto-strategy-24h-1qaqdg https://github.com/bengalz254/gogon.git
 cd gogon
-git checkout claude/crypto-strategy-24h-1qaqdg
 ```
 
-Kalau repo-nya privat, GitHub akan minta login: isi username GitHub-mu dan,
-sebagai password, sebuah *Personal Access Token* (GitHub → Settings →
-Developer settings → Personal access tokens). Kalau branch di atas sudah
-di-merge ke `main`, langkah `git checkout` boleh dilewati.
+`-b` langsung mengambil branch yang berisi versi bot ini (branch bawaan
+repo adalah versi lama). Repo-nya publik, jadi tidak perlu login.
 
 ✅ **Cek:** `ls` menampilkan `bot`, `config`, `docker-compose.yml`, `PANDUAN.md`.
 
