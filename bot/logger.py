@@ -6,9 +6,11 @@ import os
 from logging.handlers import RotatingFileHandler
 
 
-def setup_logging(log_dir: str = "logs", level: int = logging.INFO) -> logging.Logger:
+def setup_logging(
+    log_dir: str = "logs", level: int = logging.INFO, name: str = "polybot", filename: str = "bot.log"
+) -> logging.Logger:
     os.makedirs(log_dir, exist_ok=True)
-    logger = logging.getLogger("polybot")
+    logger = logging.getLogger(name)
     logger.setLevel(level)
     logger.propagate = False
 
@@ -24,7 +26,7 @@ def setup_logging(log_dir: str = "logs", level: int = logging.INFO) -> logging.L
     logger.addHandler(console)
 
     file_handler = RotatingFileHandler(
-        os.path.join(log_dir, "bot.log"), maxBytes=5_000_000, backupCount=5
+        os.path.join(log_dir, filename), maxBytes=5_000_000, backupCount=5
     )
     file_handler.setFormatter(fmt)
     logger.addHandler(file_handler)

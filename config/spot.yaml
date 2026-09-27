@@ -1,0 +1,47 @@
+# Pengaturan bot grid Tokocrypto (python -m spot.main).
+# Mode PAPER: bot membaca harga asli Tokocrypto dan hanya MENSIMULASIKAN order —
+# tidak perlu API key, tidak ada uang sungguhan.
+# Cek pengaturan ini sebelum menjalankan bot: python scripts/spot_check.py
+
+# Pasangan yang ditradingkan. Lihat daftar pasangan: python scripts/spot_check.py --symbols IDR
+symbol: BTC/IDR
+# Seberapa sering harga dicek (detik).
+poll_seconds: 15
+
+grid:
+  # Range harga. Biarkan keduanya 0 supaya range dipasang otomatis di sekitar
+  # harga saat bot pertama kali jalan (range_pct di bawah dan di atasnya).
+  # Setelah itu range tetap, juga setelah restart.
+  lower_price: 0
+  upper_price: 0
+  range_pct: 10
+  # Jumlah garis harga. Bot bertransaksi di celah antar garis (levels - 1 slot):
+  # beli di garis bawah, jual di garis atasnya.
+  levels: 15
+  # Uang (IDR) untuk setiap order beli. Tulis tanpa titik ribuan.
+  order_value: 100000
+
+costs:
+  # Biaya dalam persen dari nilai transaksi. CEK biaya terbaru di
+  # https://support.tokocrypto.com/hc/en-us/articles/360004044591 dan sesuaikan.
+  maker_fee_pct: 0.10     # order grid menunggu di order book = maker
+  taker_fee_pct: 0.20     # hanya dipakai saat stop-loss menjual langsung
+  exchange_fee_pct: 0.03  # biaya bursa & kliring (ICEx/CFX)
+  buy_tax_pct: 0          # beli pakai rupiah tidak kena pajak
+  sell_tax_pct: 0.21      # PPh final 0,21% tiap penjualan (PMK 50/2025)
+  # Bot menolak grid yang untung bersihnya per putaran (beli lalu jual)
+  # lebih kecil dari ini setelah semua biaya dan pajak.
+  min_net_profit_pct: 0.30
+
+risk:
+  # Modal paper (IDR) untuk simulasi.
+  paper_balance: 2000000
+  # Jual semua dan berhenti kalau harga turun sejauh ini (%) di bawah garis
+  # terbawah grid. 0 = tanpa stop-loss.
+  stop_loss_pct: 10
+
+notifications:
+  # Pesan Telegram untuk setiap order yang terisi.
+  fills: true
+  # Ringkasan untung-rugi tiap berapa jam (0 = mati).
+  summary_hours: 24

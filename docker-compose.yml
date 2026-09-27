@@ -1,11 +1,48 @@
-# Run the bot 24/7:   docker compose up -d --build
-# Follow its logs:    docker compose logs -f
-# Stop it:            docker compose down
+# Tokocrypto grid bot (paper mode), 24/7:
+#   Check setup:     docker compose run --rm spot python scripts/spot_check.py
+#   Start:           docker compose up -d --build
+#   Follow logs:     docker compose logs -f spot
+#   How it's doing:  docker compose exec spot python scripts/spot_status.py
+#   Stop:            docker compose down
+#
+# The Polymarket bot sits behind the "polymarket" profile and doesn't start by
+# default (Polymarket is blocked in Indonesia): docker compose --profile polymarket up -d
 services:
-  bot:
+  spot:
     build: .
-    container_name: gogon-bot
+    image: gogon:latest
+    container_name: gogon-spot
+    command: ["python", "-m", "spot.main"]
     # Restart after crashes and after the server reboots.
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # A config error waits for `docker compose restart spot` instead of
+      # restarting (and alerting) over and over.
+      SPOT_WAIT_ON_ERROR: "1"
+    volumes:
+      - ./config:/app/config:ro
+      - ./data:/app/data
+      - ./logs:/app/logs
+    stop_grace_period: 1m
+    healthcheck:
+      # Healthy while the bot keeps rewriting data/spot/status.json without an error.
+      test: ["CMD", "python", "-c", "import json,sys,time; s=json.load(open('data/spot/status.json')); sys.exit(0 if time.time() - s['updated_ts'] < 300 and not s.get('error') else 1)"]
+      interval: 60s
+      timeout: 10s
+      start_period: 3m
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  bot:
+    profiles: ["polymarket"]
+    build: .
+    image: gogon:latest
+    container_name: gogon-bot
     restart: unless-stopped
     env_file: .env
     volumes:

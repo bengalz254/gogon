@@ -1,64 +1,84 @@
-# Panduan Langkah demi Langkah
+# Panduan Bot Grid Tokocrypto
 
-Panduan ini membawa kamu dari nol sampai bot jalan 24 jam di server (VPS),
-dalam tiga tahap:
+Panduan ini membawa kamu dari nol sampai bot grid jalan 24 jam di VPS, dalam
+**mode paper**: bot membaca harga asli Tokocrypto, tapi semua order hanya
+simulasi. Tidak perlu API key, tidak ada uang sungguhan.
 
 - **Tahap A — Siapkan server** (sekali saja, ±30 menit)
-- **Tahap B — Mode paper** (1–2 minggu, tanpa uang sungguhan)
-- **Tahap C — Live dengan modal kecil**
+- **Tahap B — Atur grid** (±15 menit)
+- **Tahap C — Jalankan paper 2–4 minggu, lalu evaluasi**
 
-Setiap langkah punya bagian **✅ Cek** — jangan lanjut sebelum hasilnya sesuai.
+Setiap langkah punya bagian **✅ Cek**. Jangan lanjut sebelum hasilnya sesuai.
 
-> ⚠️ Ini software trading. Bisa rugi. Tidak ada strategi yang pasti untung.
-> Mulai dari mode paper, lalu live dengan uang yang siap hilang.
+> ⚠️ Ini software trading. Grid **bisa rugi** kalau harga turun terus, dan
+> kalah dari "beli lalu tahan" kalau harga naik terus. Tidak ada strategi
+> yang pasti untung.
 
-**Yang perlu disiapkan:** VPS Linux (Ubuntu 22.04/24.04, 1 vCPU / 1 GB RAM
-cukup, sekitar $5/bulan), aplikasi Telegram di HP, dan — baru di Tahap C —
-akun Polymarket khusus untuk bot.
+## Cara kerja singkat
+
+Bot membagi sebuah range harga menjadi beberapa garis (level). Di setiap
+celah antar garis, bot **membeli di garis bawah** lalu **menjual di garis
+atasnya**. Setiap kali harga turun lalu naik melewati satu celah, bot
+mendapat satu "putaran" untung.
+
+Dengan pengaturan bawaan (BTC/IDR, range ±10%, 15 level):
+
+| | |
+|---|---|
+| Jarak antar level | ±1,44% |
+| Biaya + pajak satu putaran (beli lalu jual) | ±0,47% |
+| Untung bersih per putaran | ±0,97% dari nilai order (±Rp 900 per order Rp 100.000) |
+| Modal terpakai kalau semua order beli terisi | ±Rp 1,3 juta (dari modal paper Rp 2 juta) |
+
+- **Harga naik-turun di dalam range:** bot untung dari setiap putaran.
+- **Harga naik terus:** bot tidak memegang koin, jadi untungnya kecil.
+  Membeli lalu menahan koin akan lebih untung.
+- **Harga turun terus:** semua order beli terisi dan bot memegang koin yang
+  nilainya turun. Kalau harga ditutup 10% di bawah garis terbawah,
+  stop-loss menjual semuanya dan grid berhenti.
+
+**Yang perlu disiapkan:** VPS Linux (Ubuntu 22.04/24.04, 1 GB RAM cukup)
+dan, sebaiknya, Telegram di HP. Akun Tokocrypto **belum** diperlukan.
 
 ---
 
 ## Tahap A — Siapkan server
 
-### Langkah 1 — Masuk ke VPS dan cek wilayah
-
-Dari komputer/HP (aplikasi terminal atau Termux), masuk ke VPS:
+### Langkah 1 — Masuk ke VPS dan perbarui
 
 ```bash
 ssh root@ALAMAT_IP_VPS
+sudo apt update && sudo apt upgrade -y
+sudo reboot
 ```
 
-(Sebagian penyedia VPS memakai user `ubuntu`, bukan `root` — pakai user
-yang diberikan penyedia VPS-mu, di sini dan di perintah `ssh` berikutnya.)
+Tunggu ±1 menit, lalu masuk lagi dengan `ssh`.
 
-Cek apakah Polymarket menerima koneksi dari server ini:
+✅ **Cek:** setelah masuk lagi, tidak ada tulisan `*** System restart required ***`.
+
+### Langkah 2 — Cek koneksi ke Tokocrypto
 
 ```bash
-curl -s https://polymarket.com/api/geoblock
+curl -s -o /dev/null -w "Tokocrypto: %{http_code}\n" https://www.tokocrypto.com/open/v1/common/time
+curl -s -o /dev/null -w "Binance: %{http_code}\n" https://api.binance.com/api/v3/ping
 ```
 
-✅ **Cek:** hasilnya berisi `"blocked":false`.
+✅ **Cek:** `Tokocrypto: 200`. Hasil `Binance: 200` hanya perlu untuk
+pasangan yang datanya diambil dari Binance (Langkah 7 menunjukkan
+pasangan mana saja). Kalau keluar `451` atau `403`, lihat bagian
+[Kalau ada masalah](#kalau-ada-masalah).
 
-> ⚠️ Aturan Polymarket juga berlaku untuk **tempat tinggalmu**, bukan cuma
-> lokasi server. Pastikan kamu boleh memakai Polymarket dari negaramu.
-> Memakai VPS untuk mengakali pembatasan melanggar aturan Polymarket dan
-> dananya bisa dibekukan.
-
-### Langkah 2 — Pasang git dan Docker
+### Langkah 3 — Pasang git dan Docker
 
 ```bash
-sudo apt update && sudo apt install -y git
+sudo apt install -y git
 curl -fsSL https://get.docker.com | sudo sh
 ```
 
-✅ **Cek:** kedua perintah ini menampilkan nomor versi:
+✅ **Cek:** `sudo docker --version` dan `sudo docker compose version`
+menampilkan nomor versi.
 
-```bash
-sudo docker --version
-sudo docker compose version
-```
-
-### Langkah 3 — Ambil kode bot
+### Langkah 4 — Ambil kode bot
 
 ```bash
 cd ~
@@ -66,203 +86,161 @@ git clone -b claude/crypto-strategy-24h-1qaqdg https://github.com/bengalz254/gog
 cd gogon
 ```
 
-`-b` langsung mengambil branch yang berisi versi bot ini (branch bawaan
-repo adalah versi lama). Repo-nya publik, jadi tidak perlu login.
+Kalau folder `gogon` sudah ada dari sebelumnya: `cd ~/gogon && git pull`.
 
-✅ **Cek:** `ls` menampilkan `bot`, `config`, `docker-compose.yml`, `PANDUAN.md`.
+✅ **Cek:** `ls` menampilkan `spot`, `config`, `docker-compose.yml`, `PANDUAN.md`.
 
-### Langkah 4 — Buat file pengaturan rahasia (`.env`)
+### Langkah 5 — File `.env` dan Telegram
 
 ```bash
 cp .env.example .env
 chmod 600 .env
-nano .env
 ```
 
-Untuk sekarang cukup pastikan ada baris `LIVE_TRADING=false`. Private key
-**belum** diperlukan. Simpan dengan `Ctrl+O`, `Enter`, lalu keluar `Ctrl+X`.
-
-✅ **Cek:** `grep LIVE_TRADING .env` menampilkan `LIVE_TRADING=false`.
-
-### Langkah 5 — Pasang notifikasi Telegram
+Mode paper tidak butuh isian apa pun di `.env`, kecuali Telegram
+(sangat disarankan):
 
 1. Di Telegram, buka **@BotFather**, kirim `/newbot`, ikuti petunjuknya,
    lalu salin **token** yang diberikan.
 2. Buka bot barumu dan kirim pesan apa saja (misalnya "halo").
 3. Di browser, buka `https://api.telegram.org/bot<TOKEN>/getUpdates`
    (ganti `<TOKEN>`). Cari `"chat":{"id":` dan salin angkanya.
-4. Masukkan keduanya ke `.env` (`nano .env`):
+4. `nano .env`, isi dua baris ini, simpan (`Ctrl+O`, `Enter`, `Ctrl+X`):
 
    ```
    TELEGRAM_BOT_TOKEN=123456:ABC...
    TELEGRAM_CHAT_ID=123456789
    ```
 
-5. Siapkan folder data, bangun bot, lalu tes:
+### Langkah 6 — Siapkan folder dan bangun bot
 
-   ```bash
-   mkdir -p data logs && sudo chown -R 1000:1000 data logs
-   sudo docker compose build
-   sudo docker compose run --rm bot python scripts/check_setup.py --telegram-test
-   ```
+```bash
+mkdir -p data logs && sudo chown -R 1000:1000 data logs
+sudo docker compose build
+```
 
-✅ **Cek:** pesan *"Tes notifikasi dari bot gogon"* masuk ke Telegram-mu,
-dan hasil perintah terakhir berisi `[OK] Fetched sampling markets` serta
-`All checks passed.`
+✅ **Cek:** perintah terakhir selesai tanpa `ERROR`. Build pertama bisa
+makan waktu beberapa menit.
 
 ---
 
-## Tahap B — Mode paper (1–2 minggu, tanpa uang)
+## Tahap B — Atur grid
 
-Di mode paper bot memakai data pasar asli tapi semua order hanya simulasi.
-
-### Langkah 6 — Nyalakan market making
+### Langkah 7 — Pilih pasangan
 
 ```bash
-nano config/settings.yaml
+sudo docker compose run --rm spot python scripts/spot_check.py --symbols IDR
 ```
 
-Cari bagian `market_maker:` dan ubah `enabled: false` menjadi
-`enabled: true`. Biarkan pengaturan lain seperti bawaan.
+Hasilnya daftar pasangan IDR di Tokocrypto, beserta sumber datanya.
+Mulailah dengan **BTC/IDR** (paling ramai). Hindari koin kecil yang sepi:
+harganya bisa melompat dan order grid jarang terisi.
 
-✅ **Cek:** `grep -A1 "market_maker:" config/settings.yaml` menampilkan `enabled: true`.
+Kenapa IDR? Beli pakai rupiah tidak kena pajak, jadi hanya penjualan
+yang kena PPh 0,21%. Di pasangan kripto-ke-kripto (misalnya BTC/USDT),
+biaya bursanya lebih besar. Selain itu, menukar kripto dengan kripto
+dihitung sebagai penjualan, jadi kedua sisi bisa kena pajak.
 
-### Langkah 7 — Jalankan 24 jam
+### Langkah 8 — Atur `config/spot.yaml`
+
+```bash
+nano config/spot.yaml
+```
+
+| Pengaturan | Artinya | Bawaan |
+|---|---|---|
+| `symbol` | Pasangan yang ditradingkan | `BTC/IDR` |
+| `grid.range_pct` | Range otomatis: sekian % di bawah dan di atas harga saat pertama jalan | `10` |
+| `grid.levels` | Jumlah garis. Makin banyak = jarak makin rapat, transaksi makin sering tapi untung per putaran makin kecil | `15` |
+| `grid.order_value` | Rupiah per order beli | `100000` |
+| `risk.paper_balance` | Modal paper | `2000000` |
+| `risk.stop_loss_pct` | Jual semua kalau harga ditutup sekian % di bawah garis terbawah (0 = mati) | `10` |
+| `costs.*` | Biaya dan pajak dalam persen | lihat di bawah |
+
+Tulis angka tanpa titik ribuan (`2000000`, bukan `2.000.000`).
+
+**Cek biaya terbaru** di halaman
+[Informasi Biaya Transaksi Tokocrypto](https://support.tokocrypto.com/hc/en-us/articles/360004044591-Tokocrypto-Transaction-Fee-Details),
+lalu samakan `maker_fee_pct` (fee maker pasangan IDR) dan `exchange_fee_pct`
+(biaya bursa/kliring). Nilai bawaannya 0,10% dan 0,03%, ditambah pajak
+penjualan 0,21%. Kalau biayanya lebih tinggi dari itu, hasil paper
+terlihat lebih bagus daripada kenyataannya.
+
+### Langkah 9 — Cek semuanya
+
+```bash
+sudo docker compose run --rm spot python scripts/spot_check.py --telegram-test
+```
+
+Skrip ini mengecek koneksi dan pasangan, lalu menampilkan rencana grid:
+level-levelnya, jarak antar level, untung bersih per putaran, modal
+terpakai, dan harga stop-loss.
+
+✅ **Cek:** baris terakhir **✅ Siap**, dan pesan tes masuk ke Telegram.
+Kalau ada baris `MASALAH`, perbaiki sesuai pesannya (lihat juga
+[Kalau ada masalah](#kalau-ada-masalah)), lalu jalankan cek ini lagi.
+
+---
+
+## Tahap C — Mode paper 2–4 minggu
+
+### Langkah 10 — Nyalakan
 
 ```bash
 sudo docker compose up -d
-sudo docker compose logs -f
+sudo docker compose logs -f spot
 ```
 
-`logs -f` menampilkan log langsung; tekan `Ctrl+C` untuk keluar — bot tetap
-jalan di belakang, dan otomatis menyala lagi kalau VPS di-restart.
+`logs -f` menampilkan log langsung. Tekan `Ctrl+C` untuk keluar; bot tetap
+jalan di belakang dan otomatis menyala lagi kalau VPS di-restart.
 
-✅ **Cek (dalam ±5 menit):**
-- Telegram menerima **🟢 Bot mulai (PAPER)** lalu **📊 Market making di … market**.
-  Kalau yang datang *"Tidak ada market reward yang cocok"*, ukuran minimum
-  reward di market yang ada belum muat di `risk.max_position_usd` (bawaan
-  $25) — bot tetap jalan dan mencoba lagi setiap 30 menit.
-- `sudo docker compose ps` menampilkan `(healthy)`.
+✅ **Cek:**
+- Telegram menerima **🟢 Bot grid mulai (PAPER)** berisi range, jumlah
+  slot, dan untung bersih per putaran.
+- Setelah ±3 menit, `sudo docker compose ps` menampilkan `(healthy)`.
 
-### Langkah 8 — Pantau
+### Langkah 11 — Pantau
 
-- **Telegram:** setiap 6 jam ada pesan **💓 Bot masih jalan**. Kalau pesan
-  ini berhenti datang, bot atau servernya mati.
-- **Status singkat:**
+- **Telegram:** 🟢 setiap pembelian, 💰 setiap penjualan (plus untung
+  bersihnya), 📊 ringkasan setiap 24 jam, ⬆️/⬇️ saat harga keluar range,
+  ⛔ stop-loss, dan ⚠️ kalau ada gangguan.
+- **Status lengkap:**
 
   ```bash
-  cat data/status.json
+  sudo docker compose exec spot python scripts/spot_status.py
   ```
 
-  Perhatikan `websocket_live` (sebaiknya `true`), `market_maker.fills_today`
-  dan `realized_pnl_today_usd`.
-- **Dashboard** (dari komputer): buka koneksi dengan terowongan, lalu
-  jalankan dashboard di sesi yang sama:
+- **Semua transaksi:** `data/spot/trades.csv`.
 
-  ```bash
-  ssh -L 8765:127.0.0.1:8765 root@ALAMAT_IP_VPS
-  python3 ~/gogon/scripts/dashboard.py
-  ```
+Order grid baru terisi kalau harga bergerak melewati level (±1,4%). Saat
+pasar tenang, wajar kalau seharian tidak ada transaksi.
 
-  Buka `http://127.0.0.1:8765` di browser komputermu. Jangan buka port
-  dashboard ke internet.
+### Langkah 12 — Evaluasi
 
-### Langkah 9 — Evaluasi sebelum live
+Setelah 2–4 minggu, jalankan `spot_status.py` dan periksa:
 
-Setelah 1–2 minggu, lanjut ke Tahap C hanya kalau:
+- [ ] Ringkasan harian datang rutin, dan tidak ada ⚠️ yang berulang.
+- [ ] Berapa putaran selesai, dan berapa untung terealisasinya.
+- [ ] **Nilai akun** dibandingkan baris **Pembanding** (kalau modal
+      dibelikan BTC sejak awal). Grid unggul saat harga naik-turun, dan
+      kalah saat harga naik terus.
+- [ ] Pernah kena stop-loss? Kalau ya, kenapa?
+- [ ] Kamu paham kenapa bot melakukan setiap transaksinya.
 
-- [ ] Pesan 💓 datang rutin, tidak ada alert error yang berulang.
-- [ ] `websocket_live` hampir selalu `true`.
-- [ ] Market making mendapat fill dan P&L-nya tidak terus-menerus negatif.
-- [ ] Batas rugi harian (⛔) jarang atau tidak pernah kena.
-- [ ] Kamu paham kenapa bot melakukan tiap trade-nya.
+Tentang simulasi:
+- Simulasinya sengaja **pesimis soal terisinya order**: order hanya
+  dianggap terisi kalau harga benar-benar melewati levelnya.
+- Simulasi **tidak** memperhitungkan gangguan bursa, perubahan biaya,
+  atau emosi saat uang sungguhan dipertaruhkan.
 
-Arbitrase biasanya jarang atau tidak pernah dapat peluang — itu normal
-setelah Polymarket menarik fee. Ingat juga: mode paper **tidak** menghitung
-liquidity rewards dan rebate, dan pasar asli lebih "kejam" daripada simulasi.
+### Langkah 13 — Sesudahnya
 
----
-
-## Tahap C — Live dengan modal kecil
-
-### Langkah 10 — Buat akun Polymarket khusus bot
-
-Daftar akun Polymarket **baru** (email berbeda) khusus untuk bot, lalu
-deposit kecil, misalnya $50–100 (otomatis jadi pUSD).
-
-> ⚠️ Akun khusus itu wajib: saat mulai dan berhenti, bot membatalkan
-> **semua** order di akunnya — termasuk order yang kamu pasang manual.
-
-### Langkah 11 — Ambil private key dan alamat dompet
-
-- **Akun email (login pakai email):** buka
-  `https://reveal.magic.link/polymarket` saat sedang login ke Polymarket
-  untuk mengekspor private key. Tipe signature: `1`.
-- **Akun dompet browser (MetaMask dll.):** ekspor private key dari dompet
-  tersebut. Tipe signature: `2`.
-- **Alamat dana (funder):** alamat dompet Polymarket-mu yang tertera di
-  profil/halaman deposit Polymarket — **bukan** alamat MetaMask.
-
-> ⚠️ Siapa pun yang memegang private key bisa mengambil semua dana. Jangan
-> pernah kirim ke siapa pun (termasuk "support"), jangan simpan di chat,
-> jangan commit ke git. Polymarket tidak akan pernah memintanya.
-
-### Langkah 12 — Isi `.env` dan kecilkan batas risiko
-
-```bash
-nano .env
-```
-
-```
-POLY_PRIVATE_KEY=0x...
-POLY_FUNDER_ADDRESS=0x...
-POLY_SIGNATURE_TYPE=1        # 1 = akun email, 2 = dompet browser
-LIVE_TRADING=true
-```
-
-Lalu kecilkan batas untuk minggu pertama (`nano config/settings.yaml`,
-bagian `risk:`), misalnya:
-
-```yaml
-risk:
-  max_position_usd: 15
-  max_total_exposure_usd: 50
-  max_daily_loss_usd: 10
-```
-
-Kalau nanti Telegram bilang *"Tidak ada market reward yang cocok"*, artinya
-ukuran minimum reward di market-market itu tidak muat di `max_position_usd`.
-Naikkan sedikit, atau jalan dengan arbitrase saja.
-
-### Langkah 13 — Cek sebelum menyalakan live
-
-```bash
-sudo docker compose down
-sudo docker compose run --rm bot python scripts/check_setup.py
-```
-
-✅ **Cek:** muncul `[OK] Connected and authenticated` dan
-`[OK] Trading balance: … pUSD` dengan saldo lebih dari 0. Kalau gagal,
-periksa lagi private key, alamat funder dan tipe signature.
-
-### Langkah 14 — Nyalakan live
-
-```bash
-sudo docker compose up -d --force-recreate
-sudo docker compose logs -f
-```
-
-✅ **Cek:** Telegram menerima **🟢 Bot mulai (LIVE)**; di website Polymarket
-(akun bot) muncul order terbuka dari market making.
-
-### Langkah 15 — Pantau ketat 3 hari pertama
-
-- Cocokkan fill di Telegram dengan riwayat di Polymarket.
-- Alert **⚠️ Posisi bot beda dengan Polymarket** harus dicek.
-- Lihat halaman **Rewards** Polymarket beberapa hari kemudian untuk tahu
-  berapa reward yang benar-benar didapat.
-
-Kalau hasilnya masuk akal, naikkan batas pelan-pelan — bukan sekaligus.
+Mode live **belum ada** di bot ini, dan itu sengaja. Kalau hasil paper
+masuk akal, minta saya (Claude) menambahkan mode live. Syaratnya:
+- API key Tokocrypto dengan izin trading saja: **tanpa** izin penarikan,
+  dan dikunci ke IP VPS;
+- tes dengan satu order kecil dulu;
+- modal yang siap hilang.
 
 ---
 
@@ -270,43 +248,34 @@ Kalau hasilnya masuk akal, naikkan batas pelan-pelan — bukan sekaligus.
 
 | Situasi | Yang dilakukan |
 |---|---|
-| Setiap hari | Baca Telegram; sesekali `cat data/status.json`. |
-| **🔁 set lengkap bisa di-merge** | Di Polymarket pilih posisi itu → *Merge*. Lalu jalankan tiga perintah di bawah tabel ini. |
-| **🏁 Market sudah selesai** | Di Polymarket tekan *Redeem* untuk mengklaim pUSD. |
-| **🚨 Arbitrase hanya terisi sebagian** | Cek posisinya di Polymarket, putuskan jual atau tahan. Kalau dijual manual: `sudo docker compose run --rm bot python scripts/positions.py --live close <token_id> --price <harga>` (bot dihentikan dulu). |
-| **⛔ Batas rugi harian tercapai** | Bot berhenti membuka posisi sendiri. Cari tahu penyebabnya sebelum mengubah batas. |
-| **Darurat — hentikan semuanya** | `sudo docker compose down` (bot membatalkan semua order-nya), lalu pastikan di Polymarket tidak ada order terbuka yang tersisa. |
-| Mengubah `config/settings.yaml` | `sudo docker compose restart` |
-| Mengubah `.env` | `sudo docker compose up -d --force-recreate` |
-| Update versi bot | `git pull` lalu `sudo docker compose up -d --build` |
+| Lihat kondisi grid | `sudo docker compose exec spot python scripts/spot_status.py` |
+| Mengubah `config/spot.yaml` | `sudo docker compose restart spot`. Kalau pengaturan `grid` diubah saat bot masih memegang koin, bot menolak jalan: kembalikan pengaturannya, atau reset grid. |
+| Reset grid (mulai baru di harga sekarang) | `sudo docker compose stop spot`, lalu `sudo docker compose run --rm spot python -m spot.main --reset`, lalu `sudo docker compose up -d` |
+| **⛔ Stop-loss** | Grid berhenti dan hanya menunggu. Pahami dulu penyebabnya, baru reset grid. |
+| **⬆️ Harga di atas range** lama | Bot hanya menunggu. Kalau berhari-hari tidak kembali, reset grid supaya range mengikuti harga. |
+| Update versi bot | `git pull`, lalu `sudo docker compose up -d --build` |
+| Hentikan bot | `sudo docker compose down` |
 
-Mencatat merge yang sudah dilakukan di Polymarket:
-
-```bash
-sudo docker compose down
-sudo docker compose run --rm bot python scripts/positions.py --live merge <market_id>
-sudo docker compose up -d
-```
-
-Melihat posisi yang dicatat bot (boleh kapan saja):
-
-```bash
-sudo docker compose run --rm bot python scripts/positions.py --live list
-```
-
-Kalau `git pull` menolak karena kamu mengubah `config/settings.yaml`:
+Kalau `git pull` menolak karena kamu mengubah `config/spot.yaml`:
 `git stash && git pull && git stash pop`.
 
 ## Kalau ada masalah
 
 | Gejala | Penyebab dan solusi |
 |---|---|
+| `451` atau `403` di Langkah 2 / `spot_check.py` | Server diblokir berdasarkan lokasinya. Pilih pasangan yang datanya dari Tokocrypto (lihat Langkah 7), atau pakai VPS berlokasi di Indonesia, tempat kamu memang berada. Jangan pakai VPN/VPS negara lain untuk mengakali blokir. |
+| `Pasangan ... tidak ada di Tokocrypto` | Cek nama pasangan di daftar Langkah 7, lalu perbaiki `symbol`. |
+| `... terlalu rapat` | Biaya memakan untung. Kurangi `grid.levels` atau besarkan `grid.range_pct`. |
+| `Modal kurang` | Kecilkan `grid.order_value` atau `grid.levels`, atau naikkan `risk.paper_balance`. |
+| `grid.order_value terlalu kecil` | Order di bawah minimal Tokocrypto. Naikkan `grid.order_value`. |
+| `... grid lama masih memegang koin` | Kembalikan pengaturan `grid` yang lama, atau reset grid. |
+| `Config salah: ...` | Pesannya menunjukkan pengaturan mana yang salah. Perbaiki, lalu `sudo docker compose restart spot`. |
+| `env file ... .env not found` | `cp .env.example .env` (Langkah 5). |
 | `PermissionError` pada `data/` atau `logs/` | `sudo chown -R 1000:1000 data logs` |
-| `Could not fetch market data` | Server tidak bisa menghubungi Polymarket. Ulangi cek wilayah di Langkah 1. |
-| Tes Telegram gagal | Periksa `TELEGRAM_BOT_TOKEN` dan `TELEGRAM_CHAT_ID`, pastikan kamu sudah mengirim pesan ke bot. |
-| `(unhealthy)` di `docker compose ps` | Lihat `sudo docker compose logs --tail 100`. |
-| `websocket_live: false` terus | Server tidak bisa membuka WebSocket; bot tetap jalan lewat REST tapi market making berhenti. |
-| Tidak pernah ada trade arbitrase | Normal: dengan fee sekarang peluangnya jarang. |
-| `positions.py` bilang bot masih jalan | Hentikan dulu dengan `sudo docker compose down`. |
+| `(unhealthy)` di `docker compose ps` | Lihat `sudo docker compose logs --tail 100 spot`. |
+| Tes Telegram gagal | Periksa token dan chat id di `.env`, pastikan kamu sudah mengirim pesan ke bot. |
 
-Penjelasan teknis lengkap (strategi, fee, risiko) ada di [README.md](README.md).
+Penjelasan teknis (dalam bahasa Inggris) ada di [README.md](README.md).
+Panduan bot Polymarket lama disimpan di
+[PANDUAN_POLYMARKET.md](PANDUAN_POLYMARKET.md) sebagai arsip; bot itu tidak
+bisa dipakai dari Indonesia.

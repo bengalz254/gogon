@@ -1,4 +1,77 @@
-# gogon — Polymarket Auto-Trading Bot
+# gogon — crypto trading bots
+
+Two bots live in this repo:
+
+- **`spot/` — a grid bot for [Tokocrypto](https://www.tokocrypto.com)**, an
+  OJK-licensed Indonesian exchange. It runs in **paper mode**: real
+  Tokocrypto prices, simulated orders, no API key and no money at risk. This
+  is the one to use from Indonesia — see
+  [Tokocrypto grid bot](#tokocrypto-grid-bot-spot) below.
+- **`bot/` — a Polymarket bot** (the rest of this README). ⚠️ Polymarket is
+  blocked in Indonesia (Komdigi, May 2026) and geoblocks Singapore; it's kept
+  for reference and doesn't start by default.
+
+🇮🇩 **Panduan langkah demi langkah dalam Bahasa Indonesia:** [PANDUAN.md](PANDUAN.md)
+(bot grid Tokocrypto, dari menyiapkan VPS sampai evaluasi mode paper). Panduan
+bot Polymarket yang lama: [PANDUAN_POLYMARKET.md](PANDUAN_POLYMARKET.md) (arsip).
+
+## Tokocrypto grid bot (`spot/`)
+
+```
+python scripts/spot_check.py --symbols IDR   # list pairs
+python scripts/spot_check.py                 # connection, pair rules, grid preview (+ --telegram-test)
+python -m spot.main                          # run (Ctrl+C to stop)
+python scripts/spot_status.py                # equity, P&L, open orders, latest trades
+python -m spot.main --reset                  # archive the paper grid; next run starts fresh
+```
+
+Settings are in `config/spot.yaml`; Telegram alerts use the same
+`TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` as below. With Docker,
+`docker compose up -d --build` runs this bot (service `spot`).
+
+**How the grid works.** The price range (fixed, or ±`range_pct` around the
+price at the first start) is cut into geometric levels, so every gap is the
+same percentage wide. Each gap is a slot that rests a buy at its lower level
+and, once that fills, a sell at its upper level; every completed buy→sell
+earns one gap minus costs. The grid starts with money only: slots below the
+price wait with a buy order, slots above it stay idle until the price comes
+back under them. It earns in a sideways market, lags buy-and-hold in a rally
+(it holds few coins), and loses in a sustained fall — `risk.stop_loss_pct`
+sells everything and stops once a 1-minute candle closes (or the bid drops)
+that far below the lowest level.
+
+**Costs decide the spacing.** Every trade pays the maker fee plus the
+exchange/clearing levy (ICEx/CFX), and every sale pays 0.21% PPh 22 final
+(PMK 50/2025, collected by domestic licensed exchanges; buying with rupiah
+isn't taxed, but crypto-to-crypto swaps count as sales). The bot refuses a
+grid whose narrowest gap nets less than `costs.min_net_profit_pct` after all
+of that, and also one the paper balance can't fund or whose orders are below
+the pair's minimum. The default costs are estimates — check
+[Tokocrypto's fee page](https://support.tokocrypto.com/hc/en-us/articles/360004044591-Tokocrypto-Transaction-Fee-Details).
+
+**Paper fills are pessimistic.** Prices come from Tokocrypto's public API via
+[ccxt](https://github.com/ccxt/ccxt) (some pairs' data is served from
+api.binance.com; `spot_check.py` says which). Orders are simulated against
+closed 1-minute candles: an order fills only if the price traded *through*
+its level (touching it isn't enough), and an order placed after a fill can
+only fill from the next poll on. Orders resting while the bot was down fill
+from the candles it missed, but new orders aren't placed until it's back.
+
+**State.** The grid, paper balances and counters are saved to
+`data/spot/state_paper.json` after every poll, and restored on start as long
+as the `grid:` settings haven't changed (a changed grid is rebuilt only if it
+holds no coins). `data/spot/trades.csv` logs every fill, and
+`data/spot/status.json` has equity, realized/unrealized P&L, fees, taxes and
+a buy-and-hold comparison. Telegram gets each fill, a daily summary,
+out-of-range and stop-loss alerts, and repeated data errors.
+
+**Not there yet: live trading.** The bot never places real orders. A live
+mode (Tokocrypto API key restricted to trading, no withdrawals, locked to
+the server's IP) should come only after a few weeks of paper results.
+
+---
+
+The rest of this README covers the **Polymarket bot** (`bot/`).
 
 An automated trading bot for [Polymarket](https://polymarket.com) built on
 Polymarket's official CLOB (Central Limit Order Book) V2 API. It scans active
@@ -14,9 +87,6 @@ a risk manager with hard position/exposure/loss caps.
 > ⚠️ **This is trading software. It can lose real money.** Read the whole
 > README, run in paper mode first, and never risk more than you can afford
 > to lose. Nothing here is financial advice.
-
-🇮🇩 **Panduan langkah demi langkah dalam Bahasa Indonesia:** [PANDUAN.md](PANDUAN.md)
-(dari menyiapkan VPS, mode paper, sampai live).
 
 ## How it works
 
@@ -44,7 +114,17 @@ Every order the bot sends (or simulates), filled or not, is appended to
 `logs/bot.log` (rotating). `data/status.json` is rewritten every cycle with
 the bot's current exposure and P&L.
 
-### Why arbitrage is the default strategy
+### Why arbitrage is the default strategy (and why it rarely, if ever, trades)
+
+> **In practice this strategy almost never finds an opportunity.** Polymarket
+> keeps one unified order book per binary market: a bid for YES at 0.49 is
+> also shown as an ask for NO at 0.51, and orders on the two tokens match
+> each other (mint/merge). So the best NO ask is at most 1 − the best YES
+> bid, YES ask + NO ask is always ≥ $1 (by the spread), and a combination
+> below $1 is matched by the exchange the moment it appears. A "discount"
+> the bot sees is most likely stale data, whose fill-or-kill legs then fail
+> (or, worse, only one fills). Multi-outcome events are different — their
+> outcomes trade in separate books.
 
 A binary Polymarket market always pays exactly $1 to the winning outcome's
 shares and $0 to the losing side. Buying **one YES share and one NO share**
@@ -206,13 +286,15 @@ or server reboots — so it is built to survive that:
 
 Run it on a small always-on Linux VPS, not a laptop. Two ways:
 
-**Docker** (restarts automatically, including after a reboot):
+**Docker** (restarts automatically, including after a reboot). The
+Polymarket bot is the `bot` service behind the `polymarket` profile —
+without `--profile polymarket`, compose runs the Tokocrypto grid bot:
 
 ```bash
 cp .env.example .env            # then fill it in
 mkdir -p data logs && sudo chown -R 1000:1000 data logs   # the container runs as uid 1000
-docker compose up -d --build
-docker compose logs -f          # follow the logs
+docker compose --profile polymarket up -d --build bot
+docker compose logs -f bot      # follow the logs
 docker compose ps               # shows (healthy) while data/status.json keeps updating
 ```
 
@@ -293,7 +375,10 @@ refreshes every 5 seconds.
 python -m pytest
 ```
 
-Tests cover the logic with no network calls (fees, risk limits and
+Tests cover both bots with no network calls. For the grid bot: level
+math, cost-aware grid checks, paper fills from candles, stop-loss, state
+across restarts and settings changes, the ccxt adapter and the command
+line. For the Polymarket bot: the logic (fees, risk limits and
 mark-to-market, arbitrage and multi-outcome sizing, grouped execution, V2
 order responses, order books and the WebSocket feed, paper fill
 simulation, market-making quotes and order management, heartbeats,
@@ -342,6 +427,16 @@ against fake exchanges, so they're safe and fast to run anytime.
 ## Project layout
 
 ```
+spot/                  # Tokocrypto grid bot (paper mode)
+  config.py            # loads config/spot.yaml (+ Telegram from .env)
+  market.py            # Tokocrypto market data via ccxt (pair rules, book, 1m candles)
+  grid.py              # grid levels, slots, paper fills, cost-aware checks
+  records.py           # JSON state + CSV trade log
+  bot.py               # the poll loop: fills, orders, stop-loss, alerts, status
+  main.py              # entry point (python -m spot.main, --reset)
+config/spot.yaml       # grid, cost, risk & alert settings for the grid bot
+scripts/spot_check.py  # connection, pairs, grid preview, Telegram test
+scripts/spot_status.py # equity, P&L and latest trades of the paper grid
 bot/
   config.py          # loads .env + config/settings.yaml
   client.py           # wraps py-clob-client's ClobClient
