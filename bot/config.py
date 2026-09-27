@@ -66,13 +66,45 @@ def _bool_env(name: str, default: bool = False) -> bool:
     return val.strip().lower() in ("1", "true", "yes", "on")
 
 
+def load_wallet_config(env_path: str | None = None) -> WalletConfig:
+    """Load wallet/secrets from the environment (and `.env`, if present).
+
+    Refuses to return a live-trading config with missing wallet fields.
+    """
+    load_dotenv(dotenv_path=env_path, override=False)
+
+    wallet = WalletConfig(
+        private_key=os.getenv("POLY_PRIVATE_KEY") or None,
+        chain_id=int(os.getenv("POLY_CHAIN_ID", "137")),
+        clob_host=os.getenv("POLY_CLOB_HOST", "https://clob.polymarket.com"),
+        signature_type=int(os.getenv("POLY_SIGNATURE_TYPE", "0")),
+        funder_address=os.getenv("POLY_FUNDER_ADDRESS") or None,
+        live_trading=_bool_env("LIVE_TRADING", False),
+    )
+
+    if wallet.live_trading:
+        missing = []
+        if not wallet.private_key:
+            missing.append("POLY_PRIVATE_KEY")
+        if not wallet.funder_address:
+            missing.append("POLY_FUNDER_ADDRESS")
+        if missing:
+            raise ValueError(
+                "LIVE_TRADING=true but missing required env vars: "
+                + ", ".join(missing)
+                + ". Refusing to start in live mode without full wallet config."
+            )
+
+    return wallet
+
+
 def load_settings(config_path: str | None = None, env_path: str | None = None) -> Settings:
     """Load configuration. Call once at startup.
 
     env_path defaults to a `.env` file in the current working directory (if present).
     config_path defaults to the BOT_CONFIG_PATH env var, or config/settings.yaml.
     """
-    load_dotenv(dotenv_path=env_path, override=False)
+    wallet = load_wallet_config(env_path)
 
     path = config_path or os.getenv("BOT_CONFIG_PATH", "config/settings.yaml")
     with open(path, "r", encoding="utf-8") as f:
@@ -83,15 +115,6 @@ def load_settings(config_path: str | None = None, env_path: str | None = None) -
     strategies_raw = raw.get("strategies", {}) or {}
     arb_raw = strategies_raw.get("arbitrage", {}) or {}
     thr_raw = strategies_raw.get("threshold", {}) or {}
-
-    wallet = WalletConfig(
-        private_key=os.getenv("POLY_PRIVATE_KEY") or None,
-        chain_id=int(os.getenv("POLY_CHAIN_ID", "137")),
-        clob_host=os.getenv("POLY_CLOB_HOST", "https://clob.polymarket.com"),
-        signature_type=int(os.getenv("POLY_SIGNATURE_TYPE", "0")),
-        funder_address=os.getenv("POLY_FUNDER_ADDRESS") or None,
-        live_trading=_bool_env("LIVE_TRADING", False),
-    )
 
     settings = Settings(
         wallet=wallet,
@@ -120,18 +143,5 @@ def load_settings(config_path: str | None = None, env_path: str | None = None) -
         ),
         polling_interval_seconds=int(raw.get("polling_interval_seconds", 15)),
     )
-
-    if wallet.live_trading:
-        missing = []
-        if not wallet.private_key:
-            missing.append("POLY_PRIVATE_KEY")
-        if not wallet.funder_address:
-            missing.append("POLY_FUNDER_ADDRESS")
-        if missing:
-            raise ValueError(
-                "LIVE_TRADING=true but missing required env vars: "
-                + ", ".join(missing)
-                + ". Refusing to start in live mode without full wallet config."
-            )
 
     return settings

@@ -1,0 +1,195 @@
+# Up/Down engine configuration (python -m bot.updown).
+# Secrets stay in .env. Unknown keys are rejected on startup (typo protection).
+# Delete a line to fall back to its built-in default.
+
+markets:
+  # Coins to watch. Constellation uses all of them as peers; a coin is only
+  # traded when Gamma lists a window for it.
+  assets: [btc, eth, sol, xrp, doge]
+  interval: 5m                      # 5m, 15m, ... (must match the slug)
+  slug_template: "{asset}-updown-{interval}-{start}"
+  discover_ahead: 2
+  discovery_interval_s: 20
+  # Override RTDS Chainlink / CEX symbols per asset if they differ:
+  chainlink_symbols: {}             # e.g. {btc: "btc/usd"}
+  cex_symbols: {}                   # e.g. {btc: "btcusdt"}
+
+feeds:
+  # Fast leading indicator only (never used for settlement):
+  # rtds = Polymarket's relay of Binance prices (works wherever Polymarket works)
+  # binance / bybit = direct exchange websockets (lower latency; may be geo-blocked)
+  cex_source: rtds
+  bootstrap_history: true           # ~1h of 1m klines at startup (1h filter + vol)
+  oracle_max_age_s: 5.0             # no trading when no new oracle price arrived for this long
+  cex_max_age_s: 3.0
+  rtds_stale_s: 10.0                # reconnect an RTDS socket (and rotate subscribe style) after this long without a new price
+  subscribe_ahead_s: 90             # watch a window's order books from this long before it opens (fewer books = lighter CLOB socket)
+
+settlement:
+  # How the window settles. VERIFY in the market rules on polymarket.com.
+  # twap = mean of per-second Chainlink samples over the last `twap_seconds`
+  # last = the single Chainlink price at the close
+  # The bot logs both computed results next to the official one in
+  # data/updown_settlements.csv; `scripts/updown_report.py` shows which rule
+  # actually matches. Fix this setting if it doesn't.
+  rule: twap
+  twap_seconds: 60                  # both the price to beat (60s before the open) and the close
+  ptb_tolerance_s: 2.0              # "last" rule only: t=0 must be observed within this many seconds
+  max_gap_s: 10.0                   # longest oracle gap tolerated inside an opening/closing TWAP
+  prefer_official_ptb: true         # use Gamma's price_to_beat when it publishes one
+  use_official: true                # book P&L on Gamma's official resolution
+  official_timeout_s: 1800
+
+model:
+  distribution: student_t           # fat tails; or "normal"
+  tail_dof: 5
+  vol_source: auto                  # oracle when it has the history, else CEX
+  vol_sample_s: 5
+  vol_short_s: 180
+  vol_long_s: 1800
+  short_weight: 0.5
+  vol_floor_annual: {btc: 0.25, eth: 0.35, sol: 0.45, xrp: 0.45, doge: 0.55, bnb: 0.30, hype: 0.60}
+  vol_uncertainty: 0.20             # edge must survive sigma * (1 +/- 0.2)
+  cex_lead_weight: 0.5              # how far to nudge spot toward the CEX nowcast
+  max_cex_oracle_divergence: 0.003  # pause if CEX and oracle disagree by > 0.3%
+  market_blend: 0.5                 # p = 0.5 * p_model + 0.5 * p_market (other bots may see the oracle sooner)
+  max_model_market_gap: 0.30        # model vs market further apart than this -> assume OUR data is wrong, stay out
+
+fees:
+  # Taker fee/share = p * taker_rate * (p*(1-p))^taker_exponent (~1.56% at 50c).
+  # VERIFY against Polymarket's current fee schedule.
+  taker_rate: 0.25
+  taker_exponent: 2.0
+  maker_rate: 0.0
+
+risk:
+  bankroll_usd: 500                 # sizing base (grows/shrinks with realized P&L)
+  kelly_fraction: 0.15              # fraction of full Kelly
+  max_usd_per_trade: 10
+  max_usd_per_window: 20
+  max_total_exposure_usd: 80
+  max_slot_direction_usd: 40        # same direction across coins in one slot (correlation!)
+  max_open_windows: 8
+  max_daily_loss_usd: 250           # kill switch until UTC midnight
+  max_consecutive_losses: 4         # per strategy -> cooldown
+  cooldown_s_after_streak: 900
+  loss_streak_decay: 0.75           # size x0.75 per consecutive loss. Never > 1 (no martingale).
+  max_buy_price: 0.985
+  min_buy_price: 0.03
+  slippage_buffer: 0.005
+  no_early_taker_s: 60              # banned: taker entries in the first 60s ...
+  early_taker_band: [0.40, 0.60]    # ... while the price is near 50c
+  bump_to_min_size: true            # round tiny Kelly sizes up to the market minimum if caps allow
+
+execution:
+  allow_live: false                 # second opt-in on top of LIVE_TRADING=true
+  step_interval_s: 0.25
+  requote_min_interval_s: 1.0
+  requote_min_ticks: 2              # hysteresis: don't chase every 1-tick book move
+  cancel_quotes_before_end_s: 2.0
+  heartbeat: true                   # live: exchange cancels our orders if the bot dies
+  max_orders_per_minute: 120        # runaway guard
+
+# UTC hour ranges. Strategy `overrides` can target these by name.
+sessions:
+  asia: [0, 8]
+  europe: [8, 13]
+  us: [13, 21]
+  late_us: [21, 24]
+
+journal:
+  dir: data
+  trades_csv: data/trades.csv
+  snapshot_every_s: 5
+  record_events: false              # or run with --record
+  record_dir: data/recordings
+  record_keep_days: 7               # recordings are large (every order-book change): delete older ones (0 = keep all)
+
+strategies:
+  # 1. Fair value vs Polymarket price: the core strategy.
+  fair_value:
+    # Off after the first paper run (1010 windows): -$207, 32% of windows won.
+    # The market mid out-predicted the model at every time to close, so
+    # trading their disagreements meant trading the model's errors.
+    enabled: false
+    min_edge: 0.05                  # 4-8c per the design; after fees, spread and slippage
+    min_remaining_s: 10
+    max_remaining_s: 240              # skip the first minute (~50/50, highest fees)
+    max_entries_per_window: 2
+    min_entry_spacing_s: 15
+    min_price: 0.05
+    max_price: 0.95
+    tif: FAK
+    max_usd_per_trade: 10
+    max_usd_per_window: 10
+    overrides:
+      # Example: demand more edge on the noisier coins during the Asia session.
+      - assets: [sol, xrp, doge]
+        sessions: [asia]
+        set: {min_edge: 0.07}
+
+  # 2. Late-certainty maker: small size, strict filters.
+  late_certainty:
+    enabled: true
+    min_remaining_s: 20
+    max_remaining_s: 70
+    min_model_prob: 0.95
+    bid_min: 0.92
+    bid_max: 0.985
+    max_price: 0.985
+    min_edge: 0.01
+    max_vol_ratio: 1.6              # skip if short-term vol spiked vs the long-term
+    max_sigma_annual: 0             # 0 = off
+    approach_lookback_s: 15
+    min_projected_z: 1.5            # still >= 1.5 sd from the line if the recent drift continues
+    improve_by_tick: true
+    max_usd_per_trade: 5
+    max_usd_per_window: 5
+
+  # 3. Constellation / cross-coin laggard.
+  constellation:
+    enabled: false                  # off after the first paper run: -$26 over 16 windows
+    eval_start_s: 60
+    eval_end_s: 120
+    move_threshold: 0.0003          # 0.03%
+    flat_threshold: 0.0002          # 0.02%
+    min_consensus: 4
+    max_opposing: 0
+    ask_min: 0.49
+    ask_max: 0.56
+    reference_asset: btc
+    max_ref_1h_abs_return: 0.02     # skip when BTC moved >= 2% in the last hour
+    require_ref_1h: true
+    catchup_factor: 0.5
+    min_edge: 0.03
+    max_usd_per_trade: 8
+    max_usd_per_window: 8
+
+  # 4. Pair / inventory barbell. Needs low latency -- off by default.
+  pair_barbell:
+    enabled: false
+    open_phase_s: 45
+    side_ask_min: 0.44
+    side_ask_max: 0.56
+    pair_max_cost: 0.99              # combined Up+Down bid cost at the open (< ~0.995)
+    base_shares: 10
+    tilt_start_s: 60
+    tilt_min_remaining_s: 45
+    confirm_prob: 0.62
+    tilt_ratio: 1.5
+    tilt_min_edge: 0.03
+    tilt_take_min_edge: 0.05
+    max_usd_per_trade: 10
+    max_usd_per_window: 20
+
+  # 5. Cheap asymmetric (value, not momentum). Off by default.
+  cheap_asymmetric:
+    enabled: false
+    min_remaining_s: 90
+    ask_min: 0.18
+    ask_max: 0.42
+    min_edge: 0.03
+    min_model_prob: 0.20
+    min_overpricing: 0.03
+    max_usd_per_trade: 3
+    max_usd_per_window: 3

@@ -33,21 +33,55 @@ class TradeJournal:
                 csv.writer(f).writerow(FIELDS)
 
     def record(self, signal: Signal, mode: str, filled: bool) -> None:
+        self.record_row(
+            mode=mode,
+            strategy=signal.strategy,
+            market_id=signal.market_id,
+            token_id=signal.token_id,
+            outcome=signal.outcome,
+            side=signal.side,
+            price=signal.limit_price,
+            size_shares=signal.size_shares,
+            size_usd=signal.size_usd,
+            filled=filled,
+            group_id=signal.group_id,
+            reason=signal.reason,
+        )
+
+    def record_row(
+        self,
+        *,
+        mode: str,
+        strategy: str,
+        market_id: str,
+        token_id: str,
+        outcome: str,
+        side: str,
+        price: float,
+        size_shares: float,
+        size_usd: float,
+        filled: bool,
+        group_id: str | None,
+        reason: str,
+        timestamp: datetime | None = None,
+    ) -> None:
+        """Append one row. `side` is BUY, SELL, or SETTLE (a position resolved
+        at $1/$0 per share when its market settles)."""
         with open(self.path, "a", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow(
                 [
-                    datetime.now(timezone.utc).isoformat(),
+                    (timestamp or datetime.now(timezone.utc)).isoformat(),
                     mode,
-                    signal.strategy,
-                    signal.market_id,
-                    signal.token_id,
-                    signal.outcome,
-                    signal.side,
-                    f"{signal.limit_price:.4f}",
-                    f"{signal.size_shares:.4f}",
-                    f"{signal.size_usd:.4f}",
+                    strategy,
+                    market_id,
+                    token_id,
+                    outcome,
+                    side,
+                    f"{price:.4f}",
+                    f"{size_shares:.4f}",
+                    f"{size_usd:.4f}",
                     filled,
-                    signal.group_id or "",
-                    signal.reason,
+                    group_id or "",
+                    reason,
                 ]
             )
