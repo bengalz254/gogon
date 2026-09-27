@@ -473,10 +473,14 @@ def main() -> None:
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     url = f"http://127.0.0.1:{PORT}"
     print(f"Dashboard jalan di {url} (Ctrl+C untuk berhenti)")
-    try:
-        webbrowser.open(url)
-    except Exception:
-        pass
+    # Over SSH (a VPS) there's no browser to open — and a text browser such as
+    # w3m would take over the terminal. Open it on your own computer through
+    # an SSH tunnel instead.
+    if not os.environ.get("SSH_CONNECTION"):
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -127,3 +127,13 @@ def test_cli_flags_work_before_or_after_the_command(tmp_path, monkeypatch):
     assert risk.positions["yes"].size == 8.0
     _, paper = positions_cli.load(False)
     assert paper.positions == {}  # --live never touched the paper state
+
+
+def test_cli_edits_right_after_a_clean_stop(tmp_path, monkeypatch):
+    use_tmp_root(monkeypatch, tmp_path)
+    seed_state(tmp_path)
+    status = tmp_path / "data" / "status.json"
+    status.write_text(json.dumps({"updated_ts": time.time(), "running": False}), encoding="utf-8")
+    assert positions_cli.main(["--live", "merge", "mkt1", "--sets", "1"]) == 0
+    status.write_text(json.dumps({"updated_ts": time.time() - 3600, "running": True}), encoding="utf-8")
+    assert positions_cli.main(["--live", "merge", "mkt1", "--sets", "1"]) == 0  # crashed long ago

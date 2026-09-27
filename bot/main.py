@@ -168,10 +168,13 @@ def _write_status(
     markets_scanned: int,
     feed: MarketFeed | None = None,
     market_maker: dict | None = None,
+    running: bool = True,
 ) -> None:
     payload = {
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "updated_ts": time.time(),
+        # False once the bot has stopped cleanly (scripts/positions.py checks it).
+        "running": running,
         "mode": mode,
         "cycles": cycles,
         "last_cycle_seconds": round(last_cycle_seconds, 2),
@@ -319,6 +322,10 @@ class Bot:
             self.heartbeat.stop()
         if self.feed is not None:
             self.feed.stop()
+        try:
+            _write_status(self.mode, self.risk, self.cycles, 0.0, 0, None, self._mm_status(), running=False)
+        except OSError:
+            logger.exception("Failed to write %s", STATUS_PATH)
         logger.info("Bot stopped.")
         self.notifier.send(f"🔴 Bot berhenti ({self.mode.upper()}) — {_pnl_summary(self.risk)}")
         self.notifier.close()

@@ -173,7 +173,9 @@ def test_paper_cycle_trades_persists_and_survives_a_restart(tmp_path, monkeypatc
     run_one_cycle(monkeypatch)
 
     assert len(read_trades(tmp_path)) == 2
-    assert read_status(tmp_path)["open_positions"] == 2
+    status = read_status(tmp_path)
+    assert status["open_positions"] == 2
+    assert status["running"] is False  # marked on a clean stop
 
 
 def test_alerts_when_scans_keep_coming_back_empty(tmp_path, monkeypatch):
@@ -309,9 +311,11 @@ def test_paper_market_making_quotes_and_fills(tmp_path, monkeypatch):
     assert [(t["strategy"], t["side"], t["outcome"], t["price"], t["size_shares"]) for t in trades] == [
         ("market_maker", "BUY", "Yes", "0.4800", "4.0000")
     ]
-    mm = read_status(tmp_path)["market_maker"]
+    status = read_status(tmp_path)
+    mm = status["market_maker"]
     assert mm["enabled"] and mm["markets"] == ["mkt1"] and mm["fills_today"] == 1
-    assert mm["open_quotes"] == 2
+    # the last status is written on shutdown, after the quotes were pulled
+    assert status["running"] is False and mm["open_quotes"] == 0
     messages = RecordingNotifier.instances[0].messages
     assert any("Market making di 1 market" in m for m in messages)
 

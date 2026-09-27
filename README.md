@@ -15,6 +15,9 @@ a risk manager with hard position/exposure/loss caps.
 > README, run in paper mode first, and never risk more than you can afford
 > to lose. Nothing here is financial advice.
 
+🇮🇩 **Panduan langkah demi langkah dalam Bahasa Indonesia:** [PANDUAN.md](PANDUAN.md)
+(dari menyiapkan VPS, mode paper, sampai live).
+
 ## How it works
 
 ```

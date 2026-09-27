@@ -38,10 +38,15 @@ RUNNING_IF_UPDATED_WITHIN_SECONDS = 180
 
 
 def bot_seems_running() -> bool:
+    """True if data/status.json says the bot is up: it wasn't marked stopped
+    on a clean shutdown and was updated recently (a crashed bot goes stale)."""
     try:
         with open(STATUS_PATH, encoding="utf-8") as f:
-            return time.time() - float(json.load(f)["updated_ts"]) < RUNNING_IF_UPDATED_WITHIN_SECONDS
-    except (OSError, ValueError, KeyError, TypeError):
+            status = json.load(f)
+        if status.get("running") is False:
+            return False
+        return time.time() - float(status["updated_ts"]) < RUNNING_IF_UPDATED_WITHIN_SECONDS
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return False
 
 
