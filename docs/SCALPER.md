@@ -376,7 +376,13 @@ seluruh internet. Untuk berhenti membagikan dashboard:
 | `cd ~/scalper-bot && bash deploy/health.sh` | Cek kesehatan: service, error 24 jam terakhir, saldo & risiko, koneksi exchange, jam/disk/RAM VPS. Hanya membaca; ditutup dengan kesimpulan |
 | `sudo journalctl -u scalper -f` | Log langsung (Ctrl+C = keluar, bot tetap jalan) |
 | `cd ~/scalper-bot && venv/bin/python -m scalper status` | Posisi, saldo, P&L |
-| `sudo systemctl stop scalper` / `start` / `restart` | Hentikan / nyalakan / restart bot |
+| `sudo systemctl stop scalper` / `start` / `restart` | Hentikan / nyalakan / restart bot. Setelah `stop`, bot tetap menyala lagi otomatis kalau VPS restart |
+| `sudo systemctl disable --now scalper` | Hentikan bot **dan** jangan nyalakan lagi saat VPS restart. Nyalakan kembali dengan `sudo systemctl enable --now scalper` |
+| `systemctl is-active scalper` | `active` = bot jalan, `inactive` = bot berhenti |
+
+Saat bot dihentikan, posisi yang masih terbuka **tidak** ditutup. Posisi itu
+tetap dilindungi stop-loss & take-profit di exchange. Kalau ingin menutupnya,
+hentikan bot dulu, lalu tutup posisinya manual di Binance.
 | `cd ~/scalper-bot && git pull && bash deploy/setup_vps.sh` | Update bot ke versi terbaru |
 
 Menguji ulang siklus order dari VPS (opsional, testnet): hentikan bot dulu
