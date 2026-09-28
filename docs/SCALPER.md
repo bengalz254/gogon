@@ -150,6 +150,13 @@ python -m scalper dashboard      # di terminal lain: http://127.0.0.1:8766
 Bandingkan hasil paper dengan backtest. Kalau jauh berbeda, cari tahu kenapa
 sebelum lanjut.
 
+Ingin melihat tampilan dashboard sebelum ada trade? `python -m scalper dashboard --demo`
+mengisinya dengan trade dari logika bot yang asli di atas **harga acak**. Di
+pasar acak tidak ada strategi yang punya edge, jadi hasil demo hanyalah noise
+dikurangi fee. Dalam 10 simulasi acak 3 minggu, hasilnya berkisar dari +42
+sampai −85 USDT — satu di antaranya "untung" murni karena beruntung. Itulah
+sebabnya hasil beberapa minggu tidak bisa dipakai untuk menilai bot mana pun.
+
 ### 3. Testnet (uang mainan, order sungguhan)
 
 1. Buat akun & API key di <https://testnet.binancefuture.com>.
@@ -189,6 +196,7 @@ yang tidak ia kenal. Karena itu sub-account sangat disarankan.
 | `python -m scalper download` | Hanya mengunduh/menyegarkan cache candle |
 | `python -m scalper status` | Posisi terbuka, P&L hari ini, statistik jurnal |
 | `python -m scalper dashboard` | Dashboard web lokal (hanya-baca) |
+| `python -m scalper dashboard --demo` | Pratinjau dashboard dengan trade demo di atas **harga acak** (bukan hasil trading, bukan perkiraan profit; disimpan terpisah) |
 | `python -m scalper reset-risk` | Menghapus status "halted" setelah drawdown limit (setelah kamu evaluasi penyebabnya) |
 
 Menghentikan bot: **Ctrl+C**. Posisi yang masih terbuka tetap dilindungi

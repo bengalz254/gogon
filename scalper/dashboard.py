@@ -104,11 +104,17 @@ table { width:100%; border-collapse:collapse; font-size:12.5px; }
 th,td { padding:6px; border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; }
 th { color:var(--dim); font-weight:500; } .n { text-align:right; font-variant-numeric:tabular-nums; }
 .alert { background:var(--bad); color:#fff; border-radius:10px; padding:10px 14px; margin-top:12px; }
+.demo { border:1px dashed var(--accent); color:var(--text); border-radius:10px; padding:10px 14px; margin-top:12px; font-size:13px; }
+.demo code { background:var(--border); padding:1px 5px; border-radius:4px; white-space:nowrap; }
 .legend { display:flex; justify-content:space-between; font-size:12px; color:var(--dim); margin-top:6px; font-variant-numeric:tabular-nums; }
 @media (max-width:600px) { .hide-sm { display:none; } }
 </style></head><body><main>
 <header><h1>Scalper Dashboard <span class="badge" id="mode">-</span></h1><span class="dim" id="status">memuat...</span></header>
 <div id="alert"></div>
+<div class="demo" id="demo" hidden><strong>DEMO</strong> &mdash; trade di bawah ini dibuat oleh logika bot yang asli, tetapi
+di atas <strong>harga acak (pasar palsu)</strong>. Di pasar acak tidak ada strategi yang punya edge, jadi angka P&amp;L di sini
+hanya noise dikurangi fee: <strong>bukan hasil trading dan bukan perkiraan profit</strong>. Untuk data sungguhan, jalankan
+<code>python -m scalper run</code> (mode paper) lalu buka dashboard tanpa <code>--demo</code>.</div>
 <div class="kpis">
  <div class="card kpi"><div class="k">Saldo</div><div class="v" id="k-bal">-</div></div>
  <div class="card kpi"><div class="k">Net P&amp;L</div><div class="v" id="k-net">-</div></div>
@@ -158,6 +164,7 @@ async function refresh() {
     setVal('k-fee', num(d.fees));
     setVal('k-n', String(d.trades));
     $('alert').innerHTML = d.halted ? `<div class="alert">BOT BERHENTI: ${esc(d.halt_reason)}</div>` : '';
+    $('demo').hidden = d.mode !== 'demo';
     curve(d.curve);
     $('open').innerHTML = d.open_trades.map(t => `<tr><td>${esc(t.symbol)}</td><td>${esc(t.side)}</td><td class=n>${num(t.entry,4)}</td><td class=n>${num(t.stop,4)} <span class="dim">${esc(t.stop_kind)}</span></td><td class=n>${num(t.target,4)}</td></tr>`).join('') || '<tr><td colspan=5 class="dim">Tidak ada</td></tr>';
     $('recent').innerHTML = d.recent.map(r => `<tr><td>${esc(String(r.closed_at_utc || '').slice(5, 16))}</td><td>${esc(r.symbol)}</td><td class="hide-sm">${esc(r.side)}</td><td class="n hide-sm">${num(r.entry_price,4)}</td><td class="n hide-sm">${num(r.exit_price,4)}</td><td>${esc(r.exit_reason)}</td><td class="n ${Number(r.net_pnl) > 0 ? 'good' : 'bad'}">${signed(Number(r.net_pnl))}</td><td class=n>${num(r.r_multiple)}R</td></tr>`).join('') || '<tr><td colspan=8 class="dim">Belum ada trade</td></tr>';

@@ -568,6 +568,13 @@ def cmd_dashboard(args) -> int:
     from scalper.dashboard import serve
 
     settings = _load(args)
+    if args.demo:
+        from scalper.demo import DEMO_MODE, write_demo_data
+
+        settings.mode = DEMO_MODE
+        paths = write_demo_data(settings, int(time.time() * 1000))
+        print("DEMO data generated from SYNTHETIC prices (the bot's real logic, fake market).")
+        print(f"It is stored separately in {paths['journal']} and never mixes with real results.")
     serve(settings, port=args.port, open_browser=not args.no_browser)
     return 0
 
@@ -623,6 +630,8 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--mode", choices=["paper", "testnet", "live"])
     d.add_argument("--port", type=int, default=8766)
     d.add_argument("--no-browser", action="store_true")
+    d.add_argument("--demo", action="store_true",
+                   help="preview the dashboard with demo trades on synthetic prices")
     d.set_defaults(func=cmd_dashboard)
     return p
 
