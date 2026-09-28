@@ -13,6 +13,7 @@ section() { printf '\n== %s\n' "$*"; }
 indent()  { cut -c1-170 | sed "s/^/${1-    }/"; }
 
 echo "Cek kesehatan bot scalper, $(date '+%Y-%m-%d %H:%M:%S %Z')"
+echo "VPS: IP publik $(hostname -I 2>/dev/null | awk '{ print $1 }'), nama $(hostname)"
 
 # ---------------------------------------------------------------------------
 section "Service"
@@ -104,7 +105,6 @@ esac
 
 # ---------------------------------------------------------------------------
 section "VPS"
-echo "  IP publik: $(hostname -I 2>/dev/null | awk '{ print $1 }')  (nama: $(hostname))"
 if [ -f /var/run/reboot-required ]; then
   warn "VPS perlu restart untuk menerapkan update keamanan (ketik: reboot). Bot scalper menyala lagi sendiri."
 fi
