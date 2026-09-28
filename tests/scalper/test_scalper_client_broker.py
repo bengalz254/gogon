@@ -124,11 +124,39 @@ def test_versioned_endpoint_falls_back_and_caches():
     assert "/fapi/v2/positionRisk" in session.requests[2][1]  # remembered
 
 
-def test_weight_header_throttles():
-    session = ScriptSession([FakeResponse(200, {}, headers={"X-MBX-USED-WEIGHT-1M": "2000"})])
+def test_weight_header_throttles_near_the_limit_only():
+    session = ScriptSession([FakeResponse(200, {}, headers={"X-MBX-USED-WEIGHT-1M": "2000"}),
+                             FakeResponse(200, {}, headers={"X-MBX-USED-WEIGHT-1M": "2200"})])
     client, sleeps = make_client(session)
     client.request("GET", "/fapi/v1/ping")
-    assert len(sleeps) == 1 and sleeps[0] > 0
+    assert sleeps == []  # 83% of 2400: keep going
+    client.request("GET", "/fapi/v1/ping")
+    assert len(sleeps) == 1 and sleeps[0] > 0  # 92%: wait for the next minute
+
+
+def test_weight_limit_comes_from_exchange_info():
+    info = {"rateLimits": [
+        {"rateLimitType": "REQUEST_WEIGHT", "interval": "MINUTE", "intervalNum": 1, "limit": 6000},
+        {"rateLimitType": "ORDERS", "interval": "MINUTE", "intervalNum": 1, "limit": 1200},
+    ], "symbols": []}
+    session = ScriptSession([FakeResponse(200, info),
+                             FakeResponse(200, {}, headers={"X-MBX-USED-WEIGHT-1M": "2700"})])
+    client, sleeps = make_client(session)
+    client.exchange_info()
+    assert client.max_weight == 6000
+    client.request("GET", "/fapi/v1/ping")
+    assert sleeps == []  # 2700 is far below this server's real limit
+
+
+def test_rate_limited_response_waits_only_retry_after():
+    session = ScriptSession([
+        FakeResponse(429, {"code": -1003, "msg": "Too many requests"},
+                     headers={"Retry-After": "7", "X-MBX-USED-WEIGHT-1M": "2600"}),
+        FakeResponse(200, {"serverTime": 1}),
+    ])
+    client, sleeps = make_client(session)
+    client.request("GET", "/fapi/v1/time")
+    assert sleeps == [7.0]  # no extra "wait for next minute" on top of Retry-After
 
 
 # -- broker against the fake exchange ------------------------------------------------------

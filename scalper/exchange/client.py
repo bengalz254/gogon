@@ -125,10 +125,11 @@ class BinanceFuturesClient:
             self.used_weight = int(raw)
         except ValueError:
             return
-        if self.used_weight >= 0.8 * self.max_weight:
+        if self.used_weight >= 0.9 * self.max_weight:
             wait = 61 - (self.clock() % 60)
             logger.warning(
-                "Request weight %d/%d this minute; pausing %.0fs to stay clear of a ban",
+                "Binance request limit for this IP is almost used up (%d of %d this minute; every "
+                "program on this internet connection counts). Waiting %.0fs, then continuing.",
                 self.used_weight, self.max_weight, wait,
             )
             self.sleep(wait)
@@ -171,7 +172,6 @@ class BinanceFuturesClient:
                 self.sleep(min(2 ** attempt, 10))
                 continue
 
-            self._throttle(resp.headers)
             status = resp.status_code
 
             if status in (429, 418):
@@ -182,6 +182,8 @@ class BinanceFuturesClient:
                 logger.warning("Rate limited on %s; waiting %.0fs", path, retry_after)
                 self.sleep(retry_after)
                 continue
+
+            self._throttle(resp.headers)
 
             if status >= 500:
                 code, msg = self._error_body(resp)
@@ -251,7 +253,18 @@ class BinanceFuturesClient:
         return int(self.request("GET", "/fapi/v1/time")["serverTime"])
 
     def exchange_info(self) -> dict:
-        return self.request("GET", "/fapi/v1/exchangeInfo")
+        info = self.request("GET", "/fapi/v1/exchangeInfo")
+        # Use the weight limit this server actually publishes (the testnet
+        # and the live exchange don't necessarily match).
+        limits = (info.get("rateLimits") or []) if isinstance(info, dict) else []
+        for rl in limits:
+            try:
+                if (rl.get("rateLimitType") == "REQUEST_WEIGHT" and rl.get("interval") == "MINUTE"
+                        and int(rl.get("intervalNum") or 1) == 1 and int(rl.get("limit") or 0) > 0):
+                    self.max_weight = int(rl["limit"])
+            except (TypeError, ValueError):
+                continue
+        return info
 
     def klines(
         self,
