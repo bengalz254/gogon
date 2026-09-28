@@ -104,6 +104,10 @@ esac
 
 # ---------------------------------------------------------------------------
 section "VPS"
+echo "  IP publik: $(hostname -I 2>/dev/null | awk '{ print $1 }')  (nama: $(hostname))"
+if [ -f /var/run/reboot-required ]; then
+  warn "VPS perlu restart untuk menerapkan update keamanan (ketik: reboot). Bot scalper menyala lagi sendiri."
+fi
 ntp="$(timedatectl show -p NTPSynchronized --value 2>/dev/null || true)"
 if [ "$ntp" = "yes" ]; then ok "jam tersinkron (NTP)"; else warn "jam VPS belum tersinkron (NTP: ${ntp:-tidak diketahui})"; fi
 disk="$(df -P . | awk 'NR == 2 { gsub("%", "", $5); print $5 }')"
