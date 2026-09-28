@@ -1,4 +1,23 @@
-# gogon — Polymarket Auto-Trading Bot
+# gogon — trading bots
+
+This repository contains two independent bots:
+
+| Bot | Market | Docs |
+|---|---|---|
+| **Binance Futures scalper** (`scalper/`) | Binance USDⓈ-M perpetual futures | [docs/SCALPER.md](docs/SCALPER.md) (Bahasa Indonesia) |
+| **Polymarket bot** (`bot/`) | Polymarket prediction markets | this README |
+
+Quick start for the scalper (paper trading, no API key needed):
+
+```bash
+pip install -r requirements-scalper.txt
+python -m scalper backtest --days 180   # test the strategy on history first
+python -m scalper run                   # paper trading with live prices
+```
+
+---
+
+## Polymarket Auto-Trading Bot
 
 An automated trading bot for [Polymarket](https://polymarket.com) built on
 Polymarket's official CLOB (Central Limit Order Book) API. It scans active
@@ -145,3 +164,6 @@ scripts/check_setup.py    # pre-flight sanity check
 scripts/dashboard.py       # local trading-activity dashboard
 tests/                      # pytest unit tests, no network required
 ```
+
+The Binance scalper lives in `scalper/` (config: `config/scalper.yaml`,
+tests: `tests/scalper/`); see [docs/SCALPER.md](docs/SCALPER.md).

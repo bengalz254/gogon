@@ -1,0 +1,124 @@
+# Konfigurasi bot scalping Binance USDⓈ-M Futures.
+# Rahasia (API key, token Telegram) TIDAK boleh ditulis di sini — taruh di .env.
+# Setiap key yang salah ketik akan ditolak saat start (bukan diam-diam diabaikan).
+
+# paper = simulasi dengan harga live (tanpa API key, tanpa risiko)
+# testnet = order sungguhan di testnet Binance (uang mainan)
+# live = UANG SUNGGUHAN. Bisa juga di-override lewat SCALPER_MODE di .env.
+mode: paper
+
+# Pair perpetual yang ditradingkan. Pilih yang likuid.
+symbols: [BTCUSDT, ETHUSDT, SOLUSDT]
+
+# Timeframe candle utama. 5m = kompromi terbaik untuk scalping: pergerakan
+# harga cukup besar dibanding biaya fee. 1m hampir selalu kalah oleh fee.
+timeframe: 5m
+
+strategy:
+  # trend_pullback (default) atau range_reversion
+  name: trend_pullback
+  allow_long: true
+  allow_short: true
+
+  trend_pullback:
+    htf_interval: 1h          # timeframe besar untuk filter tren
+    htf_ema_fast: 20
+    htf_ema_slow: 50
+    ema_fast: 20              # EMA "nilai wajar" tempat harga pullback
+    ema_slow: 50
+    rsi_period: 14
+    atr_period: 14
+    adx_period: 14
+    adx_min: 18               # kekuatan tren minimum (0 = matikan filter)
+    pullback_lookback: 6      # pullback harus terjadi dalam N candle terakhir
+    pullback_atr_tolerance: 0.3
+    rsi_pullback_long: 45     # RSI harus sempat turun ke <= ini (long)
+    rsi_pullback_short: 55    # RSI harus sempat naik ke >= ini (short)
+    rsi_trigger_long: 50
+    rsi_trigger_short: 50
+    swing_lookback: 6         # stop di bawah swing low N candle terakhir
+    sl_buffer_atr: 0.2
+    min_sl_atr: 0.8           # stop minimal sejauh ini x ATR
+    max_sl_atr: 2.5           # setup dengan stop lebih jauh dari ini dilewati
+    tp_r: 1.5                 # take profit = 1.5 x risiko
+    min_atr_pct: 0.10         # lewati pasar yang terlalu sepi (ATR % harga)
+    max_atr_pct: 2.0          # lewati pasar yang terlalu liar
+    max_bar_atr: 3.0          # jangan kejar candle spike berita
+
+  range_reversion:
+    bb_period: 20
+    bb_std: 2.0
+    rsi_period: 7
+    rsi_oversold: 25
+    rsi_overbought: 75
+    adx_period: 14
+    adx_max: 20               # hanya trading saat pasar sideways
+    atr_period: 14
+    swing_lookback: 3
+    sl_buffer_atr: 0.3
+    min_sl_atr: 1.0
+    min_rr: 1.0               # reward:risk minimum ke middle band
+    min_atr_pct: 0.10
+    max_atr_pct: 2.0
+    max_bar_atr: 3.0
+
+management:
+  breakeven_at_r: 1.0         # setelah profit 1R, stop pindah ke entry + biaya (0 = mati)
+  trail_start_r: 0            # trailing stop mulai di R ini (0 = mati)
+  trail_atr: 1.5
+  max_bars_in_trade: 24       # tutup posisi setelah N candle (24 x 5m = 2 jam; 0 = mati)
+  cooldown_bars_after_exit: 2
+  min_stop_gap_atr: 0.1
+
+risk:
+  risk_per_trade_pct: 0.5     # rugi maksimal per trade = 0.5% saldo (termasuk fee)
+  max_open_positions: 2       # BTC/ETH/SOL sangat berkorelasi: jangan terlalu banyak
+  max_daily_loss_pct: 3.0     # rugi 3% sehari -> berhenti entry sampai 00:00 UTC
+  max_drawdown_pct: 15.0      # turun 15% dari puncak -> bot berhenti total (reset manual)
+  max_consecutive_losses: 3   # 3x rugi beruntun -> istirahat
+  loss_cooldown_minutes: 60
+  max_trades_per_day: 30
+  max_notional_usd: 0         # batas nilai posisi (0 = tanpa batas tambahan)
+  max_margin_use_pct: 80
+  min_sl_cost_ratio: 3.0      # stop harus >= 3x biaya round-trip, kalau tidak fee memakan edge
+  liquidation_buffer: 0.5     # stop harus < 50% jarak ke likuidasi
+  maintenance_margin_rate: 0.01
+
+execution:
+  leverage: 5                 # ukuran posisi ditentukan risk_per_trade_pct, BUKAN leverage
+  margin_type: ISOLATED
+  take_profit_order: limit    # limit = fee maker (lebih murah); market = TAKE_PROFIT_MARKET
+  stop_working_type: MARK_PRICE   # MARK_PRICE lebih tahan wick/spike
+  conditional_order_api: auto # auto | algo | legacy (API order kondisional Binance)
+  orphan_policy: adopt        # posisi tak dikenal di simbol bot: adopt (dilindungi stop) | ignore
+  orphan_sl_atr: 2.0
+  auto_one_way_mode: false    # ubah otomatis Hedge Mode -> One-way Mode
+  poll_seconds: 2
+  position_check_seconds: 5
+  order_check_seconds: 60
+  candle_close_delay_seconds: 2
+  recv_window_ms: 5000
+  warmup_bars: 1000
+  flatten_on_exit: false      # true = tutup semua posisi saat bot dihentikan
+
+costs:
+  taker_fee: 0.0005           # 0.05% (VIP0). Di mode testnet/live dibaca otomatis dari akunmu
+  maker_fee: 0.0002           # 0.02%
+  slippage_bps: 2             # 0.02% per fill market
+  funding_bps_per_8h: 1       # 0.01% per 8 jam (dihitung sebagai biaya di backtest/paper)
+  use_exchange_fee_rates: true
+
+paper:
+  starting_balance: 1000
+
+backtest:
+  starting_balance: 1000
+  days: 60
+  oos_fraction: 0.3           # 30% data terakhir = out-of-sample (ujian yang jujur)
+
+notify:
+  telegram_enabled: false     # isi TELEGRAM_BOT_TOKEN & TELEGRAM_CHAT_ID di .env
+  heartbeat_minutes: 60
+
+data_dir: data/scalper
+log_dir: logs
