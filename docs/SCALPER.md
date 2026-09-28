@@ -334,6 +334,41 @@ menanyakan IP VPS dan menyimpannya untuk berikutnya. Masukkan password VPS,
 lalu browser terbuka sendiri. Biarkan jendela hitamnya terbuka selama melihat
 dashboard. Password tidak pernah disimpan.
 
+### Dashboard di HP (Tailscale)
+
+Dengan [Tailscale](https://tailscale.com), dashboard bisa dibuka dari HP tanpa
+SSH, dan tetap privat: hanya perangkat yang login ke akun Tailscale-mu yang bisa
+membukanya.
+
+1. Di VPS, cek apakah Tailscale sudah ada: `tailscale status`. Kalau belum
+   terpasang:
+
+   ```bash
+   curl -fsSL https://tailscale.com/install.sh | sh
+   tailscale up --accept-dns=false
+   ```
+
+   Buka link login yang muncul, lalu masuk dengan akun Tailscale yang sama
+   dengan di HP. `--accept-dns=false` membuat pengaturan DNS VPS tidak
+   diubah, sehingga koneksi bot ke exchange tidak terpengaruh.
+2. Bagikan dashboard ke jaringan Tailscale-mu (port 8777 = port dashboard
+   di VPS):
+
+   ```bash
+   tailscale serve --bg --https=8443 8777
+   ```
+
+   Kalau muncul link untuk mengaktifkan HTTPS/Serve, buka link itu, aktifkan,
+   lalu ulangi perintahnya. Setelah berhasil, muncul
+   `Available within your tailnet:` beserta alamat seperti
+   `https://nama-vps.xxxx.ts.net:8443/`. Pengaturan ini tetap berlaku
+   setelah VPS restart.
+3. Di HP: nyalakan aplikasi Tailscale, lalu buka alamat tadi di browser.
+
+**Jangan** memakai `tailscale funnel`, karena perintah itu membuka dashboard ke
+seluruh internet. Untuk berhenti membagikan dashboard:
+`tailscale serve --https=8443 off`.
+
 ### Perintah di VPS
 
 | Perintah | Fungsi |
