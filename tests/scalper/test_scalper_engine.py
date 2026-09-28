@@ -91,7 +91,8 @@ def test_entry_places_exchange_side_stop_and_limit_target(tmp_path):
     assert trade.entry_price == pytest.approx(100.005)
     assert trade.take_profit == pytest.approx(100.005 + 1.5 * (100.005 - 99.0))
     algo = fake.open_algos(SYM)
-    assert len(algo) == 1 and algo[0]["orderType"] == "STOP_MARKET" and algo[0]["closePosition"] is True
+    assert len(algo) == 1 and algo[0]["orderType"] == "STOP_MARKET"
+    assert algo[0]["reduceOnly"] is True and float(algo[0]["quantity"]) == pytest.approx(trade.qty)
     tp = fake.open_regular(SYM)
     assert len(tp) == 1 and tp[0]["type"] == "LIMIT" and tp[0]["reduceOnly"] is True
     # risk: 0.5% of 1000 = 5 USDT including costs

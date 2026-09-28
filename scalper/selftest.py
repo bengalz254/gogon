@@ -8,7 +8,7 @@ opens the SMALLEST allowed position and checks, step by step, everything the
 live bot relies on:
 
   1. market entry fills
-  2. stop-loss (STOP_MARKET closePosition) is accepted and visible
+  2. stop-loss (reduce-only STOP_MARKET) is accepted and visible
   3. reduce-only limit take-profit is accepted and visible
   4. the stop can be moved (new stop first, then the old one cancelled)
   5. the position closes at market
@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Callable
 
 from scalper.exchange.broker import new_client_id
@@ -71,7 +72,8 @@ def run_selftest(
         if not record("market entry", ok, detail):
             return steps
 
-        sl = broker.place_stop(symbol, LONG, fill.avg_price * 0.97, new_client_id("sl"))
+        size = Decimal(str(fill.qty))
+        sl = broker.place_stop(symbol, LONG, fill.avg_price * 0.97, size, new_client_id("sl"))
         api = "Algo Order API" if sl.kind == "algo" else "classic order endpoint"
         if not record("stop-loss accepted", any(o.purpose == "sl" for o in broker.open_orders(symbol)),
                       f"via {api}, trigger {sl.price:.6g}"):
@@ -81,11 +83,14 @@ def run_selftest(
         record("take-profit accepted", any(o.purpose == "tp" for o in broker.open_orders(symbol)),
                f"{tp.order_type} reduce-only @ {tp.price:.6g}")
 
-        moved = broker.place_stop(symbol, LONG, fill.avg_price * 0.98, new_client_id("sl"))
+        moved = broker.place_stop(symbol, LONG, fill.avg_price * 0.98, size, new_client_id("sl"))
         broker.cancel(symbol, sl)
-        stops = [o for o in broker.open_orders(symbol) if o.purpose == "sl"]
+        orders = broker.open_orders(symbol)
+        stops = [o for o in orders if o.purpose == "sl"]
+        tp_note = ("take-profit still open" if any(o.purpose == "tp" for o in orders)
+                   else "exchange removed the take-profit (the bot re-places it automatically)")
         record("stop moved", len(stops) == 1 and abs(stops[0].price - moved.price) < 1e-9,
-               f"{len(stops)} stop(s) open, trigger {stops[0].price:.6g}" if stops else "no stop left")
+               f"{len(stops)} stop(s) open, trigger {stops[0].price:.6g}; {tp_note}" if stops else "no stop left")
 
         position = broker.positions().get(symbol)
         closed = broker.close_position(symbol, position) if position else None

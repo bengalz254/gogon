@@ -152,7 +152,10 @@ class PaperBroker:
         )
         return Fill(qty=q, avg_price=price, fee=fee, order_id=oid, client_id=client_id or "")
 
-    def place_stop(self, symbol: str, trade_side: str, stop_price: float, client_id: str | None = None) -> OrderRef:
+    def place_stop(
+        self, symbol: str, trade_side: str, stop_price: float, qty: Decimal | None = None,
+        client_id: str | None = None,
+    ) -> OrderRef:
         p = self.pos.get(symbol)
         if p is None:
             raise PaperBrokerError(f"{symbol}: no paper position to protect")

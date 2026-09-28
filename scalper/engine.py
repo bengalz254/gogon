@@ -448,7 +448,9 @@ class Engine:
     def _place_stop(self, sym: str, trade: Trade) -> bool:
         for attempt in range(3):
             try:
-                trade.sl_order = self.broker.place_stop(sym, trade.side, trade.stop, new_client_id("sl"))
+                trade.sl_order = self.broker.place_stop(
+                    sym, trade.side, trade.stop, Decimal(str(trade.qty)), new_client_id("sl")
+                )
                 return True
             except BinanceAPIError as e:
                 if e.code == -2021:  # "Order would immediately trigger": price is already through it
@@ -475,7 +477,7 @@ class Engine:
     def _move_stop(self, sym: str, trade: Trade, new_stop: float, kind: str) -> None:
         old_ref = trade.sl_order
         try:
-            new_ref = self.broker.place_stop(sym, trade.side, new_stop, new_client_id("sl"))
+            new_ref = self.broker.place_stop(sym, trade.side, new_stop, Decimal(str(trade.qty)), new_client_id("sl"))
         except BinanceAPIError as e:
             logger.warning("%s: could not move stop to %.6g (%s); keeping %.6g", sym, new_stop, e, trade.stop)
             return
@@ -488,7 +490,8 @@ class Engine:
             try:
                 self.broker.cancel(sym, old_ref)
             except BinanceAPIError as e:
-                logger.warning("%s: old stop not cancelled (%s); it is a close-position stop, so harmless", sym, e)
+                logger.warning("%s: old stop not cancelled (%s); it is reduce-only, so it can never open a "
+                               "position, and it is cleaned up when the trade closes", sym, e)
         logger.info("%s: stop moved to %.6g (%s)", sym, new_stop, kind)
         self.save()
 

@@ -383,26 +383,43 @@ class FakeExchange:
         return dict(order)
 
     def _conditional(self, p, sym, side, typ, trigger, cid, legacy):
+        close_pos = p.get("closePosition") == "true"
+        reduce = p.get("reduceOnly") == "true"
+        qty = p.get("quantity")
+        if close_pos and (reduce or qty):
+            raise ApiErr(-1106, "Parameter 'reduceOnly' or 'quantity' sent when not required.")
+        if not close_pos and not qty:
+            raise ApiErr(-1102, "Mandatory parameter 'quantity' was not sent, was empty/null, or malformed.")
+        if close_pos and any(o.get("closePosition") and o["side"] == side for o in self._open_conditionals(sym)):
+            # Binance allows only one closePosition stop/take-profit per direction.
+            raise ApiErr(-4130, "An open stop or take profit order with GTE and closePosition in the "
+                                "direction is existing.")
         price = self.prices[sym]
         if typ == "STOP_MARKET" and ((side == "SELL" and price <= trigger) or (side == "BUY" and price >= trigger)):
             raise ApiErr(-2021, "Order would immediately trigger.")
         if typ == "TAKE_PROFIT_MARKET" and ((side == "SELL" and price >= trigger) or (side == "BUY" and price <= trigger)):
             raise ApiErr(-2021, "Order would immediately trigger.")
-        close_pos = p.get("closePosition") == "true"
         if legacy:
             oid = self._next_oid()
             order = {"orderId": oid, "clientOrderId": cid, "symbol": sym, "side": side, "type": typ,
-                     "stopPrice": str(trigger), "closePosition": close_pos, "status": "NEW", "reduceOnly": True,
-                     "price": "0", "origQty": "0", "executedQty": "0", "avgPrice": "0"}
+                     "stopPrice": str(trigger), "closePosition": close_pos, "status": "NEW",
+                     "reduceOnly": reduce or close_pos, "price": "0", "origQty": qty or "0",
+                     "executedQty": "0", "avgPrice": "0"}
             self.orders[oid] = order
             return dict(order)
         self._aid += 1
         algo = {"algoId": self._aid, "clientAlgoId": cid, "algoType": "CONDITIONAL", "orderType": typ,
-                "symbol": sym, "side": side, "positionSide": "BOTH", "quantity": p.get("quantity", "0"),
-                "algoStatus": "NEW", "triggerPrice": str(trigger), "closePosition": close_pos,
+                "symbol": sym, "side": side, "positionSide": "BOTH", "quantity": qty or "0",
+                "reduceOnly": reduce, "algoStatus": "NEW", "triggerPrice": str(trigger), "closePosition": close_pos,
                 "workingType": p.get("workingType", "CONTRACT_PRICE")}
         self.algos[self._aid] = algo
         return dict(algo)
+
+    def _open_conditionals(self, sym):
+        algos = [a for a in self.algos.values() if a["symbol"] == sym and a["algoStatus"] == "NEW"]
+        legacy = [o for o in self.orders.values()
+                  if o["symbol"] == sym and o["status"] == "NEW" and o["type"] in CONDITIONAL]
+        return algos + legacy
 
     def _new_algo(self, p):
         if p.get("algoType") != "CONDITIONAL":
@@ -471,12 +488,14 @@ class FakeExchange:
                 o[status_key] = "FINISHED" if kind == "algo" else "FILLED"
                 amt = self.pos[sym][0]
                 if amt == 0 or (amt > 0) == (o["side"] == "BUY"):
-                    continue  # nothing to close
+                    continue  # nothing to close: a reduce-only / closePosition order can't open one
+                size = abs(amt) if o.get("closePosition") else min(
+                    float(o.get("quantity") or o.get("origQty") or 0), abs(amt))
                 mo = {"orderId": self._next_oid(), "clientOrderId": f"trig{o.get('clientAlgoId') or o.get('clientOrderId')}",
-                      "symbol": sym, "side": o["side"], "type": "MARKET", "origQty": str(abs(amt)), "status": "NEW",
-                      "reduceOnly": True, "price": "0", "stopPrice": "0", "closePosition": True}
+                      "symbol": sym, "side": o["side"], "type": "MARKET", "origQty": str(size), "status": "NEW",
+                      "reduceOnly": True, "price": "0", "stopPrice": "0", "closePosition": bool(o.get("closePosition"))}
                 self.orders[mo["orderId"]] = mo
-                self._market_fill(sym, o["side"], abs(amt), mo, price=trig)
+                self._market_fill(sym, o["side"], size, mo, price=trig)
         for o in list(self.orders.values()):
             if o["symbol"] != sym or o["status"] != "NEW" or o["type"] != "LIMIT":
                 continue

@@ -207,10 +207,11 @@ def test_stop_goes_to_algo_api_with_close_position_rounded_away():
     fake = FakeExchange()
     broker, _ = make_broker(fake)
     open_long(fake, broker)
-    ref = broker.place_stop("BTCUSDT", LONG, 98.999)
+    ref = broker.place_stop("BTCUSDT", LONG, 98.999, Decimal("1"))
     algo = fake.open_algos("BTCUSDT")[0]
     assert ref.kind == "algo" and algo["orderType"] == "STOP_MARKET" and algo["side"] == "SELL"
-    assert algo["triggerPrice"] == "98.99" and algo["closePosition"] is True
+    assert algo["triggerPrice"] == "98.99"
+    assert algo["reduceOnly"] is True and algo["quantity"] == "1" and algo["closePosition"] is False
     assert algo["workingType"] == "MARK_PRICE"
     fake.set_price("BTCUSDT", 98.5)
     assert fake.pos["BTCUSDT"][0] == 0  # stop closed the position
@@ -220,7 +221,7 @@ def test_stop_falls_back_to_classic_orders_on_older_servers():
     fake = FakeExchange(algo=False)
     broker, _ = make_broker(fake)
     open_long(fake, broker)
-    ref = broker.place_stop("BTCUSDT", LONG, 99.0)
+    ref = broker.place_stop("BTCUSDT", LONG, 99.0, Decimal("1"))
     assert ref.kind == "regular" and fake.open_regular("BTCUSDT")[0]["type"] == "STOP_MARKET"
     assert broker._cond_api == "legacy"
     assert [o.purpose for o in broker.open_orders("BTCUSDT")] == ["sl"]
@@ -231,7 +232,7 @@ def test_switches_to_algo_when_classic_endpoint_refuses_conditional_orders():
     broker, _ = make_broker(fake)
     broker._cond_api = "legacy"
     open_long(fake, broker)
-    ref = broker.place_stop("BTCUSDT", LONG, 99.0)
+    ref = broker.place_stop("BTCUSDT", LONG, 99.0, Decimal("1"))
     assert ref.kind == "algo" and broker._cond_api == "algo"
 
 
@@ -249,7 +250,7 @@ def test_cancel_all_clears_regular_and_algo_orders():
     fake = FakeExchange()
     broker, _ = make_broker(fake)
     open_long(fake, broker)
-    broker.place_stop("BTCUSDT", LONG, 99.0)
+    broker.place_stop("BTCUSDT", LONG, 99.0, Decimal("1"))
     broker.place_take_profit("BTCUSDT", LONG, 101.5, Decimal("1"))
     assert len(broker.open_orders("BTCUSDT")) == 2
     assert broker.cancel_all("BTCUSDT") == []
@@ -375,3 +376,39 @@ def test_fill_price_falls_back_to_position_entry_when_trades_are_missing():
     broker, _ = make_broker(fake)
     fill = broker.market_order("BTCUSDT", "BUY", Decimal("1"))
     assert fill.avg_price == pytest.approx(100.005)  # from positionRisk entryPrice
+
+
+def test_two_stops_can_coexist_while_moving_the_stop():
+    """Binance rejects a 2nd closePosition stop (-4130); reduce-only stops may overlap."""
+    fake = FakeExchange()
+    broker, _ = make_broker(fake)
+    open_long(fake, broker, "2")
+    first = broker.place_stop("BTCUSDT", LONG, 98.0, Decimal("2"))
+    second = broker.place_stop("BTCUSDT", LONG, 99.0, Decimal("2"))  # placed BEFORE the old one is cancelled
+    assert len(fake.open_algos("BTCUSDT")) == 2
+    broker.cancel("BTCUSDT", first)
+    assert [float(a["triggerPrice"]) for a in fake.open_algos("BTCUSDT")] == [99.0]
+    fake.set_price("BTCUSDT", 98.5)
+    assert fake.pos["BTCUSDT"][0] == 0
+    assert second.purpose == "sl"
+
+
+def test_fake_exchange_enforces_single_close_position_stop():
+    fake = FakeExchange()
+    fake.pos["BTCUSDT"] = [1.0, 100.0]
+    params = {"algoType": "CONDITIONAL", "symbol": "BTCUSDT", "side": "SELL", "type": "STOP_MARKET",
+              "triggerPrice": "98", "closePosition": "true"}
+    assert fake.handle("POST", "/fapi/v1/algoOrder", params).status_code == 200
+    second = fake.handle("POST", "/fapi/v1/algoOrder", dict(params, triggerPrice="99"))
+    assert second.status_code == 400 and second.json()["code"] == -4130
+
+
+def test_stop_quantity_never_exceeds_position_when_triggered():
+    fake = FakeExchange()
+    broker, _ = make_broker(fake)
+    open_long(fake, broker, "2")
+    broker.place_stop("BTCUSDT", LONG, 99.0, Decimal("2"))
+    fake.handle("POST", "/fapi/v1/order", {"symbol": "BTCUSDT", "side": "SELL", "type": "MARKET",
+                                           "quantity": "1.5", "reduceOnly": "true"})  # partial exit
+    fake.set_price("BTCUSDT", 98.5)
+    assert fake.pos["BTCUSDT"][0] == 0  # reduce-only closed the remaining 0.5, never flipped short

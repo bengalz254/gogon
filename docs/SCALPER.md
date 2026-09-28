@@ -19,7 +19,7 @@ dashboard lokal, dan notifikasi Telegram.
 
 | Masalah umum bot scalping | Cara bot ini menanganinya |
 |---|---|
-| Stop-loss hanya ada di memori bot. Kalau bot crash/internet putus, posisi tanpa pengaman. | Stop-loss dipasang **di exchange** (STOP_MARKET `closePosition`) begitu entry terisi. Kalau stop gagal dipasang, posisi **langsung ditutup**. |
+| Stop-loss hanya ada di memori bot. Kalau bot crash/internet putus, posisi tanpa pengaman. | Stop-loss dipasang **di exchange** (STOP_MARKET reduce-only seukuran posisi) begitu entry terisi. Kalau stop gagal dipasang, posisi **langsung ditutup**. |
 | Ukuran posisi berdasarkan leverage ("pakai 20x!"). | Ukuran posisi berdasarkan **risiko**: tiap trade maksimal rugi `risk_per_trade_pct` (default 0,5%) dari saldo, **fee & slippage sudah dihitung**. Leverage hanya menentukan margin yang terpakai. |
 | Fee memakan semua profit. | **Filter biaya**: setup dengan stop terlalu sempit dibanding biaya round-trip dilewati. |
 | Backtest terlalu indah (masuk di harga close, anggap TP kena duluan, lupa fee). | Backtest **jujur**: entry di open candle berikutnya + slippage; jika satu candle menyentuh stop *dan* target, dianggap **stop duluan**; fee taker/maker dan funding dihitung; hasil dipisah **in-sample vs out-of-sample**. |

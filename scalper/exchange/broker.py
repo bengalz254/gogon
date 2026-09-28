@@ -1,16 +1,22 @@
 """Live / testnet order execution on Binance USDⓈ-M futures.
 
 Protective orders live ON THE EXCHANGE, not in the bot's memory: the moment
-an entry fills, a STOP_MARKET `closePosition` stop-loss is placed, so the
-position stays protected even if the bot crashes, loses internet or the
-machine reboots.
+an entry fills, a reduce-only STOP_MARKET stop-loss for the full position size
+is placed, so the position stays protected even if the bot crashes, loses
+internet or the machine reboots.
+
+Why reduce-only with an explicit quantity instead of `closePosition`: Binance
+allows only ONE closePosition stop/take-profit per direction (error -4130).
+Moving a stop safely means placing the new one BEFORE cancelling the old one,
+so for a moment two stops must coexist. Reduce-only orders allow that, and
+they can never open or flip a position.
 
 Broker interface (shared with PaperBroker):
     prepare(symbols) -> list[str]
     balances() -> (wallet_balance, available_balance)
     positions() -> {symbol: PositionInfo}
     market_order(symbol, side, qty, reduce_only, client_id) -> Fill
-    place_stop(symbol, trade_side, stop_price, client_id) -> OrderRef
+    place_stop(symbol, trade_side, stop_price, qty, client_id) -> OrderRef
     place_take_profit(symbol, trade_side, price, qty, client_id) -> OrderRef
     cancel(symbol, ref) / cancel_all(symbol) / open_orders(symbol)
     close_position(symbol, position) -> Fill
@@ -288,7 +294,7 @@ class BinanceBroker:
         return None
 
     def _place_conditional(
-        self, symbol: str, side: str, order_type: str, trigger: Decimal, cid: str, purpose: str
+        self, symbol: str, side: str, order_type: str, trigger: Decimal, qty: Decimal, cid: str, purpose: str
     ) -> OrderRef:
         wt = self.exec.stop_working_type
 
@@ -299,7 +305,8 @@ class BinanceBroker:
                 side=side,
                 type=order_type,
                 triggerPrice=fmt_decimal(trigger),
-                closePosition="true",
+                quantity=fmt_decimal(qty),
+                reduceOnly="true",
                 workingType=wt,
                 clientAlgoId=cid,
             )
@@ -312,7 +319,8 @@ class BinanceBroker:
                 side=side,
                 type=order_type,
                 stopPrice=fmt_decimal(trigger),
-                closePosition="true",
+                quantity=fmt_decimal(qty),
+                reduceOnly="true",
                 workingType=wt,
                 newClientOrderId=cid,
             )
@@ -343,11 +351,19 @@ class BinanceBroker:
                 return found
             raise
 
-    def place_stop(self, symbol: str, trade_side: str, stop_price: float, client_id: str | None = None) -> OrderRef:
+    def place_stop(
+        self, symbol: str, trade_side: str, stop_price: float, qty: Decimal, client_id: str | None = None
+    ) -> OrderRef:
         rules = self.rules[symbol]
         trigger = rules.stop_price(stop_price, trade_side)
+        stop_qty = rules.qty(float(qty), market=True)
+        if stop_qty <= 0:
+            raise BrokerError(f"{symbol}: stop quantity {qty} rounds to zero")
+        if float(stop_qty) < float(qty) - float(rules.market_step_size):
+            logger.warning("%s: stop covers %s of %s (exchange max per order); the rest is unprotected",
+                           symbol, fmt_decimal(stop_qty), qty)
         return self._place_conditional(
-            symbol, close_side(trade_side), "STOP_MARKET", trigger, client_id or new_client_id("sl"), "sl"
+            symbol, close_side(trade_side), "STOP_MARKET", trigger, stop_qty, client_id or new_client_id("sl"), "sl"
         )
 
     def place_take_profit(
@@ -358,7 +374,9 @@ class BinanceBroker:
         cid = client_id or new_client_id("tp")
         side = close_side(trade_side)
         if self.exec.take_profit_order != "limit":
-            return self._place_conditional(symbol, side, "TAKE_PROFIT_MARKET", tp, cid, "tp")
+            return self._place_conditional(
+                symbol, side, "TAKE_PROFIT_MARKET", tp, rules.qty(float(qty), market=True), cid, "tp"
+            )
         limit_qty = rules.qty(float(qty), market=False)
         try:
             resp = self.client.new_order(
