@@ -5,6 +5,7 @@
   optimize    small parameter grid on in-sample data, validated out-of-sample
   download    only download / refresh the candle cache
   check       pre-flight checks: config, connectivity, keys, account settings, sizing
+  selftest    open + protect + close one tiny TESTNET position to verify the exchange API
   status      show open trades, risk state and journal stats from the state file
   reset-risk  clear a drawdown halt / cooldowns (after you've reviewed why it stopped)
   dashboard   local web dashboard of trades and equity
@@ -504,6 +505,54 @@ def cmd_check(args) -> int:
     return 0 if not failures else 1
 
 
+def cmd_selftest(args) -> int:
+    from scalper.config import LIVE_FAPI_URL
+    from scalper.engine import MarketData
+    from scalper.exchange import BinanceAPIError, BinanceBroker, BinanceFuturesClient, BrokerError, parse_symbol_rules
+    from scalper.selftest import run_selftest
+
+    settings = _load(args, mode="testnet")
+    setup_logging(settings.log_dir)
+    creds = settings.credentials
+    if creds.base_url.rstrip("/") == LIVE_FAPI_URL:
+        print("Refusing: the self-test only runs against the TESTNET, but BINANCE_TESTNET_FAPI_URL "
+              "points at the live exchange.")
+        return 1
+    symbol = (args.symbol or settings.symbols[0]).upper()
+    lock = InstanceLock(_paths(settings)["lock"])
+    if not lock.acquire():
+        print("The testnet bot is running. Stop it first (the self-test would interfere with it).")
+        return 1
+    try:
+        print(f"Self-test on TESTNET ({creds.base_url}), symbol {symbol}. Real testnet orders, fake money.")
+        client = BinanceFuturesClient(creds.base_url, creds.api_key, creds.api_secret,
+                                      recv_window=settings.execution.recv_window_ms)
+        client.sync_time()
+        rules = parse_symbol_rules(client.exchange_info(), [symbol])
+        broker = BinanceBroker(client, settings, rules)
+        for w in broker.prepare([symbol]):
+            print(f"  [note] {w}")
+        steps = run_selftest(broker, MarketData(client, settings.timeframe), rules, symbol)
+    except (BrokerError, BinanceAPIError, ValueError) as e:
+        print(f"  [FAIL] {e}")
+        if isinstance(e, BinanceAPIError) and e.code in (-2014, -2015, -1022):
+            print("  Check BINANCE_TESTNET_API_KEY / BINANCE_TESTNET_API_SECRET (testnet keys, not live keys).")
+        return 1
+    finally:
+        lock.release()
+
+    failed = [st for st in steps if not st.ok]
+    if not failed:
+        print(f"\nRESULT: all {len(steps)} checks passed. The bot can trade on this exchange.")
+        print("Next: python -m scalper run --mode testnet")
+        return 0
+    print(f"\nRESULT: {len(failed)} check(s) failed: {', '.join(st.name for st in failed)}. Nothing was left open.")
+    if any("stop" in st.name or "unexpected" in st.name for st in failed):
+        print('Hint: set execution.conditional_order_api to "legacy" (or "algo") in config/scalper.yaml '
+              "and run the self-test again.")
+    return 1
+
+
 def cmd_status(args) -> int:
     from scalper.journal import StateStore, TradeJournal
     from scalper.risk import RiskGuard
@@ -617,6 +666,10 @@ def build_parser() -> argparse.ArgumentParser:
     c = sub.add_parser("check", help="pre-flight checks")
     c.add_argument("--mode", choices=["paper", "testnet", "live"])
     c.set_defaults(func=cmd_check)
+
+    st = sub.add_parser("selftest", help="test the full order lifecycle once on the TESTNET")
+    st.add_argument("--symbol", help="symbol to test with (default: first configured symbol)")
+    st.set_defaults(func=cmd_selftest)
 
     s = sub.add_parser("status", help="show state and journal stats")
     s.add_argument("--mode", choices=["paper", "testnet", "live"])

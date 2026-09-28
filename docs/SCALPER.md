@@ -159,11 +159,29 @@ sebabnya hasil beberapa minggu tidak bisa dipakai untuk menilai bot mana pun.
 
 ### 3. Testnet (uang mainan, order sungguhan)
 
-1. Buat akun & API key di <https://testnet.binancefuture.com>.
-2. Isi `BINANCE_TESTNET_API_KEY` dan `BINANCE_TESTNET_API_SECRET` di `.env`.
-3. `SCALPER_MODE=testnet` lalu `python -m scalper check` dan `python -m scalper run`.
+1. Buat akun & API key (HMAC) di <https://testnet.binancefuture.com>.
+   Kalau situs itu mengarahkan ke **Binance Demo Trading**, buat API key di
+   Demo Trading dan tambahkan `BINANCE_TESTNET_FAPI_URL=https://demo-fapi.binance.com`
+   ke `.env`.
+2. Isi `BINANCE_TESTNET_API_KEY` dan `BINANCE_TESTNET_API_SECRET` di `.env`
+   (key testnet, **bukan** key akun Binance asli).
+3. Jalankan berurutan:
 
-Tujuannya memastikan eksekusi order benar: entry terisi, stop-loss & take-profit
+   ```bash
+   python -m scalper check --mode testnet      # koneksi, key, mode akun
+   python -m scalper selftest                  # uji siklus order lengkap (~30 detik)
+   python -m scalper run --mode testnet        # jalankan bot
+   ```
+
+`selftest` membuka posisi **sekecil mungkin**, lalu menguji semua yang
+dibutuhkan bot: stop-loss diterima exchange, take-profit reduce-only, stop bisa
+dipindah (seperti breakeven), posisi bisa ditutup, tidak ada order tertinggal,
+dan data fill bisa dibaca untuk menghitung P&L. Ia selalu membersihkan posisinya
+sendiri, bahkan kalau ada langkah yang gagal, dan menolak berjalan di akun live.
+Tanpa ini, bisa berjam-jam sampai sinyal pertama muncul sebelum kamu tahu
+apakah eksekusinya bekerja.
+
+Setelah bot jalan, cek di UI testnet: entry terisi, stop-loss & take-profit
 muncul di tab *Open Orders*, stop pindah ke breakeven, dsb. Catatan: harga
 testnet terpisah dari pasar asli dan sering aneh, jadi **jangan menilai
 profitabilitas dari testnet**.
@@ -191,6 +209,7 @@ yang tidak ia kenal. Karena itu sub-account sangat disarankan.
 |---|---|
 | `python -m scalper run [--mode paper\|testnet\|live]` | Menjalankan bot |
 | `python -m scalper check` | Cek konfigurasi, koneksi, izin API key, mode akun, dan preview ukuran posisi |
+| `python -m scalper selftest` | **Testnet saja**: buka-lindungi-tutup satu posisi kecil untuk memastikan API order Binance bekerja |
 | `python -m scalper backtest` | Backtest (`--days`, `--symbols`, `--timeframe`, `--strategy`, `--csv`, `--balance`) |
 | `python -m scalper optimize` | Grid parameter kecil + validasi out-of-sample |
 | `python -m scalper download` | Hanya mengunduh/menyegarkan cache candle |
@@ -281,7 +300,7 @@ dengan exchange.
 | Error `-2015` / `-1022` / `-2014` | Key/secret salah, Futures belum dicentang di API key, IP tidak di-whitelist, atau key testnet dipakai di mode live (dan sebaliknya). |
 | Error `-1021` (timestamp) | Jam komputer tidak sinkron. Bot sudah mengoreksi otomatis; aktifkan sinkronisasi waktu otomatis di OS. |
 | HTTP 451 / "restricted location" | Binance memblokir wilayah server/VPS-mu. Pakai VPS di region lain. |
-| "stop-loss could not be placed" | Bot menutup posisi demi keamanan. Kalau berulang, coba `execution.conditional_order_api: legacy` (atau `algo`), lalu uji di testnet. |
+| "stop-loss could not be placed" | Bot menutup posisi demi keamanan. Kalau berulang, coba `execution.conditional_order_api: legacy` (atau `algo`), lalu ulangi `python -m scalper selftest`. |
 | Bot tidak pernah entry | Normal di pasar sepi: lihat `python -m scalper check` (baris "fee filter") dan log `signal skipped`. Jangan buru-buru melonggarkan filter — backtest dulu. |
 | `below exchange minimum` | Saldo terlalu kecil untuk minimum notional simbol itu (BTCUSDT biasanya 100 USDT) pada risk yang dipakai. Tambah saldo atau pilih simbol lain. |
 | `Another scalper instance is already running` | Ada bot lain yang jalan di mode yang sama. Hentikan dulu. |
