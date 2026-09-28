@@ -178,7 +178,10 @@ refresh(); setInterval(refresh, 5000);
 </script></body></html>"""
 
 
-def serve(settings: Settings, port: int = 8766, open_browser: bool = True) -> None:
+DEFAULT_PORT = 8777  # 8765/8766 are often taken by other bots' dashboards
+
+
+def serve(settings: Settings, port: int = DEFAULT_PORT, open_browser: bool = True) -> None:
     d = settings.data_dir
     journal_path = os.path.join(d, f"trades_{settings.mode}.csv")
     state_path = os.path.join(d, f"state_{settings.mode}.json")
@@ -203,7 +206,13 @@ def serve(settings: Settings, port: int = 8766, open_browser: bool = True) -> No
             else:
                 self._send(PAGE.encode(), "text/html; charset=utf-8")
 
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    except OSError as e:
+        raise SystemExit(
+            f"Cannot open the dashboard on port {port} ({e}). Another program, e.g. another bot's "
+            f"dashboard, is probably using it. Try: python -m scalper dashboard --port {port + 1}"
+        ) from e
     url = f"http://127.0.0.1:{port}"
     print(f"Dashboard: {url}  (Ctrl+C to stop)")
     if open_browser:

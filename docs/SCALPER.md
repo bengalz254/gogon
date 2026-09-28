@@ -144,7 +144,7 @@ Tidak perlu API key. Harga live, eksekusi simulasi.
 ```bash
 python -m scalper check          # cek konfigurasi & koneksi
 python -m scalper run            # SCALPER_MODE=paper (default)
-python -m scalper dashboard      # di terminal lain: http://127.0.0.1:8766
+python -m scalper dashboard      # di terminal lain: http://127.0.0.1:8777
 ```
 
 Bandingkan hasil paper dengan backtest. Kalau jauh berbeda, cari tahu kenapa
@@ -296,22 +296,29 @@ Tokyo, atau Eropa), **jangan region Amerika Serikat**.
    diketik di VPS dan secret tidak tampil), menjalankan `check`, lalu memasang
    dua service systemd:
    * `scalper`: bot-nya, hidup lagi otomatis setelah crash atau VPS reboot;
-   * `scalper-dashboard`: dashboard di `127.0.0.1:8766`, hanya bisa diakses
-     dari VPS itu sendiri, tidak terbuka ke internet.
+   * `scalper-dashboard`: dashboard di `127.0.0.1:8777`, hanya bisa diakses
+     dari VPS itu sendiri, tidak terbuka ke internet. Kalau port itu sudah
+     dipakai program lain (misalnya dashboard bot lain di VPS yang sama),
+     skrip memilih port kosong berikutnya.
+
+   Di akhir, skrip mencetak perintah tunnel untuk dashboard, lengkap dengan
+   IP dan port yang benar.
 
    Kalau bot restart, ia melanjutkan dari state terakhir dan merekonsiliasi
    dengan exchange.
 
 ### Dashboard dari PC (SSH tunnel)
 
-Di PC (PowerShell), jalankan lalu biarkan jendelanya terbuka:
+Di PC (PowerShell), jalankan perintah tunnel yang dicetak skrip (biasanya
+seperti di bawah), lalu biarkan jendelanya terbuka:
 
 ```powershell
-ssh -N -L 8766:127.0.0.1:8766 USER@IP-VPS
+ssh -N -L 8777:127.0.0.1:8777 USER@IP-VPS
 ```
 
-Lalu buka <http://127.0.0.1:8766> di browser PC. Jendela itu memang terlihat
-"diam"; itu normal. Tutup jendelanya kalau sudah selesai melihat dashboard.
+Lalu buka <http://127.0.0.1:8777> di browser PC; judul halamannya
+"Scalper Dashboard". Jendela PowerShell itu memang terlihat "diam", dan itu
+normal. Tutup jendelanya kalau sudah selesai melihat dashboard.
 
 ### Perintah di VPS
 
@@ -350,7 +357,8 @@ whether user is logged on or not") yang menjalankan
 | Bot tidak pernah entry | Normal di pasar sepi: lihat `python -m scalper check` (baris "fee filter") dan log `signal skipped`. Jangan buru-buru melonggarkan filter — backtest dulu. |
 | `below exchange minimum` | Saldo terlalu kecil untuk minimum notional simbol itu (BTCUSDT biasanya 100 USDT) pada risk yang dipakai. Tambah saldo atau pilih simbol lain. |
 | `Another scalper instance is already running` | Ada bot lain yang jalan di mode yang sama. Hentikan dulu. |
-| `Address already in use` saat `ssh -L` | Port 8766 di PC masih dipakai (dashboard lokal masih jalan). Tutup dulu, atau pakai port lain: `ssh -N -L 8767:127.0.0.1:8766 USER@IP-VPS` lalu buka http://127.0.0.1:8767. |
+| `Address already in use` saat `ssh -L` | Port itu di PC sudah dipakai (misalnya dashboard lokal atau tunnel bot lain). Tutup dulu, atau pakai port PC lain: `ssh -N -L 8790:127.0.0.1:8777 USER@IP-VPS` lalu buka http://127.0.0.1:8790. |
+| Browser menampilkan dashboard **bot lain** | Port-nya dipakai dashboard bot lain. Jalankan ulang `bash deploy/setup_vps.sh`: skrip memilih port kosong dan mencetak perintah tunnel yang benar. |
 
 ---
 

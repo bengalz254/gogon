@@ -11,15 +11,16 @@
 #   4. menjalankan "python -m scalper check"; berhenti kalau ada [FAIL]
 #   5. memasang dan menyalakan dua service systemd:
 #        scalper            bot-nya; hidup lagi otomatis setelah crash / reboot
-#        scalper-dashboard  dashboard di 127.0.0.1:8766, dibuka dari PC lewat SSH tunnel
+#        scalper-dashboard  dashboard di 127.0.0.1:8777 (atau port kosong berikutnya kalau
+#                           dipakai program lain), dibuka dari PC lewat SSH tunnel
 #
 # Aman dijalankan ulang, misalnya untuk update:  git pull && bash deploy/setup_vps.sh
 # .env dan data trading (data/scalper/) tidak pernah diubah oleh skrip ini.
 set -euo pipefail
 
-PORT="${SCALPER_DASHBOARD_PORT:-8766}"
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_USER="$(id -un)"
+UNIT_DIR="${SCALPER_UNIT_DIR:-/etc/systemd/system}"
 
 say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 fail() { printf '\n\033[1;31mGAGAL: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -40,7 +41,7 @@ command -v systemctl >/dev/null 2>&1 || fail "systemd tidak ditemukan. Skrip ini
 
 # Jangan pernah menimpa service milik program lain dengan nama yang sama.
 for unit in scalper scalper-dashboard; do
-  f="/etc/systemd/system/$unit.service"
+  f="$UNIT_DIR/$unit.service"
   if [ -f "$f" ] && ! grep -qxF "WorkingDirectory=$APP_DIR" "$f"; then
     fail "$f sudah ada dan menunjuk ke folder lain. Tidak ditimpa; periksa dulu isinya (cat $f)."
   fi
@@ -114,7 +115,32 @@ MODE="$(venv/bin/python -c 'from scalper.config import load_settings; print(load
 # ---------------------------------------------------------------------------
 say "5/5 Service 24/7"
 PYBIN="$APP_DIR/venv/bin/python"
-$SUDO tee /etc/systemd/system/scalper.service >/dev/null <<EOF
+S="${SUDO:+sudo }"
+
+# Port dashboard. Bot lain di VPS ini bisa saja sudah memakai port yang sama
+# untuk dashboard-nya, jadi pilih port yang benar-benar kosong.
+listening() {
+  local out
+  out="$(ss -ltn 2>/dev/null || true)"
+  printf '%s\n' "$out" | awk -v p="$1" '{ n = split($4, a, ":"); if (a[n] == p) f = 1 } END { exit !f }'
+}
+OLD_PORT=""
+if [ -f "$UNIT_DIR/scalper-dashboard.service" ]; then
+  OLD_PORT="$(sed -n 's/.*--port \([0-9][0-9]*\).*/\1/p' "$UNIT_DIR/scalper-dashboard.service" | head -n 1)"
+fi
+$SUDO systemctl stop scalper-dashboard.service >/dev/null 2>&1 || true
+ports=()
+if [ -n "${SCALPER_DASHBOARD_PORT:-}" ]; then ports+=("$SCALPER_DASHBOARD_PORT"); fi
+if [ -n "$OLD_PORT" ]; then ports+=("$OLD_PORT"); fi
+for p in $(seq 8777 8799); do ports+=("$p"); done
+PORT=""
+for p in "${ports[@]}"; do
+  if ! listening "$p"; then PORT="$p"; break; fi
+  echo "Port $p sudah dipakai program lain (misalnya dashboard bot lain); mencari port lain."
+done
+[ -n "$PORT" ] || fail "tidak menemukan port kosong untuk dashboard (8777-8799)"
+
+$SUDO tee "$UNIT_DIR/scalper.service" >/dev/null <<EOF
 [Unit]
 Description=Scalper bot Binance USD-M futures ($APP_DIR)
 After=network-online.target
@@ -139,7 +165,7 @@ RestartPreventExitStatus=2
 WantedBy=multi-user.target
 EOF
 
-$SUDO tee /etc/systemd/system/scalper-dashboard.service >/dev/null <<EOF
+$SUDO tee "$UNIT_DIR/scalper-dashboard.service" >/dev/null <<EOF
 [Unit]
 Description=Scalper dashboard (127.0.0.1:$PORT, buka lewat SSH tunnel)
 After=network.target
@@ -173,7 +199,6 @@ for _ in $(seq 1 60); do
   [ "$(systemctl is-active scalper.service 2>/dev/null || true)" = "active" ] || break
 done
 echo
-S="${SUDO:+sudo }"
 if [ -z "$started" ]; then
   $SUDO journalctl -u scalper.service --since "$since" --no-pager -n 40 || true
   if [ "$(systemctl is-active scalper.service 2>/dev/null || true)" = "active" ]; then
@@ -182,6 +207,16 @@ if [ -z "$started" ]; then
   fi
   fail "bot belum berhasil start; lihat log di atas (service mencoba lagi tiap 30 detik).
 Setelah penyebabnya diperbaiki, jalankan lagi: bash deploy/setup_vps.sh"
+fi
+
+dash_ok=""
+for _ in $(seq 1 15); do
+  if systemctl is-active --quiet scalper-dashboard.service && listening "$PORT"; then dash_ok=1; break; fi
+  sleep 1
+done
+if [ -z "$dash_ok" ]; then
+  $SUDO journalctl -u scalper-dashboard.service --since "$since" --no-pager -n 15 || true
+  echo "PERINGATAN: dashboard belum jalan (bot tetap jalan normal). Penyebabnya ada di log di atas."
 fi
 
 # SSH_CONNECTION = "ip-klien port-klien ip-vps port-ssh": isi otomatis perintah tunnel
@@ -207,7 +242,8 @@ Di VPS:
   cd $APP_DIR && git pull && bash deploy/setup_vps.sh
                                       update bot
 
-Dashboard, dari PC (PowerShell):
+Dashboard scalper, dari PC (PowerShell):
   ssh -N ${SSH_PORT_OPT}-L $PORT:127.0.0.1:$PORT $RUN_USER@$IP
   Biarkan jendela itu terbuka, lalu buka http://127.0.0.1:$PORT di browser PC.
+  Judul halamannya "Scalper Dashboard".
 EOF

@@ -636,6 +636,8 @@ def cmd_dashboard(args) -> int:
 # entry point
 # ---------------------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
+    from scalper.dashboard import DEFAULT_PORT as DEFAULT_DASHBOARD_PORT
+
     p = argparse.ArgumentParser(prog="python -m scalper", description="Binance USDⓈ-M futures scalping bot")
     p.add_argument("--config", help="path to YAML config (default config/scalper.yaml)")
     p.add_argument("--version", action="version", version=__version__)
@@ -685,7 +687,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     d = sub.add_parser("dashboard", help="local web dashboard")
     d.add_argument("--mode", choices=["paper", "testnet", "live"])
-    d.add_argument("--port", type=int, default=8766)
+    d.add_argument("--port", type=int, default=DEFAULT_DASHBOARD_PORT)
     d.add_argument("--no-browser", action="store_true")
     d.add_argument("--demo", action="store_true",
                    help="preview the dashboard with demo trades on synthetic prices")

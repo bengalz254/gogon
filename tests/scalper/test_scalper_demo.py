@@ -1,8 +1,11 @@
+import os
+import socket
+
 import pytest
 
 from scalper.cli import build_parser
 from scalper.config import Settings
-from scalper.dashboard import PAGE, build_summary
+from scalper.dashboard import PAGE, build_summary, serve
 from scalper.demo import synthetic_candles, write_demo_data
 from scalper.journal import StateStore, TradeJournal
 
@@ -47,6 +50,18 @@ def test_dashboard_shows_live_balance_before_first_trade():
     summary = build_summary([], state, "testnet")
     assert summary["balance"] == 4987.25
     assert summary["trades"] == 0 and summary["win_rate"] is None  # shown as "-", not "0.0%"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows lets a second socket share the port")
+def test_dashboard_explains_a_port_taken_by_another_program(tmp_path):
+    s = Settings()
+    s.data_dir = str(tmp_path)
+    with socket.socket() as other:  # e.g. another bot's dashboard
+        other.bind(("127.0.0.1", 0))
+        other.listen(1)
+        port = other.getsockname()[1]
+        with pytest.raises(SystemExit, match=f"port {port}.*--port {port + 1}"):
+            serve(s, port=port, open_browser=False)
 
 
 def test_dashboard_flags_demo_mode():
