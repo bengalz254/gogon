@@ -12,8 +12,9 @@ SHORTCUT = os.path.join(ROOT, "deploy", "scalper_dashboard.bat")
 
 
 @pytest.mark.skipif(os.name == "nt" or shutil.which("bash") is None, reason="needs a Linux bash")
-def test_vps_setup_script_is_valid_bash():
-    subprocess.run(["bash", "-n", SCRIPT], check=True)
+@pytest.mark.parametrize("name", ["setup_vps.sh", "health.sh"])
+def test_vps_scripts_are_valid_bash(name):
+    subprocess.run(["bash", "-n", os.path.join(ROOT, "deploy", name)], check=True)
 
 
 def test_vps_service_stops_the_bot_gracefully():

@@ -338,6 +338,7 @@ dashboard. Password tidak pernah disimpan.
 
 | Perintah | Fungsi |
 |---|---|
+| `cd ~/scalper-bot && bash deploy/health.sh` | Cek kesehatan: service, error 24 jam terakhir, saldo & risiko, koneksi exchange, jam/disk/RAM VPS. Hanya membaca; ditutup dengan kesimpulan |
 | `sudo journalctl -u scalper -f` | Log langsung (Ctrl+C = keluar, bot tetap jalan) |
 | `cd ~/scalper-bot && venv/bin/python -m scalper status` | Posisi, saldo, P&L |
 | `sudo systemctl stop scalper` / `start` / `restart` | Hentikan / nyalakan / restart bot |

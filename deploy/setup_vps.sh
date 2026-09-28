@@ -235,8 +235,8 @@ cat <<EOF
 
 Di VPS:
   ${S}journalctl -u scalper -f        log langsung (Ctrl+C = keluar, bot TETAP jalan)
-  cd $APP_DIR && venv/bin/python -m scalper status
-                                      posisi, saldo & P&L
+  cd $APP_DIR && bash deploy/health.sh
+                                      cek kesehatan bot (service, error, saldo, koneksi)
   ${S}systemctl stop scalper          hentikan bot
   ${S}systemctl start scalper         nyalakan lagi
   cd $APP_DIR && git pull && bash deploy/setup_vps.sh
