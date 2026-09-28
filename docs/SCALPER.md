@@ -265,30 +265,76 @@ peringatan (stop hilang, limit harian), dan heartbeat tiap jam.
 
 ## Menjalankan 24/7 (VPS)
 
-Bot scalping harus jalan terus. Pakai VPS Linux kecil (1 vCPU / 1 GB cukup)
-di region yang tidak diblokir Binance, dengan sinkronisasi jam aktif
-(`timedatectl set-ntp true`). Contoh service systemd
-(`/etc/systemd/system/scalper.service`):
+Bot scalping harus jalan terus. VPS lebih cocok daripada PC: selalu menyala,
+jam tersinkron, koneksi stabil, dan IP tetap (dibutuhkan untuk whitelist IP
+API key live). VPS Linux kecil sudah cukup (1 vCPU / 1 GB RAM, Ubuntu 22.04
+atau 24.04). Pilih region yang tidak diblokir Binance (misalnya Singapura,
+Tokyo, atau Eropa), **jangan region Amerika Serikat**.
 
-```ini
-[Unit]
-Description=Binance scalper
-After=network-online.target
+### Pindah dari PC ke VPS
 
-[Service]
-WorkingDirectory=/home/ubuntu/gogon
-ExecStart=/home/ubuntu/gogon/venv/bin/python -m scalper run --yes
-Restart=on-failure
-RestartSec=30
-KillSignal=SIGINT
+1. **Hentikan bot dan dashboard di PC** (Ctrl+C). Jangan pernah menjalankan
+   dua bot di akun yang sama.
+2. Di VPS (lewat SSH), unduh kode ke folder `scalper-bot`:
+   `git clone -b <branch> <url-repo> scalper-bot`
+3. Dari PC (PowerShell), salin `.env` dan folder `data` (state posisi terbuka
+   dan jurnal trade) ke VPS, supaya bot di VPS melanjutkan persis dari PC:
 
-[Install]
-WantedBy=multi-user.target
+   ```powershell
+   scp <folder-bot-di-PC>\.env USER@IP-VPS:scalper-bot/
+   scp -r <folder-bot-di-PC>\data USER@IP-VPS:scalper-bot/
+   ```
+
+4. Di VPS jalankan skrip instalasi:
+
+   ```bash
+   cd ~/scalper-bot
+   bash deploy/setup_vps.sh
+   ```
+
+   Skrip ini memasang Python dan paket, membuat `.env` kalau belum ada (key
+   diketik di VPS dan secret tidak tampil), menjalankan `check`, lalu memasang
+   dua service systemd:
+   * `scalper`: bot-nya, hidup lagi otomatis setelah crash atau VPS reboot;
+   * `scalper-dashboard`: dashboard di `127.0.0.1:8766`, hanya bisa diakses
+     dari VPS itu sendiri, tidak terbuka ke internet.
+
+   Kalau bot restart, ia melanjutkan dari state terakhir dan merekonsiliasi
+   dengan exchange.
+
+### Dashboard dari PC (SSH tunnel)
+
+Di PC (PowerShell), jalankan lalu biarkan jendelanya terbuka:
+
+```powershell
+ssh -N -L 8766:127.0.0.1:8766 USER@IP-VPS
 ```
 
-`sudo systemctl enable --now scalper` lalu `journalctl -u scalper -f` untuk log.
-Kalau bot restart, ia melanjutkan dari state terakhir dan merekonsiliasi
-dengan exchange.
+Lalu buka <http://127.0.0.1:8766> di browser PC. Jendela itu memang terlihat
+"diam"; itu normal. Tutup jendelanya kalau sudah selesai melihat dashboard.
+
+### Perintah di VPS
+
+| Perintah | Fungsi |
+|---|---|
+| `sudo journalctl -u scalper -f` | Log langsung (Ctrl+C = keluar, bot tetap jalan) |
+| `cd ~/scalper-bot && venv/bin/python -m scalper status` | Posisi, saldo, P&L |
+| `sudo systemctl stop scalper` / `start` / `restart` | Hentikan / nyalakan / restart bot |
+| `cd ~/scalper-bot && git pull && bash deploy/setup_vps.sh` | Update bot ke versi terbaru |
+
+Menguji ulang siklus order dari VPS (opsional, testnet): hentikan bot dulu
+(`sudo systemctl stop scalper`), jalankan `venv/bin/python -m scalper selftest`,
+lalu `sudo systemctl start scalper`.
+
+### VPS Windows
+
+Langkahnya sama dengan di PC: pasang Python dan Git, `git clone`, buat
+`venv`, `python -m pip install -r requirements-scalper.txt`, salin `.env` dan
+`data`, lalu `python -m scalper run`. Agar bot menyala lagi setelah VPS
+restart, buat tugas di *Task Scheduler* (trigger "At startup", pilih "Run
+whether user is logged on or not") yang menjalankan
+`venv\Scripts\python.exe -m scalper run --yes` dengan folder bot sebagai
+*Start in*.
 
 ---
 
@@ -304,6 +350,7 @@ dengan exchange.
 | Bot tidak pernah entry | Normal di pasar sepi: lihat `python -m scalper check` (baris "fee filter") dan log `signal skipped`. Jangan buru-buru melonggarkan filter — backtest dulu. |
 | `below exchange minimum` | Saldo terlalu kecil untuk minimum notional simbol itu (BTCUSDT biasanya 100 USDT) pada risk yang dipakai. Tambah saldo atau pilih simbol lain. |
 | `Another scalper instance is already running` | Ada bot lain yang jalan di mode yang sama. Hentikan dulu. |
+| `Address already in use` saat `ssh -L` | Port 8766 di PC masih dipakai (dashboard lokal masih jalan). Tutup dulu, atau pakai port lain: `ssh -N -L 8767:127.0.0.1:8766 USER@IP-VPS` lalu buka http://127.0.0.1:8767. |
 
 ---
 
@@ -322,9 +369,13 @@ dengan exchange.
 
 ## Batasan yang perlu kamu tahu
 
-* Kode ini dikembangkan dan diuji terhadap **simulasi** API Binance (120+ tes),
-  bukan akun Binance sungguhan — lingkungan pengembangannya tidak punya akses
-  ke server Binance. Karena itu **testnet adalah langkah wajib** sebelum live.
+* Kode ini diuji dengan 150+ tes otomatis terhadap simulasi API Binance, dan
+  `selftest` sudah lulus di **Binance Futures testnet sungguhan** (September
+  2026). Uji testnet itu menemukan dua perilaku yang tidak dijelaskan di
+  dokumentasi Binance: respons order MARKET bisa melaporkan harga fill 0, dan
+  hanya boleh ada satu stop `closePosition` per arah. Keduanya sudah ditangani.
+  Tetap jalankan di testnet 1–2 minggu sebelum live, karena pasar sungguhan
+  bisa memunculkan kasus yang belum teruji.
 * Order kondisional (stop-loss) memakai **Algo Order API** Binance
   (`/fapi/v1/algoOrder`) dengan fallback otomatis ke endpoint lama. Kalau
   Binance mengubah API lagi, bot akan gagal memasang stop dan **menutup

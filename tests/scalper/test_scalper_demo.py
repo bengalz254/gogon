@@ -42,6 +42,13 @@ def test_synthetic_market_has_no_built_in_trend():
     assert abs(mean) < 0.0001  # driftless: no hidden edge for a trend follower
 
 
+def test_dashboard_shows_live_balance_before_first_trade():
+    state = {"mode": "testnet", "account": {"balance": 4987.25, "available": 4990.0, "at": "2026-09-28 10:00:00"}}
+    summary = build_summary([], state, "testnet")
+    assert summary["balance"] == 4987.25
+    assert summary["trades"] == 0 and summary["win_rate"] is None  # shown as "-", not "0.0%"
+
+
 def test_dashboard_flags_demo_mode():
     assert "--demo" in build_parser().format_help() or build_parser().parse_args(["dashboard", "--demo"]).demo
     assert 'id="demo"' in PAGE and "bukan hasil trading" in PAGE

@@ -50,8 +50,11 @@ def build_summary(rows: list[dict], state: dict, mode: str) -> dict:
             "bars": t.get("bars_held"),
         })
     balance = None
+    account = state.get("account") or {}
     if "paper" in state:
         balance = state["paper"].get("balance")
+    elif account.get("balance") is not None:
+        balance = account["balance"]  # testnet/live wallet, refreshed by the bot
     elif rows:
         try:
             balance = float(rows[-1].get("equity_after") or "nan")
@@ -64,7 +67,7 @@ def build_summary(rows: list[dict], state: dict, mode: str) -> dict:
         "balance": balance,
         "trades": len(nets),
         "net": sum(nets),
-        "win_rate": len(wins) / len(nets) * 100 if nets else 0.0,
+        "win_rate": len(wins) / len(nets) * 100 if nets else None,
         "profit_factor": None if pf is None else ("inf" if math.isinf(pf) else round(pf, 3)),
         "max_dd": dd,
         "fees": sum(float(r.get("fees") or 0) for r in rows),
@@ -158,7 +161,7 @@ async function refresh() {
     setVal('k-net', signed(d.net), d.net > 0 ? 'good' : d.net < 0 ? 'bad' : '');
     setVal('k-today', signed(d.today), d.today > 0 ? 'good' : d.today < 0 ? 'bad' : '');
     $('k-today-label').textContent = `Hari ini (${d.trades_today} trade)`;
-    setVal('k-win', num(d.win_rate, 1) + '%');
+    setVal('k-win', d.win_rate === null ? '-' : num(d.win_rate, 1) + '%');
     setVal('k-pf', d.profit_factor === null ? '-' : String(d.profit_factor));
     setVal('k-dd', d.max_dd > 0 ? '-' + num(d.max_dd) : num(0), d.max_dd > 0 ? 'bad' : '');
     setVal('k-fee', num(d.fees));

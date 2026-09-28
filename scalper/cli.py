@@ -575,8 +575,12 @@ def cmd_status(args) -> int:
             tr = Trade.from_dict(t)
             print(f"  OPEN {sym} {tr.side} {tr.qty:g} @ {tr.entry_price:.6g} | stop {tr.stop:.6g} ({tr.stop_kind}) "
                   f"| target {tr.take_profit:.6g} | {tr.bars_held} bars")
+        account = state.get("account") or {}
         if "paper" in state:
             print(f"  paper balance: {state['paper'].get('balance', 0):.2f}")
+        elif account.get("balance") is not None:
+            print(f"  wallet balance: {account['balance']:.2f} (available {account.get('available', 0):.2f}, "
+                  f"read {account.get('at')} UTC)")
     rows = TradeJournal(paths["journal"]).read() if os.path.exists(paths["journal"]) else []
     if rows:
         nets = [float(r["net_pnl"]) for r in rows]

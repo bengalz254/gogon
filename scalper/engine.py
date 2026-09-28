@@ -36,6 +36,7 @@ from scalper.trade import Trade, gross_pnl, manage_trade, new_trade_id, targets_
 logger = logging.getLogger("scalper.engine")
 
 STATE_VERSION = 1
+BALANCE_REFRESH_SECONDS = 300
 
 
 class MarketData:
@@ -94,8 +95,10 @@ class Engine:
         self.last_close: dict[str, float] = {}
         self.pending_entry: dict[str, dict] = {}
         self._orphan_warned: set[str] = set()
+        self.account: dict = {}
         self._last_pos_check = 0
         self._last_order_check = 0
+        self._last_balance_check = 0
         self._last_heartbeat = 0
         self._halt_notified = ""
         self._stop = False
@@ -115,6 +118,7 @@ class Engine:
             "trades": {s: t.to_dict() for s, t in self.trades.items()},
             "last_candle": self.last_candle,
             "pending_entry": self.pending_entry,
+            "account": self.account,
         }
         if hasattr(self.broker, "to_dict"):
             data["paper"] = self.broker.to_dict()
@@ -142,6 +146,14 @@ class Engine:
     def now(self) -> int:
         return self.market.now_ms()
 
+    def _refresh_balance(self) -> tuple[float, float]:
+        """Read the wallet and keep it for the state file, so the dashboard
+        shows the balance before the first trade has closed."""
+        wallet, available = self.broker.balances()
+        self._last_balance_check = self.now()
+        self.account = {"balance": wallet, "available": available, "at": utc(self._last_balance_check)}
+        return wallet, available
+
     # ------------------------------------------------------------------
     # startup / shutdown
     # ------------------------------------------------------------------
@@ -156,7 +168,7 @@ class Engine:
                 len(self.trades), self.guard.s.realized_today,
             )
         self._warmup()
-        wallet, _ = self.broker.balances()
+        wallet, _ = self._refresh_balance()
         self.guard.start(wallet, self.now())
         self.reconcile()
         self.save()
@@ -282,6 +294,13 @@ class Engine:
             if now - self._last_order_check >= ex.order_check_seconds * 1000:
                 self._last_order_check = now
                 self._check_protection(positions)
+        if now - self._last_balance_check >= BALANCE_REFRESH_SECONDS * 1000:
+            self._last_balance_check = now
+            try:
+                self._refresh_balance()
+                self.save()
+            except BinanceAPIError as e:
+                logger.warning("Balance update failed: %s", e)
         self._maybe_notify_halt()
         if self.s.notify.heartbeat_minutes > 0 and now - self._last_heartbeat >= self.s.notify.heartbeat_minutes * 60_000:
             self._last_heartbeat = now
@@ -371,7 +390,7 @@ class Engine:
             logger.warning("%s: no quote, skipping signal: %s", sym, e)
             return
         price = ask if sig.side == LONG else bid
-        wallet, available = self.broker.balances()
+        wallet, available = self._refresh_balance()
         decision = evaluate_entry(
             sig, price, wallet, available, len(positions), now, self.guard,
             self.rules.get(sym), self.s.risk, self.s.costs, self.s.execution.leverage,
@@ -565,7 +584,7 @@ class Engine:
         self.guard.on_trade_closed(sym, net, now, self.s.management.cooldown_bars_after_exit * self.interval)
         del self.trades[sym]
         try:
-            wallet, _ = self.broker.balances()
+            wallet, _ = self._refresh_balance()
         except BinanceAPIError:
             wallet = float("nan")
         if self.journal is not None:
@@ -690,7 +709,7 @@ class Engine:
 
     def _heartbeat(self) -> None:
         try:
-            wallet, _ = self.broker.balances()
+            wallet, _ = self._refresh_balance()
         except BinanceAPIError:
             wallet = float("nan")
         msg = f"[{self.mode}] balance {wallet:.2f} | {self.status_line()}"

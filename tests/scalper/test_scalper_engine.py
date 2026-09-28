@@ -388,6 +388,18 @@ def test_nap_returns_immediately_after_stop(tmp_path):
     assert slept == []
 
 
+def test_account_balance_is_saved_for_the_dashboard(tmp_path):
+    h = Harness(tmp_path)
+    h.engine.start()
+    path = str(tmp_path / "state_testnet.json")
+    assert StateStore(path).peek()["account"]["balance"] == pytest.approx(1000.0)
+    h.fake.wallet = 1234.5  # e.g. a testnet top-up, picked up by the periodic refresh
+    h.fake.now += 301_000
+    h.engine.tick()
+    account = StateStore(path).peek()["account"]
+    assert account["balance"] == pytest.approx(1234.5) and account["at"]
+
+
 def test_entry_works_when_exchange_reports_zero_fill_price(tmp_path):
     h = Harness(tmp_path)
     h.fake.market_zero_price = True
