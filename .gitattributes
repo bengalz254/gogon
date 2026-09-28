@@ -1,0 +1,4 @@
+# Batch files need CRLF line endings and shell scripts need LF, whatever the
+# git settings of the machine that checks them out.
+*.bat text eol=crlf
+*.sh text eol=lf

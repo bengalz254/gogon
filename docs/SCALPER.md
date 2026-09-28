@@ -320,6 +320,20 @@ Lalu buka <http://127.0.0.1:8777> di browser PC; judul halamannya
 "Scalper Dashboard". Jendela PowerShell itu memang terlihat "diam", dan itu
 normal. Tutup jendelanya kalau sudah selesai melihat dashboard.
 
+**Shortcut di desktop (Windows).** Supaya tidak perlu mengetik perintah itu
+setiap kali, salin `deploy/scalper_dashboard.bat` ke desktop (di PowerShell PC):
+
+```powershell
+cd <folder-bot-di-PC>
+git pull
+copy deploy\scalper_dashboard.bat "$([Environment]::GetFolderPath('Desktop'))\Scalper Dashboard.bat"
+```
+
+Klik dua kali **Scalper Dashboard** di desktop. Pertama kali, file itu
+menanyakan IP VPS dan menyimpannya untuk berikutnya. Masukkan password VPS,
+lalu browser terbuka sendiri. Biarkan jendela hitamnya terbuka selama melihat
+dashboard. Password tidak pernah disimpan.
+
 ### Perintah di VPS
 
 | Perintah | Fungsi |
