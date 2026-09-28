@@ -13,6 +13,7 @@ import os
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from scalper import why
 from scalper.config import Settings
 from scalper.journal import StateStore, TradeJournal
 
@@ -79,6 +80,12 @@ def build_summary(rows: list[dict], state: dict, mode: str) -> dict:
         "by_symbol": by_symbol,
         "open_trades": open_trades,
         "recent": list(reversed(rows))[:50],
+        "why": {
+            "rows": why.rows(state.get("why")),
+            "hours": (state.get("why") or {}).get("window_hours", 24),
+            "htf": (state.get("why") or {}).get("htf") or "1h",
+            "fee_min_pct": (state.get("why") or {}).get("fee_min_pct"),
+        },
     }
 
 
@@ -110,6 +117,11 @@ th { color:var(--dim); font-weight:500; } .n { text-align:right; font-variant-nu
 .demo { border:1px dashed var(--accent); color:var(--text); border-radius:10px; padding:10px 14px; margin-top:12px; font-size:13px; }
 .demo code { background:var(--border); padding:1px 5px; border-radius:4px; white-space:nowrap; }
 .legend { display:flex; justify-content:space-between; font-size:12px; color:var(--dim); margin-top:6px; font-variant-numeric:tabular-nums; }
+.whygrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:10px; }
+.why { border:1px solid var(--border); border-radius:10px; padding:10px 12px; }
+.why .sym { font-weight:600; display:flex; justify-content:space-between; gap:8px; }
+.why .now { margin:4px 0 2px; }
+.small { font-size:12px; } .warnline { color:var(--bad); margin-top:4px; }
 @media (max-width:600px) { .hide-sm { display:none; } }
 </style></head><body><main>
 <header><h1>Scalper Dashboard <span class="badge" id="mode">-</span></h1><span class="dim" id="status">memuat...</span></header>
@@ -128,6 +140,7 @@ hanya noise dikurangi fee: <strong>bukan hasil trading dan bukan perkiraan profi
  <div class="card kpi"><div class="k">Total fee</div><div class="v" id="k-fee">-</div></div>
  <div class="card kpi"><div class="k">Jumlah trade</div><div class="v" id="k-n">-</div></div>
 </div>
+<div class="card" style="margin-bottom:12px"><h2 id="why-title">Kenapa belum entry?</h2><div class="whygrid" id="why"></div><p class="dim small" id="why-note" style="margin:8px 0 0"></p></div>
 <div class="grid">
  <div class="card"><h2>Kurva P&amp;L kumulatif</h2><svg id="curve" viewBox="0 0 700 220" preserveAspectRatio="none" role="img" aria-label="Kurva P&amp;L kumulatif"></svg><div class="legend"><span id="lg-lo"></span><span id="lg-hi"></span></div></div>
  <div class="card"><h2>Posisi terbuka</h2><div class="scroll"><table><thead><tr><th>Simbol</th><th>Arah</th><th class=n>Entry</th><th class=n>Stop</th><th class=n>Target</th></tr></thead><tbody id="open"></tbody></table></div></div>
@@ -153,6 +166,22 @@ function curve(points) {
   $('lg-lo').textContent = 'Terendah ' + signed(lo);
   $('lg-hi').textContent = 'Tertinggi ' + signed(hi) + ' · garis putus = 0';
 }
+function renderWhy(w) {
+  const box = $('why');
+  $('why-title').textContent = `Kenapa belum entry? (${w.hours} jam terakhir)`;
+  if (!w.rows.length) { box.innerHTML = '<div class="dim">Belum ada data. Muncul setelah bot versi terbaru berjalan.</div>'; $('why-note').textContent = ''; return; }
+  box.innerHTML = w.rows.map(r => `<div class="why">
+    <div class="sym"><span>${esc(r.symbol)}</span><span class="dim small">${esc(String(r.at).slice(11))} UTC</span></div>
+    <div class="now">${esc(r.now || '-')}</div>
+    <div class="dim small">${r.trend ? 'Tren ' + esc(w.htf) + ': ' + esc(r.trend) : ''}${r.adx != null ? ' · ADX ' + num(r.adx, 1) : ''}${r.atr_pct != null ? ' · ATR ' + num(r.atr_pct, 3) + '%' : ''}</div>
+    ${r.calm ? `<div class="small warnline">Pasar terlalu tenang: stop maks ${num(r.max_stop_pct, 2)}% &lt; biaya min ${num(w.fee_min_pct, 2)}%, sinyal pasti ditolak</div>` : ''}
+    <div class="small" style="margin-top:6px"><strong>${r.signals}</strong> sinyal, <strong>${r.entries}</strong> entry dari ${r.candles} candle</div>
+    <div class="dim small">${r.breakdown.map(b => esc(b.label) + ' ' + b.pct + '%').join(' · ')}</div>
+  </div>`).join('');
+  $('why-note').textContent = w.fee_min_pct != null
+    ? `Bot sengaja selektif: stop-loss minimal ${num(w.fee_min_pct, 2)}% dari harga supaya biaya trading tidak memakan profit. Di pasar yang tenang, wajar berjam-jam tanpa entry.`
+    : '';
+}
 async function refresh() {
   try {
     const d = await (await fetch('/api/data', {cache: 'no-store'})).json();
@@ -168,6 +197,7 @@ async function refresh() {
     setVal('k-n', String(d.trades));
     $('alert').innerHTML = d.halted ? `<div class="alert">BOT BERHENTI: ${esc(d.halt_reason)}</div>` : '';
     $('demo').hidden = d.mode !== 'demo';
+    renderWhy(d.why);
     curve(d.curve);
     $('open').innerHTML = d.open_trades.map(t => `<tr><td>${esc(t.symbol)}</td><td>${esc(t.side)}</td><td class=n>${num(t.entry,4)}</td><td class=n>${num(t.stop,4)} <span class="dim">${esc(t.stop_kind)}</span></td><td class=n>${num(t.target,4)}</td></tr>`).join('') || '<tr><td colspan=5 class="dim">Tidak ada</td></tr>';
     $('recent').innerHTML = d.recent.map(r => `<tr><td>${esc(String(r.closed_at_utc || '').slice(5, 16))}</td><td>${esc(r.symbol)}</td><td class="hide-sm">${esc(r.side)}</td><td class="n hide-sm">${num(r.entry_price,4)}</td><td class="n hide-sm">${num(r.exit_price,4)}</td><td>${esc(r.exit_reason)}</td><td class="n ${Number(r.net_pnl) > 0 ? 'good' : 'bad'}">${signed(Number(r.net_pnl))}</td><td class=n>${num(r.r_multiple)}R</td></tr>`).join('') || '<tr><td colspan=8 class="dim">Belum ada trade</td></tr>';

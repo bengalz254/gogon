@@ -581,6 +581,15 @@ def cmd_status(args) -> int:
         elif account.get("balance") is not None:
             print(f"  wallet balance: {account['balance']:.2f} (available {account.get('available', 0):.2f}, "
                   f"read {account.get('at')} UTC)")
+        from scalper.why import rows as why_rows
+
+        for r in why_rows(state.get("why")):
+            top = ", ".join(f"{b['label']} {b['pct']}%" for b in r["breakdown"][:3])
+            print(f"  {r['symbol']} sekarang: {r['now']} | 24 jam: {r['signals']} sinyal, {r['entries']} entry "
+                  f"dari {r['candles']} candle ({top})")
+            if r["calm"]:
+                print(f"    pasar terlalu tenang: stop maks {r['max_stop_pct']:.2f}% < biaya minimum "
+                      f"{(state.get('why') or {}).get('fee_min_pct', 0):.2f}%")
     rows = TradeJournal(paths["journal"]).read() if os.path.exists(paths["journal"]) else []
     if rows:
         nets = [float(r["net_pnl"]) for r in rows]

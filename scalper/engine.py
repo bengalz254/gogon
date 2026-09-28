@@ -29,9 +29,10 @@ from scalper.exchange.client import BinanceAPIError
 from scalper.journal import StateStore, TradeJournal, utc
 from scalper.models import LONG, SHORT, Candle, ClosedTradeInfo, PositionInfo, Signal, interval_ms, order_side
 from scalper.notifier import Notifier
-from scalper.risk import RiskGuard, evaluate_entry
+from scalper.risk import RiskGuard, evaluate_entry, fee_filter
 from scalper.strategies import Strategy, build_strategy
 from scalper.trade import Trade, gross_pnl, manage_trade, new_trade_id, targets_from_fill
+from scalper.why import WhyTracker, classify
 
 logger = logging.getLogger("scalper.engine")
 
@@ -96,6 +97,7 @@ class Engine:
         self.pending_entry: dict[str, dict] = {}
         self._orphan_warned: set[str] = set()
         self.account: dict = {}
+        self.why = WhyTracker()
         self._last_pos_check = 0
         self._last_order_check = 0
         self._last_balance_check = 0
@@ -119,6 +121,7 @@ class Engine:
             "last_candle": self.last_candle,
             "pending_entry": self.pending_entry,
             "account": self.account,
+            "why": self._why_state(),
         }
         if hasattr(self.broker, "to_dict"):
             data["paper"] = self.broker.to_dict()
@@ -145,6 +148,24 @@ class Engine:
 
     def now(self) -> int:
         return self.market.now_ms()
+
+    def _why_state(self) -> dict:
+        params = getattr(self.s.strategy, self.s.strategy.name, None)
+        return {
+            "window_hours": self.why.window_ms // 3_600_000,
+            "tf": self.s.timeframe,
+            "htf": getattr(params, "htf_interval", ""),
+            "fee_min_pct": round(self.s.risk.min_sl_cost_ratio * self.s.costs.round_trip_cost * 100.0, 4),
+            "symbols": self.why.to_dict(),
+        }
+
+    def _note(self, sym: str, c: Candle, code: str, reason: str = "") -> None:
+        """Remember what this candle led to (dashboard "why no entry")."""
+        try:
+            extra = self.strategies[sym].status()
+        except Exception:  # noqa: BLE001 - diagnostics must never disturb trading
+            extra = {}
+        self.why.record(sym, c.close_time, code, reason, extra)
 
     def _refresh_balance(self) -> tuple[float, float]:
         """Read the wallet and keep it for the state file, so the dashboard
@@ -197,6 +218,9 @@ class Engine:
             c.maker_fee, c.taker_fee = maker, taker
 
     def _warmup(self) -> None:
+        # History inside the "why" window is replayed into it too, so the
+        # dashboard can explain the last 24h right after a (re)start.
+        why_since = self.now() - self.why.window_ms
         for sym in self.symbols:
             strat = self.strategies[sym]
             need = min(max(self.s.execution.warmup_bars, strat.warmup_bars + 50), 5000)
@@ -215,11 +239,25 @@ class Engine:
                     self.broker.on_candle(sym, c)
                     if trade is not None:
                         trade.observe(c)
-                strat.on_candle(c)
+                sig = strat.on_candle(c)
+                if c.close_time > why_since:
+                    self._note_history(sym, c, sig, trade)
             if candles:
                 self.last_candle[sym] = candles[-1].open_time
                 self.last_close[sym] = candles[-1].close
             logger.info("%s: warmed up on %d candles", sym, len(candles))
+
+    def _note_history(self, sym: str, c: Candle, sig: Signal | None, trade: Trade | None) -> None:
+        if trade is not None and c.close_time >= trade.opened_at:
+            self._note(sym, c, "in_trade")
+        elif sig is not None:
+            # Not traded (history); tell apart signals the fee filter would
+            # have rejected from ones that were valid.
+            reason = fee_filter(sig, self.s.costs, self.s.risk)
+            self._note(sym, c, classify(reason) if reason else "signal", reason)
+        else:
+            reason = self.strategies[sym].last_skip_reason
+            self._note(sym, c, classify(reason), reason)
 
     def reconcile(self) -> None:
         """Make memory match the exchange: settle closed trades, adopt
@@ -341,6 +379,7 @@ class Engine:
         self._sync_symbol(sym, positions)
         trade = self.trades.get(sym)
         if trade is not None:
+            self._note(sym, c, "in_trade")
             pos = positions.get(sym)
             if pos is None or not pos.is_open:
                 self.save()  # position already gone; waiting for its fills to settle
@@ -353,9 +392,13 @@ class Engine:
             elif act.new_stop is not None:
                 self._move_stop(sym, trade, act.new_stop, act.new_stop_kind)
         elif sig is not None and fresh:
-            self._try_entry(sym, sig)
+            reason = self._try_entry(sym, sig)
+            self._note(sym, c, classify(reason) if reason else "entered", reason)
         elif sig is not None:
             logger.info("%s: ignoring stale %s signal from %s", sym, sig.side, utc(c.close_time))
+            self._note(sym, c, "stale")
+        else:
+            self._note(sym, c, classify(strat.last_skip_reason), strat.last_skip_reason)
         self.save()
 
     def _sync_symbol(self, sym: str, positions: dict[str, PositionInfo]) -> None:
@@ -379,16 +422,18 @@ class Engine:
     # ------------------------------------------------------------------
     # entries
     # ------------------------------------------------------------------
-    def _try_entry(self, sym: str, sig: Signal) -> None:
+    def _try_entry(self, sym: str, sig: Signal) -> str:
+        """Act on a fresh signal. Returns "" if a protected position was
+        opened, otherwise why not (for the dashboard's "why no entry")."""
         now = self.now()
         positions = self.broker.positions()
         if sym in positions:
-            return
+            return "already in a position"
         try:
             bid, ask = self.market.quote(sym)
         except BinanceAPIError as e:
             logger.warning("%s: no quote, skipping signal: %s", sym, e)
-            return
+            return f"no quote: {e}"
         price = ask if sig.side == LONG else bid
         wallet, available = self._refresh_balance()
         decision = evaluate_entry(
@@ -397,12 +442,12 @@ class Engine:
         )
         if not decision.ok:
             logger.info("%s: %s signal skipped: %s", sym, sig.side, decision.reason)
-            return
+            return decision.reason
         size = decision.size
         leftover = self.broker.cancel_all(sym)
         if leftover:
             logger.error("%s: could not clear old orders %s; not entering", sym, [o.client_id for o in leftover])
-            return
+            return "old orders could not be cleared"
 
         cid = new_client_id("en")
         self.pending_entry[sym] = {"client_id": cid, "time": now, "side": sig.side}
@@ -418,12 +463,12 @@ class Engine:
             self.notify.send(f"⚠️ {sym} entry rejected: {e.msg}")
             self.pending_entry.pop(sym, None)
             self.save()
-            return
+            return f"entry rejected: {e.msg}"
         self.pending_entry.pop(sym, None)
         if fill.qty <= 0:
             logger.warning("%s: entry not filled", sym)
             self.save()
-            return
+            return "entry not filled"
 
         targets = targets_from_fill(sig, fill.avg_price)
         stop, tp = targets if targets else (sig.stop, sig.take_profit)
@@ -448,12 +493,12 @@ class Engine:
         if targets is None:
             logger.warning("%s: filled at %.6g, already past the stop/target; exiting", sym, fill.avg_price)
             self._exit_trade(sym, trade, "BAD_FILL")
-            return
+            return "bad fill: already past the stop/target"
         if not self._place_stop(sym, trade):
             logger.error("%s: STOP-LOSS COULD NOT BE PLACED - closing the position now", sym)
             self.notify.send(f"🚨 {sym}: stop-loss could not be placed, position closed immediately")
             self._exit_trade(sym, trade, "NO_STOP")
-            return
+            return "stop-loss could not be placed"
         self._place_tp(sym, trade)
         self.save()
         risk_usd = trade.qty * trade.risk_per_unit
@@ -463,6 +508,7 @@ class Engine:
         )
         logger.info("OPENED %s", msg)
         self.notify.send(("📈 " if trade.side == LONG else "📉 ") + f"[{self.mode}] OPEN {msg}")
+        return ""
 
     def _place_stop(self, sym: str, trade: Trade) -> bool:
         for attempt in range(3):
@@ -713,6 +759,9 @@ class Engine:
         except BinanceAPIError:
             wallet = float("nan")
         msg = f"[{self.mode}] balance {wallet:.2f} | {self.status_line()}"
+        waiting = " ".join(f"{s}={self.why.latest[s]['code']}" for s in self.symbols if s in self.why.latest)
+        if waiting:
+            msg += f" | now: {waiting}"
         logger.info("Heartbeat: %s", msg)
         self.notify.send("💓 " + msg)
 

@@ -400,6 +400,28 @@ def test_account_balance_is_saved_for_the_dashboard(tmp_path):
     assert account["balance"] == pytest.approx(1234.5) and account["at"]
 
 
+def test_every_candle_is_explained_for_the_dashboard(tmp_path):
+    s = Harness.default_settings("testnet")
+    s.risk.min_sl_cost_ratio = 3.0  # fee filter on: the stop must be >= 3x the round-trip cost
+    h = Harness(tmp_path, settings=s)
+    h.engine.start()
+    history = h.engine.market.history(SYM, s.execution.warmup_bars)
+    assert sum(h.engine.why.counts(SYM).values()) == len(history)  # last 24h explained right after start
+    h.signal_next(LONG, stop=99.99)  # 0.01% stop: fees would eat it
+    h.play(100, 100.1, 99.9, 100)
+    assert h.engine.why.latest[SYM]["code"] == "fee_filter"
+    assert SYM not in h.engine.trades
+    h.signal_next(LONG, stop=99.0)
+    h.play(100, 100.1, 99.9, 100)
+    assert h.engine.why.latest[SYM]["code"] == "entered" and SYM in h.engine.trades
+    h.play(100, 100.2, 99.95, 100.1)
+    assert h.engine.why.latest[SYM]["code"] == "in_trade"
+    why = StateStore(str(tmp_path / "state_testnet.json")).peek()["why"]
+    assert why["fee_min_pct"] == pytest.approx(3.0 * s.costs.round_trip_cost * 100, abs=1e-4)
+    assert why["symbols"][SYM]["counts"]["fee_filter"] == 1
+    assert why["symbols"][SYM]["counts"]["entered"] == 1
+
+
 def test_entry_works_when_exchange_reports_zero_fill_price(tmp_path):
     h = Harness(tmp_path)
     h.fake.market_zero_price = True

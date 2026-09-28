@@ -52,6 +52,22 @@ def test_dashboard_shows_live_balance_before_first_trade():
     assert summary["trades"] == 0 and summary["win_rate"] is None  # shown as "-", not "0.0%"
 
 
+def test_dashboard_explains_why_there_is_no_entry():
+    state = {"why": {"window_hours": 24, "tf": "5m", "htf": "1h", "fee_min_pct": 0.42, "symbols": {
+        "BTCUSDT": {"latest": {"code": "no_trend", "reason": "no clear higher-timeframe trend", "time": NOW,
+                               "trend": "FLAT", "adx": 14.2, "atr_pct": 0.14, "max_stop_pct": 0.35},
+                    "counts": {"no_trend": 200, "waiting_setup": 85, "fee_filter": 3}},
+    }}}
+    why = build_summary([], state, "testnet")["why"]
+    [row] = why["rows"]
+    assert (why["hours"], why["htf"], why["fee_min_pct"]) == (24, "1h", 0.42)
+    assert row["now"] == "Tren 1h belum jelas naik/turun" and row["trend"] == "datar"
+    assert row["calm"]  # 0.35% widest stop < 0.42% fee minimum: no signal can pass right now
+    assert (row["candles"], row["signals"], row["entries"]) == (288, 3, 0)
+    assert row["breakdown"][0]["pct"] == 69
+    assert 'id="why"' in PAGE and build_summary([], {}, "testnet")["why"]["rows"] == []
+
+
 @pytest.mark.skipif(os.name == "nt", reason="Windows lets a second socket share the port")
 def test_dashboard_explains_a_port_taken_by_another_program(tmp_path):
     s = Settings()

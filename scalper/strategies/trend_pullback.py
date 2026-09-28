@@ -79,6 +79,17 @@ class TrendPullbackStrategy(Strategy):
         # +2 higher-timeframe bars: one may be dropped as partial at the start.
         return max(base_need, htf_ratio * (p.htf_ema_slow + 2))
 
+    def status(self) -> dict:
+        out = super().status()
+        out["trend"] = self.htf_trend() or "FLAT"
+        if self.adx.value is not None:
+            out["adx"] = round(self.adx.value, 1)
+        if "atr_pct" in out:
+            # Widest stop this strategy accepts; the fee filter needs at least
+            # min_sl_cost_ratio x round-trip cost, so below that it cannot trade.
+            out["max_stop_pct"] = round(out["atr_pct"] * self.p.max_sl_atr, 4)
+        return out
+
     def htf_trend(self) -> str | None:
         if not (self.htf_fast.ready and self.htf_slow.ready and self.htf_close is not None):
             return None

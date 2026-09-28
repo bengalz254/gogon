@@ -410,7 +410,7 @@ whether user is logged on or not") yang menjalankan
 | Error `-1021` (timestamp) | Jam komputer tidak sinkron. Bot sudah mengoreksi otomatis; aktifkan sinkronisasi waktu otomatis di OS. |
 | HTTP 451 / "restricted location" | Binance memblokir wilayah server/VPS-mu. Pakai VPS di region lain. |
 | "stop-loss could not be placed" | Bot menutup posisi demi keamanan. Kalau berulang, coba `execution.conditional_order_api: legacy` (atau `algo`), lalu ulangi `python -m scalper selftest`. |
-| Bot tidak pernah entry | Normal di pasar sepi: lihat `python -m scalper check` (baris "fee filter") dan log `signal skipped`. Jangan buru-buru melonggarkan filter — backtest dulu. |
+| Bot tidak pernah entry / berjam-jam tanpa trade | Biasanya normal: bot ini selektif. Lihat panel **"Kenapa belum entry?"** di dashboard (atau `python -m scalper status`): untuk tiap koin ada alasan saat ini dan rekap 24 jam terakhir (tren 1h datar, menunggu pullback, stop terlalu kecil dibanding biaya, dll.). Tulisan merah "Pasar terlalu tenang" berarti volatilitas sedang terlalu kecil, sehingga tidak ada sinyal yang bisa lolos filter biaya. Jangan buru-buru melonggarkan filter; backtest dulu. |
 | `below exchange minimum` | Saldo terlalu kecil untuk minimum notional simbol itu (BTCUSDT biasanya 100 USDT) pada risk yang dipakai. Tambah saldo atau pilih simbol lain. |
 | `Another scalper instance is already running` | Ada bot lain yang jalan di mode yang sama. Hentikan dulu. |
 | `Address already in use` saat `ssh -L` | Port itu di PC sudah dipakai (misalnya dashboard lokal atau tunnel bot lain). Tutup dulu, atau pakai port PC lain: `ssh -N -L 8790:127.0.0.1:8777 USER@IP-VPS` lalu buka http://127.0.0.1:8790. |

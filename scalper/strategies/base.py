@@ -56,3 +56,11 @@ class Strategy:
     def _skip(self, reason: str) -> None:
         self.last_skip_reason = reason
         return None
+
+    def status(self) -> dict:
+        """Market readings behind the latest decision, for the dashboard."""
+        out: dict = {}
+        c = self.last_candle
+        if self.atr and c is not None and c.close > 0:
+            out["atr_pct"] = round(self.atr / c.close * 100.0, 4)
+        return out
