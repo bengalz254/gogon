@@ -59,3 +59,13 @@ def test_selftest_refuses_to_touch_an_existing_position():
     assert [s.name for s in steps] == ["clean start"] and not steps[0].ok
     assert fake.pos[SYM][0] == 0.5  # untouched
     assert not any(c[0] == "POST" and c[1] == "/fapi/v1/order" for c in fake.calls)
+
+
+def test_selftest_passes_with_testnet_zero_price_quirk():
+    fake = FakeExchange(min_notional="50")
+    fake.market_zero_price = True
+    fake.market_async = True
+    steps, lines = run(fake)
+    assert [s.name for s in steps if not s.ok] == []
+    assert "@ 0" not in lines[1]
+    assert fake.pos[SYM][0] == 0 and fake.open_algos(SYM) == [] and fake.open_regular(SYM) == []

@@ -349,3 +349,29 @@ def test_paper_ignores_candles_before_entry_and_persists():
     assert again.positions()["BTCUSDT"].qty == 1 and again.open_orders("BTCUSDT")[0].purpose == "sl"
     again.close_position("BTCUSDT", PositionInfo("BTCUSDT", 1, 100))
     assert again.positions() == {}
+
+
+@pytest.mark.parametrize("quirk", ["market_zero_price", "market_async", "both"])
+def test_fill_price_recovered_from_account_trades(quirk):
+    fake = FakeExchange()
+    fake.market_zero_price = quirk in ("market_zero_price", "both")
+    fake.market_async = quirk in ("market_async", "both")
+    broker, _ = make_broker(fake)
+    fill = broker.market_order("BTCUSDT", "BUY", Decimal("2"))
+    assert fill.qty == 2.0
+    assert fill.avg_price == pytest.approx(100.005)
+    if fake.market_zero_price:
+        # price came from the account's trades, which also carry the real fee
+        assert fill.fee == pytest.approx(2 * 100.005 * 0.0005)
+    fake.set_price("BTCUSDT", 101.0)
+    close = broker.close_position("BTCUSDT", broker.positions()["BTCUSDT"])
+    assert close.avg_price == pytest.approx(101.0 * (1 - 0.00005))
+
+
+def test_fill_price_falls_back_to_position_entry_when_trades_are_missing():
+    fake = FakeExchange()
+    fake.market_zero_price = True
+    fake.inject.append(lambda m, p, q: FakeResponse(200, []) if p == "/fapi/v1/userTrades" else None)
+    broker, _ = make_broker(fake)
+    fill = broker.market_order("BTCUSDT", "BUY", Decimal("1"))
+    assert fill.avg_price == pytest.approx(100.005)  # from positionRisk entryPrice

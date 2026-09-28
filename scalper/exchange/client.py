@@ -327,9 +327,14 @@ class BinanceFuturesClient:
     def commission_rate(self, symbol: str) -> dict:
         return self.request("GET", "/fapi/v1/commissionRate", {"symbol": symbol}, signed=True)
 
-    def user_trades(self, symbol: str, start_time: int | None = None, limit: int = 500) -> list:
+    def user_trades(
+        self, symbol: str, start_time: int | None = None, limit: int = 500, order_id: str | None = None
+    ) -> list:
         return self.request(
-            "GET", "/fapi/v1/userTrades", {"symbol": symbol, "startTime": start_time, "limit": limit}, signed=True
+            "GET",
+            "/fapi/v1/userTrades",
+            {"symbol": symbol, "orderId": order_id, "startTime": start_time, "limit": limit},
+            signed=True,
         )
 
     def income(self, symbol: str, income_type: str, start_time: int | None = None, limit: int = 100) -> list:

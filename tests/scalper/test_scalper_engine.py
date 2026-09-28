@@ -385,3 +385,14 @@ def test_nap_returns_immediately_after_stop(tmp_path):
     h.engine.stop()
     h.engine._nap(3600)
     assert slept == []
+
+
+def test_entry_works_when_exchange_reports_zero_fill_price(tmp_path):
+    h = Harness(tmp_path)
+    h.fake.market_zero_price = True
+    h.fake.market_async = True
+    trade = open_long(h)
+    assert trade.entry_price == pytest.approx(100.005)
+    assert trade.stop == 99.0 and trade.take_profit == pytest.approx(100.005 + 1.5 * 1.005)
+    assert len(h.fake.open_algos(SYM)) == 1 and len(h.fake.open_regular(SYM)) == 1
+    assert h.journal() == []  # not closed as a bad fill

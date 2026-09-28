@@ -65,8 +65,10 @@ def run_selftest(
     try:
         opened_at = market.now_ms()
         fill = broker.market_order(symbol, "BUY", qty, reduce_only=False, client_id=new_client_id("en"))
-        if not record("market entry", fill.qty > 0,
-                      f"bought {fill.qty:g} @ {fill.avg_price:.6g}" if fill.qty > 0 else "not filled"):
+        ok = fill.qty > 0 and fill.avg_price > 0
+        detail = (f"bought {fill.qty:g} @ {fill.avg_price:.6g}" if ok
+                  else "not filled" if fill.qty <= 0 else "filled, but the fill price could not be determined")
+        if not record("market entry", ok, detail):
             return steps
 
         sl = broker.place_stop(symbol, LONG, fill.avg_price * 0.97, new_client_id("sl"))

@@ -234,7 +234,49 @@ class BinanceBroker:
         order = self._wait_final(symbol, order)
         fill = self._fill_from(order)
         fill.client_id = fill.client_id or cid
+        if fill.order_id and (fill.avg_price <= 0 or order.get("status") not in FINAL_STATUSES):
+            # Seen on the testnet: the order reports its filled quantity but an
+            # average price of 0. The account's own trade list is the
+            # authoritative record of what actually executed (and what it cost).
+            self._complete_from_trades(symbol, fill)
+        if fill.qty > 0 and fill.avg_price <= 0:
+            fill.avg_price = self._reference_price(symbol, side, reduce_only)
+            logger.warning("%s: exchange did not report the fill price of order %s; using %.8g",
+                           symbol, fill.order_id or cid, fill.avg_price)
         return fill
+
+    def _complete_from_trades(self, symbol: str, fill: Fill, attempts: int = 6) -> None:
+        margin = self.rules[symbol].margin_asset if symbol in self.rules else "USDT"
+        for attempt in range(attempts):
+            try:
+                trades = [
+                    t for t in self.client.user_trades(symbol, order_id=fill.order_id, limit=100)
+                    if str(t.get("orderId")) == str(fill.order_id)
+                ]
+            except BinanceAPIError as e:
+                logger.debug("%s: userTrades for order %s failed: %s", symbol, fill.order_id, e)
+                trades = []
+            qty = sum(float(t.get("qty") or 0.0) for t in trades)
+            if qty > 0:
+                fill.avg_price = sum(float(t["price"]) * float(t["qty"]) for t in trades) / qty
+                fill.fee = sum(self._fee_in_margin(t, margin) for t in trades)
+                if fill.qty <= 0:
+                    fill.qty = qty
+                if qty >= fill.qty * 0.999:
+                    return
+            self.sleep(0.5 * (attempt + 1))
+
+    def _reference_price(self, symbol: str, side: str, reduce_only: bool) -> float:
+        """Last resort when no fill price is available at all."""
+        try:
+            if not reduce_only:
+                pos = self.positions().get(symbol)
+                if pos is not None and pos.entry_price > 0:
+                    return pos.entry_price  # we only enter when flat, so this IS our fill
+            bt = self.client.book_ticker(symbol)
+            return float(bt["askPrice"] if side == "BUY" else bt["bidPrice"])
+        except (BinanceAPIError, KeyError, ValueError):
+            return 0.0
 
     def _find_open(self, symbol: str, client_id: str) -> OrderRef | None:
         try:

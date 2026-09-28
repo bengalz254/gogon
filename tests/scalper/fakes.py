@@ -147,6 +147,11 @@ class FakeExchange:
         min_notional: str = "5",
     ):
         self.now = T0
+        # Testnet quirks seen in the wild: a MARKET order reports its filled
+        # qty but an average price of 0 (market_zero_price), or comes back as
+        # NEW and only shows as FILLED on a later query (market_async).
+        self.market_zero_price = False
+        self.market_async = False
         self.algo_supported = algo
         self.spread = spread
         self.taker, self.maker = taker, maker
@@ -191,7 +196,9 @@ class FakeExchange:
                 dict(o) for o in self.orders.values() if o["status"] == "NEW" and o["symbol"] == p.get("symbol", o["symbol"])
             ],
             ("GET", "/fapi/v1/userTrades"): lambda p: [
-                f for f in self.fills if f["symbol"] == p["symbol"] and f["time"] >= int(p.get("startTime", 0))
+                f for f in self.fills
+                if f["symbol"] == p["symbol"] and f["time"] >= int(p.get("startTime", 0))
+                and ("orderId" not in p or str(f["orderId"]) == p["orderId"])
             ],
             ("GET", "/fapi/v1/income"): lambda p: [],
         }
@@ -369,6 +376,10 @@ class FakeExchange:
         self.orders[oid] = order
         if typ == "MARKET":
             self._market_fill(sym, side, min(qty, abs(amt)) if reduce else qty, order)
+            if self.market_zero_price:
+                order.update(avgPrice="0.00", cumQuote="0")
+            if self.market_async:
+                return dict(order, status="NEW", executedQty="0", avgPrice="0.00", cumQuote="0")
         return dict(order)
 
     def _conditional(self, p, sym, side, typ, trigger, cid, legacy):
