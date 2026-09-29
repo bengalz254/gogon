@@ -9,6 +9,7 @@ Quick start for migbot (paper trading, no wallet or API key needed):
 
 ```bash
 pip install -r requirements-migbot.txt
+python -m migbot setup       # Telegram + Solana RPC into .env, tested on the spot
 python -m migbot check       # config + every data source
 python -m migbot run         # the bot
 python -m migbot dashboard   # http://127.0.0.1:8780

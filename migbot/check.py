@@ -8,13 +8,14 @@ import time
 from migbot.config import SOL_MINT, Settings
 from migbot.engine import Sources
 from migbot.filters import fmt_dur, fmt_usd
+from migbot.http import redact
 from migbot.notifier import Notifier
 
 SAMPLE_MINT = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK: old, liquid, always listed
 
 
 def _line(tag: str, name: str, detail: str) -> None:
-    print(f"[{tag}] {name:<14} {detail}")
+    print(f"[{tag}] {name:<14} {redact(detail)}")
 
 
 def _pumpportal(s: Settings, wait_s: float = 15.0) -> bool:

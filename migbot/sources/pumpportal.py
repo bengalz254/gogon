@@ -12,6 +12,7 @@ import queue
 import threading
 import time
 
+from migbot.http import redact
 from migbot.models import MigrationEvent
 from migbot.parsing import ms_or_s_to_ts, num, text
 from migbot.solana import is_pubkey
@@ -81,7 +82,7 @@ class PumpPortalFeed:
             self.event_count += 1
             self.events.put(event)
         elif isinstance(payload, dict) and payload.get("errors"):
-            self.last_error = str(payload.get("errors"))[:200]
+            self.last_error = redact(payload.get("errors"))[:200]
             logger.warning("PumpPortal error message: %s", self.last_error)
         return event
 
@@ -99,8 +100,8 @@ class PumpPortalFeed:
             self.handle_message(message)
 
         def on_error(ws, error):
-            self.last_error = str(error)[:200]
-            logger.warning("PumpPortal socket error: %s", error)
+            self.last_error = redact(error)[:200]
+            logger.warning("PumpPortal socket error: %s", self.last_error)
 
         def on_close(ws, status, msg):
             self.connected = False
@@ -126,7 +127,7 @@ class PumpPortalFeed:
                     )
                     self._ws.run_forever(ping_interval=30, ping_timeout=10)
                 except Exception as exc:  # noqa: BLE001 - keep the feed alive
-                    self.last_error = str(exc)[:200]
+                    self.last_error = redact(exc)[:200]
                     logger.exception("PumpPortal feed crashed")
                 self.connected = False
                 if self._stop.is_set():

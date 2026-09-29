@@ -340,5 +340,11 @@ def load_settings(path: str | None = None, env_path: str | None = ".env") -> Set
     settings.telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     settings.pumpportal_api_key = os.getenv("PUMPPORTAL_API_KEY", "").strip()
     settings.jupiter_api_key = os.getenv("JUPITER_API_KEY", "").strip()
+    from migbot.http import register_secret
+
+    for secret in (settings.telegram_token, settings.pumpportal_api_key, settings.jupiter_api_key):
+        register_secret(secret)
+    if settings.rpc_url != DEFAULT_RPC_URL:
+        register_secret(settings.rpc_url)
     validate(settings)
     return settings

@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import requests
 
 from migbot.filters import fmt_dur, fmt_usd
+from migbot.http import redact
 
 logger = logging.getLogger("migbot.telegram")
 
@@ -53,7 +54,7 @@ class Notifier:
                 timeout=10,
             )
         except requests.RequestException as exc:
-            return False, str(exc)
+            return False, redact(exc)
         return (r.status_code == 200), f"HTTP {r.status_code}"
 
     def close(self, timeout: float = 5.0) -> None:
@@ -82,8 +83,8 @@ class Notifier:
                     self.last_error = f"HTTP {r.status_code}"
                     logger.warning("Telegram send failed: HTTP %s %s", r.status_code, r.text[:200])
             except requests.RequestException as exc:
-                self.last_error = str(exc)[:200]
-                logger.warning("Telegram send failed: %s", exc)
+                self.last_error = redact(exc)[:200]
+                logger.warning("Telegram send failed: %s", self.last_error)
 
 
 # --------------------------------------------------------------------------- texts

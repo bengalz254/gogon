@@ -107,20 +107,19 @@ sampai bawah dan kirim ke Claude. Jangan lanjut dulu.
 
 ### Tahap C — Telegram dan RPC (disarankan)
 
-**Langkah 5.** Cari token Telegram dari bot lain yang sudah pernah dipakai:
+**Langkah 5 (di Telegram).** Buat bot Telegram khusus migbot. Paling mudah di PC
+(Telegram Desktop atau web.telegram.org), supaya tokennya bisa langsung disalin ke
+PowerShell.
 
-```bash
-grep -H TELEGRAM ~/*/.env
-```
+1. Cari **@BotFather** (centang biru), tekan **Start**.
+2. Kirim `/newbot`.
+3. Ketik nama bebas, misalnya `Migbot Alert`.
+4. Ketik username yang berakhiran `bot`, misalnya `migbot_namakamu_bot` (kalau sudah
+   dipakai orang, coba nama lain).
+5. BotFather membalas dengan token seperti `123456789:AAH...`. Salin token itu.
+6. Buka bot barumu (link `t.me/...` di pesan BotFather), lalu tekan **Start**.
 
-✅ **Cek:** muncul baris seperti `/root/scalper-bot/.env:TELEGRAM_BOT_TOKEN=123456:ABC...`
-dan `...TELEGRAM_CHAT_ID=...`. Catat kedua nilainya. Bot Telegram yang sama boleh
-dipakai; pesan bot ini diawali `[migbot]`. Abaikan baris `/root/migbot/.env` yang
-masih kosong.
-❌ Tidak ada yang terisi: buat bot baru. Di Telegram buka **@BotFather**, kirim
-`/newbot`, ikuti petunjuknya, salin token. Kirim "halo" ke bot barumu, buka
-`https://api.telegram.org/bot<TOKEN>/getUpdates` di browser, lalu salin angka
-setelah `"chat":{"id":`.
+✅ **Cek:** token sudah tersalin. **Jangan kirim token ini ke siapa pun**, termasuk ke Claude.
 
 **Langkah 6 (di browser).** Daftar RPC Solana gratis di <https://www.helius.dev>
 (Sign up), lalu di dashboard Helius salin URL RPC **mainnet**, bentuknya
@@ -130,39 +129,43 @@ setelah `"chat":{"id":`.
 Tanpa ini bot tetap jalan, tapi cek holder/dev sering dilewati karena RPC publik
 membatasi request.
 
-**Langkah 7.** Masukkan ke `.env`:
+**Langkah 7.** Isi keduanya dengan panduan otomatis (tidak perlu mengedit file):
 
 ```bash
-nano ~/migbot/.env
+cd ~/migbot && git pull
+venv/bin/python -m migbot setup
 ```
 
-Tekan panah ↓ sampai bagian `migbot` di bawah. Isi setelah tanda `=` (tanpa spasi;
-di PowerShell, klik kanan = tempel):
+Setup menanyakan dua hal. Saat menempel (klik kanan di PowerShell) **tulisannya memang
+tidak muncul**; langsung tekan Enter.
 
-```
-SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=...
-TELEGRAM_BOT_TOKEN=123456:ABC...
-TELEGRAM_CHAT_ID=123456789
-```
+1. Token Telegram → ✅ `✓ Token benar ... bot @nama_botmu`. Lalu setup memintamu
+   mengirim `halo` ke bot itu dan menekan Enter → ✅ `✓ Chat: ... Pesan tes terkirim`,
+   dan Telegram menerima `✅ Telegram tersambung ke migbot`.
+2. URL RPC dari Helius → ✅ `✓ RPC berfungsi: bisa membaca 20 holder terbesar`.
 
-Simpan: `Ctrl+O`, Enter, lalu `Ctrl+X`.
+✅ **Cek:** baris terakhir `✅ Disimpan ke .env: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, SOLANA_RPC_URL`.
+❌ Ada tanda `✕`: baca pesannya (setup memberi tahu apa yang salah), lalu jalankan
+`venv/bin/python -m migbot setup` lagi. Yang sudah benar tinggal dilewati dengan Enter
+kosong.
 
-✅ **Cek:** `grep -E "SOLANA_RPC_URL|TELEGRAM" ~/migbot/.env` menampilkan ketiga baris
-itu beserta isinya.
-
-**Langkah 8.** Restart bot dan tes semuanya:
+**Langkah 8.** Mulai ulang dengan data bersih (data sebelum RPC terpasang belum punya
+cek holder), lalu tes semuanya. Ketik satu per satu:
 
 ```bash
-sudo systemctl restart migbot
-cd ~/migbot && venv/bin/python -m migbot check --telegram-test
+sudo systemctl stop migbot
+cd ~/migbot && venv/bin/python -m migbot reset --yes
+sudo systemctl start migbot
+venv/bin/python -m migbot check --telegram-test
 ```
 
 ✅ **Cek:**
+- `reset` menulis `Data lama dipindah ke ...` atau `Tidak ada data untuk direset.`;
 - Telegram menerima `[migbot] Tes notifikasi ... berhasil ✅` dan `🟢 Bot migrated mulai (PAPER)`;
 - ada `[OK] Solana RPC` tanpa tulisan "sebagian gagal";
 - baris terakhir `✅ Siap.`
 
-❌ `[!] Telegram gagal`: token atau chat id salah ketik. Ulangi Langkah 7.
+❌ `[!] Telegram gagal`: jalankan lagi `venv/bin/python -m migbot setup` (Langkah 7).
 
 ### Tahap D — Pastikan bot jalan
 
@@ -328,6 +331,7 @@ GMGN" dan filter khusus GMGN dilewati; filter lainnya tetap berjalan.
 | `sudo journalctl -u migbot -f` | Log langsung (Ctrl+C = keluar, bot tetap jalan) |
 | `cd ~/migbot && venv/bin/python -m migbot report` | Laporan riset + P&L |
 | `cd ~/migbot && venv/bin/python -m migbot check` | Cek koneksi semua sumber data |
+| `cd ~/migbot && venv/bin/python -m migbot setup` | Isi/ganti token Telegram dan RPC (langsung dites), lalu `sudo systemctl restart migbot` |
 | `sudo systemctl stop migbot` / `start migbot` | Hentikan / nyalakan bot |
 | `sudo systemctl disable --now migbot migbot-dashboard` | Matikan total (tidak hidup lagi saat reboot) |
 | `sudo systemctl stop migbot && cd ~/migbot && venv/bin/python -m migbot reset && sudo systemctl start migbot` | Mulai dari nol: data lama dipindah ke `data/migbot/archive/`, tidak dihapus |

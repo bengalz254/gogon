@@ -1,4 +1,4 @@
-"""Command line: python -m migbot {run,check,dashboard,report,reset}."""
+"""Command line: python -m migbot {run,check,setup,dashboard,report,reset}."""
 from __future__ import annotations
 
 import argparse
@@ -34,6 +34,15 @@ def cmd_check(args) -> int:
     from migbot.check import run_check
 
     return run_check(_settings(args), telegram_test=args.telegram_test)
+
+
+def cmd_setup(args) -> int:
+    from migbot.setup_env import run_setup
+
+    if not sys.stdin.isatty():
+        print("GAGAL: jalankan perintah ini langsung di terminal SSH (butuh ketikan kamu).", file=sys.stderr)
+        return 1
+    return run_setup(".env")
 
 
 def cmd_dashboard(args) -> int:
@@ -93,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("check", parents=[common], help="cek konfigurasi dan koneksi ke semua sumber data")
     p.add_argument("--telegram-test", action="store_true", help="kirim pesan tes ke Telegram")
     p.set_defaults(func=cmd_check)
+    sub.add_parser("setup", parents=[common], help="isi Telegram dan RPC ke .env (langsung dites)").set_defaults(func=cmd_setup)
     p = sub.add_parser("dashboard", parents=[common], help="dashboard lokal (hanya baca)")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8780)

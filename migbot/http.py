@@ -4,9 +4,11 @@ throttling, and a health record the dashboard shows for every data source.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 import requests
 
@@ -17,9 +19,39 @@ logger = logging.getLogger("migbot.http")
 USER_AGENT = f"migbot/{__version__} (+paper-trading research bot)"
 
 
+_SECRETS: set[str] = set()
+_KEY_PARAM = re.compile(r"(?i)((?:api[-_]?key|access[-_]?token|token|secret|key)=)[^&\s'\"<>)]+")
+_BOT_PATH = re.compile(r"/bot\d+:[A-Za-z0-9_-]+")
+_BOT_TOKEN = re.compile(r"\b\d{6,}:[A-Za-z0-9_-]{30,}\b")
+
+
+def register_secret(value: str | None) -> None:
+    """Never print this value (a token, an API key, a private RPC URL) in logs or messages."""
+    if not value or len(value) < 8:
+        return
+    _SECRETS.add(value)
+    parts = urlsplit(value) if "://" in value else None
+    if parts is not None:
+        if parts.query:
+            _SECRETS.add(parts.query)
+        last = parts.path.rstrip("/").rsplit("/", 1)[-1]
+        if len(last) >= 16:  # providers that put the key in the path (…/v2/<key>)
+            _SECRETS.add(last)
+
+
+def redact(text) -> str:
+    """The text with tokens, API keys and registered secrets replaced by ***."""
+    text = str(text)
+    for secret in sorted(_SECRETS, key=len, reverse=True):
+        text = text.replace(secret, "***")
+    text = _KEY_PARAM.sub(r"\1***", text)
+    text = _BOT_PATH.sub("/bot***", text)
+    return _BOT_TOKEN.sub("***", text)
+
+
 class HttpError(RuntimeError):
     def __init__(self, message: str, status: int | None = None, blocked: bool = False):
-        super().__init__(message)
+        super().__init__(redact(message))
         self.status = status
         self.blocked = blocked
 
