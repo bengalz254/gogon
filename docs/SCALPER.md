@@ -485,16 +485,29 @@ Strategi paling sederhana, `ema_cross`, dengan konfigurasi sendiri di
   Persilangan yang melawan EMA200 tetap menutup posisi, tapi tidak membuka
   arah sebaliknya.
 
-**Catatan jujur**: EMA9/21 di 3m bisa bersilang 20–35 kali sehari, dan setiap
-trade membayar ±0,14% dari nilai posisi. Strategi ini harus menangkap
-rata-rata lebih dari itu per trade. Di data acak (tanpa tren), bot sudah turun
-15% (batas drawdown) dalam ±12 hari, hampir seluruhnya karena fee. Backtest
-dengan data asli dulu:
+**Hasil backtest ETHUSDT (September 2025 – September 2026): rugi.**
+
+| | 3m | 15m |
+|---|---|---|
+| Profit factor | 0,58 | 0,72 |
+| Hasil (modal 1.000) | −14,9% | −15,2% |
+| Untung/rugi sebelum fee | −19 | −22 |
+| Fee + funding | 130 | 130 |
+| Berhenti sendiri di batas drawdown 15% setelah | ±11 hari | ±2 bulan |
+
+Sebelum fee hasilnya hampir nol: di timeframe kecil persilangan EMA tidak
+menebak arah lebih baik dari lempar koin, dan EMA9/21 bersilang ±23 kali
+sehari di 3m. Fee setiap trade itulah yang membuat rugi. Ke-36 kombinasi
+`optimize` di 3m (SL, TP, filter EMA200, balik arah) juga semuanya rugi.
+**Jangan dipakai live di 3m/15m.** Timeframe besar (1h/4h, ±1 trade sehari /
+±2 trade seminggu) belum diuji:
 
 ```bash
 python -m scalper --config config/ema.yaml backtest                    # ETHUSDT 3m, 1 tahun
 python -m scalper --config config/ema.yaml backtest --timeframe 15m    # aturan sama, candle 15m
 python -m scalper --config config/ema.yaml optimize                    # 36 kombinasi SL/TP/filter, dicek out-of-sample
+python -m scalper --config config/ema.yaml backtest --timeframe 1h --days 1800   # 5 tahun
+python -m scalper --config config/ema.yaml backtest --timeframe 4h --days 1800
 ```
 
 Kalau hasilnya layak, uji maju di VPS (mode paper) sebagai service terpisah

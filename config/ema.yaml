@@ -7,6 +7,11 @@
 # Terpisah dari config/scalper.yaml dan config/trend.yaml (folder data & log
 # sendiri), jadi tidak saling mengganggu.
 # Rahasia (API key, token Telegram) TIDAK boleh ditulis di sini — taruh di .env.
+#
+# HASIL BACKTEST ETHUSDT 3m (Sep 2025 - Sep 2026): RUGI. Profit factor 0.58,
+# -14.9%, berhenti di batas drawdown 15% setelah ~11 hari; 15m juga rugi
+# (PF 0.72), dan ke-36 kombinasi optimize di 3m semuanya rugi.
+# JANGAN dipakai live di timeframe ini. Lihat docs/SCALPER.md.
 
 mode: paper
 
