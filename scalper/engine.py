@@ -38,6 +38,7 @@ logger = logging.getLogger("scalper.engine")
 
 STATE_VERSION = 1
 BALANCE_REFRESH_SECONDS = 300
+REVERSE_SETTLE_TRIES = 3  # seconds to wait for a reversed trade's closing fills
 
 
 class MarketData:
@@ -383,18 +384,23 @@ class Engine:
         self._sync_symbol(sym, positions)
         trade = self.trades.get(sym)
         if trade is not None:
-            self._note(sym, c, "in_trade")
             pos = positions.get(sym)
             if pos is None or not pos.is_open:
+                self._note(sym, c, "in_trade")
                 self.save()  # position already gone; waiting for its fills to settle
                 return
             trade.observe(c)
-            act = manage_trade(trade, c, strat.atr, self.s.management, self.s.costs.round_trip_cost)
-            if act.exit_reason:
-                logger.info("%s: %s exit after %d bars", sym, act.exit_reason, trade.bars_held)
-                self._exit_trade(sym, trade, act.exit_reason)
-            elif act.new_stop is not None:
-                self._move_stop(sym, trade, act.new_stop, act.new_stop_kind)
+            flip = sig is not None and sig.side != trade.side
+            if self.s.management.exit_on_opposite_signal and (flip or strat.should_exit(trade.side)):
+                self._reverse(sym, trade, sig if flip else None, c, fresh)
+            else:
+                self._note(sym, c, "in_trade")
+                act = manage_trade(trade, c, strat.atr, self.s.management, self.s.costs.round_trip_cost)
+                if act.exit_reason:
+                    logger.info("%s: %s exit after %d bars", sym, act.exit_reason, trade.bars_held)
+                    self._exit_trade(sym, trade, act.exit_reason)
+                elif act.new_stop is not None:
+                    self._move_stop(sym, trade, act.new_stop, act.new_stop_kind)
         elif sig is not None and fresh:
             reason = self._try_entry(sym, sig)
             self._note(sym, c, classify(reason) if reason else "entered", reason)
@@ -564,6 +570,37 @@ class Engine:
         logger.info("%s: stop moved to %.6g (%s)", sym, new_stop, kind)
         self.save()
 
+    def _reverse(self, sym: str, trade: Trade, sig: Signal | None, c: Candle, fresh: bool) -> None:
+        """Close the open trade on an opposite signal and, when that signal is
+        a fresh entry, open the new direction right away (stop-and-reverse)."""
+        enter = sig is not None and fresh
+        logger.info("%s: opposite signal while %s -> closing it%s", sym, trade.side, " and reversing" if enter else "")
+        self._exit_trade(sym, trade, "REVERSE")
+        if not enter:
+            if sig is not None:
+                logger.info("%s: ignoring stale %s signal from %s", sym, sig.side, utc(c.close_time))
+                self._note(sym, c, "stale")
+            else:  # e.g. the trend filter kept the other direction from opening
+                reason = self.strategies[sym].last_skip_reason
+                self._note(sym, c, classify(reason), reason)
+            return
+        for _ in range(REVERSE_SETTLE_TRIES):
+            if sym not in self.trades:
+                break
+            pos = self.broker.positions().get(sym)
+            if pos is not None and pos.is_open:
+                break  # the close failed
+            self._nap(1.0)  # the closing fills can take a moment to show in the account's trade list
+            self._settle(sym, self.trades[sym])
+        if sym in self.trades:
+            # The close failed or its fills are not booked yet. Never stack a
+            # new trade on an unsettled one; the exchange stop still guards it.
+            logger.warning("%s: previous trade not settled yet, skipping the reversal entry", sym)
+            self._note(sym, c, "in_trade")
+            return
+        reason = self._try_entry(sym, sig)
+        self._note(sym, c, classify(reason) if reason else "entered", reason)
+
     def _exit_trade(self, sym: str, trade: Trade, reason: str) -> None:
         trade.exit_hint = reason
         try:
@@ -573,6 +610,7 @@ class Engine:
         except BinanceAPIError as e:
             logger.error("%s: market exit (%s) failed: %s — the exchange stop still protects it", sym, reason, e)
             self.notify.send(f"⚠️ {sym}: exit ({reason}) failed: {e.msg}")
+            trade.exit_hint = ""  # if the stop or target closes it later, label it as that
             return
         self._cancel_stale(sym)
         self._sync_symbol(sym, self.broker.positions())

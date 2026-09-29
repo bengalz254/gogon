@@ -460,6 +460,55 @@ Log: `journalctl -u scalper-trend -f`. Stop: `systemctl disable --now scalper-tr
 
 ---
 
+## Strategi EMA cross (EMA 9 × EMA 21)
+
+Strategi paling sederhana, `ema_cross`, dengan konfigurasi sendiri di
+`config/ema.yaml` (ETHUSDT, candle 3m; folder data & log sendiri: `data/ema`,
+`logs/ema`):
+
+* **Masuk**: begitu candle tutup dengan EMA9 memotong EMA21 ke atas → LONG,
+  ke bawah → SHORT (order market, tanpa menunggu konfirmasi lain).
+* **Stop loss**: 1,5 × ATR, tetapi **minimal 0,5% dari harga**. Di 3m,
+  1,5 × ATR ETH biasanya hanya 0,15–0,3%, dan stop sekecil itu habis dimakan
+  biaya (fee + slippage pulang-pergi ±0,14%; filter biaya bot mensyaratkan
+  stop ≥ 0,42%).
+* **Take profit**: 2 × jarak stop (stop 0,5% → TP 1%), dipasang sebagai order
+  limit (fee maker).
+* **Breakeven**: setelah untung 1R, stop pindah ke harga entry + biaya.
+* **Balik arah**: saat EMA bersilang ke arah sebaliknya, posisi ditutup
+  (`REVERSE` di jurnal) lalu langsung dibuka ke arah baru
+  (`management.exit_on_opposite_signal: true`, dengan
+  `cooldown_bars_after_exit: 0`). Batas risiko tetap berlaku: setelah 3 rugi
+  beruntun bot istirahat 60 menit, dan rugi 3% sehari menghentikan entry
+  sampai 00:00 UTC.
+* **Opsional** `trend_ema: 200`: hanya membuka posisi searah EMA200.
+  Persilangan yang melawan EMA200 tetap menutup posisi, tapi tidak membuka
+  arah sebaliknya.
+
+**Catatan jujur**: EMA9/21 di 3m bisa bersilang 20–35 kali sehari, dan setiap
+trade membayar ±0,14% dari nilai posisi. Strategi ini harus menangkap
+rata-rata lebih dari itu per trade. Di data acak (tanpa tren), bot sudah turun
+15% (batas drawdown) dalam ±12 hari, hampir seluruhnya karena fee. Backtest
+dengan data asli dulu:
+
+```bash
+python -m scalper --config config/ema.yaml backtest                    # ETHUSDT 3m, 1 tahun
+python -m scalper --config config/ema.yaml backtest --timeframe 15m    # aturan sama, candle 15m
+python -m scalper --config config/ema.yaml optimize                    # 36 kombinasi SL/TP/filter, dicek out-of-sample
+```
+
+Kalau hasilnya layak, uji maju di VPS (mode paper) sebagai service terpisah
+`scalper-ema` / `scalper-ema-dashboard`:
+
+```bash
+cd ~/scalper-bot && git pull
+bash deploy/setup_vps.sh config/ema.yaml paper
+```
+
+Log: `journalctl -u scalper-ema -f`. Stop: `systemctl disable --now scalper-ema scalper-ema-dashboard`.
+
+---
+
 ## Menambahkan strategi sendiri (misalnya strategi dari bot Grok)
 
 1. Buat file baru di `scalper/strategies/`, turunkan dari `Strategy`
@@ -475,7 +524,7 @@ Log: `journalctl -u scalper-trend -f`. Stop: `systemctl disable --now scalper-tr
 
 ## Batasan yang perlu kamu tahu
 
-* Kode ini diuji dengan 150+ tes otomatis terhadap simulasi API Binance, dan
+* Kode ini diuji dengan 230+ tes otomatis terhadap simulasi API Binance, dan
   `selftest` sudah lulus di **Binance Futures testnet sungguhan** (September
   2026). Uji testnet itu menemukan dua perilaku yang tidak dijelaskan di
   dokumentasi Binance: respons order MARKET bisa melaporkan harga fill 0, dan

@@ -8,8 +8,9 @@ Per closed candle, in this order (the same order the live engine uses):
   4. the resting stop / take-profit are checked against this candle
      (pessimistic when both are touched: the stop wins);
   5. the strategy sees the closed candle; open trades are managed
-     (breakeven / trailing / time stop); flat symbols may get a new entry
-     decision via the exact same `evaluate_entry` gate live trading uses.
+     (breakeven / trailing / time stop, or closed on an opposite signal and
+     reversed); flat symbols may get a new entry decision via the exact same
+     `evaluate_entry` gate live trading uses.
 
 Signals are only ever acted on at the NEXT bar's open, so there is no
 look-ahead, and every fill pays fees (taker for market orders and stops,
@@ -116,6 +117,16 @@ def run_backtest(
     pending: Signal | None = None
     pending_size: SizeResult | None = None
     pending_exit = ""
+    reverse_sig: Signal | None = None
+
+    def decide(sig: Signal, price: float, now: int) -> None:
+        nonlocal pending, pending_size
+        result.signals += 1
+        decision = evaluate_entry(sig, price, equity, equity, 0, now, guard, rules, risk_cfg, costs, leverage)
+        if decision.ok:
+            pending, pending_size = sig, decision.size
+        else:
+            result.skipped[_bucket_reason(decision.reason)] += 1
 
     def close_trade(price: float, reason: str, maker: bool, t: int) -> None:
         nonlocal trade, equity
@@ -161,6 +172,12 @@ def run_backtest(
             close_trade(px, pending_exit, False, c.open_time)
         pending_exit = ""
 
+        # 1b) the new side of a stop-and-reverse passes the entry gate only now,
+        #     with the closed trade booked (live also settles the exit first)
+        if reverse_sig is not None:
+            decide(reverse_sig, c.open, c.open_time)
+            reverse_sig = None
+
         # 2) entry decided at the previous close
         if pending is not None and trade is None:
             fill = c.open * (1 + slip) if pending.side == LONG else c.open * (1 - slip)
@@ -205,22 +222,20 @@ def run_backtest(
         sig = strat.on_candle(c)
         if trade is not None:
             trade.observe(c)
-            act = manage_trade(trade, c, strat.atr, mgmt, costs.round_trip_cost)
-            if act.exit_reason:
-                pending_exit = act.exit_reason
-            elif act.new_stop is not None:
-                trade.stop = act.new_stop
-                trade.stop_kind = act.new_stop_kind
-        elif sig is not None:
-            result.signals += 1
-            decision = evaluate_entry(
-                sig, c.close, equity, equity, 0, c.close_time + 1,
-                guard, rules, risk_cfg, costs, leverage,
-            )
-            if decision.ok:
-                pending, pending_size = sig, decision.size
+            flip = sig is not None and sig.side != trade.side
+            if mgmt.exit_on_opposite_signal and (flip or strat.should_exit(trade.side)):
+                # close at the next open; an opposite signal is entered right after (stop-and-reverse)
+                pending_exit = "REVERSE"
+                reverse_sig = sig if flip else None
             else:
-                result.skipped[_bucket_reason(decision.reason)] += 1
+                act = manage_trade(trade, c, strat.atr, mgmt, costs.round_trip_cost)
+                if act.exit_reason:
+                    pending_exit = act.exit_reason
+                elif act.new_stop is not None:
+                    trade.stop = act.new_stop
+                    trade.stop_kind = act.new_stop_kind
+        elif sig is not None:
+            decide(sig, c.close, c.close_time + 1)
 
         mtm = equity + (trade.unrealized_pnl(c.close) if trade is not None else 0.0)
         result.equity_curve.append((c.close_time, mtm))

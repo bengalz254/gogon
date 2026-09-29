@@ -57,6 +57,12 @@ class Strategy:
         self.last_skip_reason = reason
         return None
 
+    def should_exit(self, side: str) -> bool:
+        """True if an open `side` trade should be closed at this close even
+        though no opposite entry signal came (e.g. it was filtered out).
+        Only used with management.exit_on_opposite_signal."""
+        return False
+
     def status(self) -> dict:
         """Market readings behind the latest decision, for the dashboard."""
         out: dict = {}

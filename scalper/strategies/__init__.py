@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from scalper.config import Settings
 from scalper.strategies.base import Strategy
+from scalper.strategies.ema_cross import EmaCrossStrategy
 from scalper.strategies.range_reversion import RangeReversionStrategy
 from scalper.strategies.trend_follow import TrendFollowStrategy
 from scalper.strategies.trend_pullback import TrendPullbackStrategy
@@ -23,7 +24,12 @@ def build_strategy(settings: Settings, symbol: str) -> Strategy:
         return RangeReversionStrategy(symbol, base_ms, st.range_reversion, st.allow_long, st.allow_short)
     if st.name == "trend_follow":
         return TrendFollowStrategy(symbol, base_ms, st.trend_follow, st.allow_long, st.allow_short)
+    if st.name == "ema_cross":
+        return EmaCrossStrategy(symbol, base_ms, st.ema_cross, st.allow_long, st.allow_short)
     raise ValueError(f"Unknown strategy {st.name!r}")
 
 
-__all__ = ["Strategy", "TrendPullbackStrategy", "RangeReversionStrategy", "TrendFollowStrategy", "build_strategy"]
+__all__ = [
+    "Strategy", "TrendPullbackStrategy", "RangeReversionStrategy", "TrendFollowStrategy", "EmaCrossStrategy",
+    "build_strategy",
+]

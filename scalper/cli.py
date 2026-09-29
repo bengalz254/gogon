@@ -22,7 +22,7 @@ import sys
 import time
 
 from scalper import __version__
-from scalper.config import Settings, credentials_from_env, load_settings, validate
+from scalper.config import DEFAULT_CONFIG_PATH, Settings, credentials_from_env, load_settings, validate
 from scalper.logger import setup_logging
 
 logger = logging.getLogger("scalper")
@@ -269,6 +269,12 @@ GRIDS = {
         "trend_ema": [0, 100, 200],
         "mgmt_trail_atr": [2.5, 4.0],  # management.trail_atr
     },
+    "ema_cross": {
+        "min_sl_pct": [0.5, 0.8, 1.2],  # below ~0.42% the fee filter rejects most signals
+        "tp_r": [1.5, 2.0, 3.0],
+        "trend_ema": [0, 200],
+        "mgmt_exit_on_opposite_signal": [True, False],
+    },
 }
 
 
@@ -359,7 +365,7 @@ def cmd_optimize(args) -> int:
     print(
         "\nHow to read this: only the OOS columns are an honest test. Prefer settings that are\n"
         "good on BOTH sides and whose neighbours are also good (a plateau), not a lone spike.\n"
-        "Put your choice into config/scalper.yaml, then paper trade it."
+        f"Put your choice into {args.config or os.getenv('SCALPER_CONFIG_PATH', DEFAULT_CONFIG_PATH)}, then paper trade it."
     )
     return 0
 

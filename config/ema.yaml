@@ -1,0 +1,93 @@
+# Konfigurasi bot EMA CROSS: EMA 9 memotong EMA 21 -> langsung masuk.
+# Dipakai dengan --config:
+#
+#   python -m scalper --config config/ema.yaml backtest
+#   python -m scalper --config config/ema.yaml optimize
+#
+# Terpisah dari config/scalper.yaml dan config/trend.yaml (folder data & log
+# sendiri), jadi tidak saling mengganggu.
+# Rahasia (API key, token Telegram) TIDAK boleh ditulis di sini — taruh di .env.
+
+mode: paper
+
+symbols: [ETHUSDT]
+
+# Candle 3 menit. Catatan jujur: makin kecil timeframe, makin besar porsi fee
+# di setiap trade. Lihat hasil backtest sebelum memakai uang sungguhan.
+timeframe: 3m
+
+strategy:
+  name: ema_cross
+  allow_long: true
+  allow_short: true
+
+  ema_cross:
+    fast: 9                 # EMA9 memotong ke ATAS EMA21 = LONG,
+    slow: 21                # memotong ke BAWAH = SHORT (dicek saat candle tutup)
+    atr_period: 14
+    sl_atr: 1.5             # stop loss = 1.5 x ATR dari harga entry...
+    min_sl_pct: 0.5         # ...tapi minimal 0.5% dari harga, supaya fee tidak memakan semua
+    tp_r: 2.0               # take profit = 2 x jarak stop (stop 0.5% -> TP 1%)
+    trend_ema: 0            # 0 = ambil SEMUA persilangan; 200 = hanya searah EMA200
+
+management:
+  exit_on_opposite_signal: true   # persilangan berlawanan: tutup posisi & langsung balik arah
+  breakeven_at_r: 1.0       # setelah untung 1R, stop dipindah ke harga entry + fee
+  trail_start_r: 0          # tanpa trailing stop
+  trail_atr: 1.5
+  max_bars_in_trade: 0      # tanpa batas waktu: keluar lewat SL, TP atau persilangan berikutnya
+  cooldown_bars_after_exit: 0     # harus 0, kalau tidak posisi tidak bisa langsung dibalik
+  min_stop_gap_atr: 0.1
+
+risk:
+  risk_per_trade_pct: 0.5   # rugi maksimal per trade = 0.5% saldo (termasuk fee)
+  max_open_positions: 1
+  max_daily_loss_pct: 3.0   # rugi 3% sehari -> berhenti entry sampai 00:00 UTC
+  max_drawdown_pct: 15.0    # turun 15% dari puncak -> bot berhenti total (reset manual)
+  max_consecutive_losses: 3 # 3x rugi beruntun (pasar bolak-balik) -> istirahat
+  loss_cooldown_minutes: 60
+  max_trades_per_day: 60    # EMA9/21 di 3m bisa bersilang 20-35x sehari
+  max_notional_usd: 0
+  max_margin_use_pct: 80
+  min_sl_cost_ratio: 3.0    # stop harus >= 3x biaya round-trip (~0.42%)
+  liquidation_buffer: 0.5
+  maintenance_margin_rate: 0.01
+
+execution:
+  leverage: 5               # ukuran posisi ditentukan risk_per_trade_pct, BUKAN leverage
+  margin_type: ISOLATED
+  take_profit_order: limit  # TP limit = fee maker (lebih murah)
+  stop_working_type: MARK_PRICE
+  conditional_order_api: auto
+  orphan_policy: adopt
+  orphan_sl_atr: 2.0
+  auto_one_way_mode: false
+  poll_seconds: 2
+  position_check_seconds: 5
+  order_check_seconds: 60
+  candle_close_delay_seconds: 2
+  recv_window_ms: 5000
+  warmup_bars: 1000
+  flatten_on_exit: false
+
+costs:
+  taker_fee: 0.0005
+  maker_fee: 0.0002
+  slippage_bps: 2
+  funding_bps_per_8h: 1
+  use_exchange_fee_rates: true
+
+paper:
+  starting_balance: 1000
+
+backtest:
+  starting_balance: 1000
+  days: 365                 # 1 tahun candle 3m (~175 ribu candle)
+  oos_fraction: 0.3         # 30% data terakhir = ujian yang jujur
+
+notify:
+  telegram_enabled: false
+  heartbeat_minutes: 60
+
+data_dir: data/ema
+log_dir: logs/ema

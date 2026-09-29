@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 from scalper.models import INTERVAL_MS
 
 MODES = ("paper", "testnet", "live")
-STRATEGIES = ("trend_pullback", "range_reversion", "trend_follow")
+STRATEGIES = ("trend_pullback", "range_reversion", "trend_follow", "ema_cross")
 LIVE_FAPI_URL = "https://fapi.binance.com"
 TESTNET_FAPI_URL = "https://testnet.binancefuture.com"
 DEFAULT_CONFIG_PATH = "config/scalper.yaml"
@@ -81,6 +81,17 @@ class TrendFollowParams:
 
 
 @dataclass
+class EmaCrossParams:
+    fast: int = 9  # enter when this EMA crosses the slow one
+    slow: int = 21
+    atr_period: int = 14
+    sl_atr: float = 1.5  # stop distance in ATR...
+    min_sl_pct: float = 0.5  # ...but at least this % of the price, so fees stay a small part of the risk
+    tp_r: float = 2.0  # take profit = tp_r x stop distance
+    trend_ema: int = 0  # only take crosses in this EMA's direction (0 = every cross)
+
+
+@dataclass
 class StrategyConfig:
     name: str = "trend_pullback"
     allow_long: bool = True
@@ -88,6 +99,7 @@ class StrategyConfig:
     trend_pullback: TrendPullbackParams = field(default_factory=TrendPullbackParams)
     range_reversion: RangeReversionParams = field(default_factory=RangeReversionParams)
     trend_follow: TrendFollowParams = field(default_factory=TrendFollowParams)
+    ema_cross: EmaCrossParams = field(default_factory=EmaCrossParams)
 
 
 @dataclass
@@ -98,6 +110,9 @@ class ManagementConfig:
     max_bars_in_trade: int = 24
     cooldown_bars_after_exit: int = 2
     min_stop_gap_atr: float = 0.1
+    # Close an open trade when the strategy signals the other direction, and
+    # take that new signal right away (stop-and-reverse, e.g. EMA crosses).
+    exit_on_opposite_signal: bool = False
 
 
 @dataclass
@@ -377,6 +392,20 @@ def validate(s: Settings) -> list[str]:
                 f"trend_follow on {s.timeframe}: it is built for 1h and above, where fees are a "
                 "small part of each trade. Backtest before using it on small timeframes."
             )
+    ec = st.ema_cross
+    if st.name == "ema_cross":
+        if not (1 <= ec.fast < ec.slow):
+            errors.append("ema_cross needs 1 <= fast < slow")
+        if ec.atr_period < 2 or ec.trend_ema < 0:
+            errors.append("ema_cross needs atr_period >= 2 and trend_ema >= 0")
+        if ec.sl_atr <= 0 or ec.min_sl_pct < 0 or ec.tp_r <= 0:
+            errors.append("ema_cross needs sl_atr > 0, min_sl_pct >= 0 and tp_r > 0")
+    mg = s.management
+    if mg.exit_on_opposite_signal and mg.cooldown_bars_after_exit > 0:
+        warnings.append(
+            "management.exit_on_opposite_signal with cooldown_bars_after_exit > 0: the cooldown "
+            "keeps the new direction from opening, so trades close but do not reverse. Set it to 0 to reverse."
+        )
 
     r = s.risk
     if not (0 < r.risk_per_trade_pct <= 5):

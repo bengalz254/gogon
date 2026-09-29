@@ -443,3 +443,125 @@ def test_entry_works_when_exchange_reports_zero_fill_price(tmp_path):
     assert trade.stop == 99.0 and trade.take_profit == pytest.approx(100.005 + 1.5 * 1.005)
     assert len(h.fake.open_algos(SYM)) == 1 and len(h.fake.open_regular(SYM)) == 1
     assert h.journal() == []  # not closed as a bad fill
+
+
+# -- stop-and-reverse (management.exit_on_opposite_signal) ----------------------
+class ScriptedExits(ScriptedStrategy):
+    """Scripted signals, plus candles whose close says "exit" without a new
+    signal (an EMA cross the trend filter kept from opening the other way)."""
+
+    def __init__(self, symbol, plan, exits):
+        super().__init__(symbol, plan=plan)
+        self.exits = exits
+
+    def should_exit(self, side):
+        return self.last_candle is not None and self.last_candle.open_time in self.exits
+
+
+def reversing(tmp_path):
+    s = Harness.default_settings("testnet")
+    s.management.exit_on_opposite_signal = True
+    s.management.cooldown_bars_after_exit = 0
+    s.management.breakeven_at_r = 0
+    return Harness(tmp_path, settings=s)
+
+
+def test_opposite_signal_closes_the_trade_and_reverses(tmp_path):
+    h = reversing(tmp_path)
+    first = open_long(h)
+    h.signal_next(SHORT, stop=101.0)
+    h.play(100, 100.2, 99.8, 100.1)
+    [row] = h.journal()
+    assert row["side"] == LONG and row["exit_reason"] == "REVERSE"
+    t = h.engine.trades[SYM]
+    assert t.side == SHORT and t.trade_id != first.trade_id
+    assert h.fake.pos[SYM][0] == pytest.approx(-t.qty)
+    [stop] = h.fake.open_algos(SYM)  # only the new trade's stop is left
+    assert stop["side"] == "BUY" and stop["orderType"] == "STOP_MARKET"
+    [tp] = h.fake.open_regular(SYM)
+    assert tp["side"] == "BUY" and float(tp["price"]) == pytest.approx(t.take_profit, abs=0.01)  # tick size
+    assert h.engine.why.latest[SYM]["code"] == "entered"
+
+
+def test_same_side_signal_does_not_reverse(tmp_path):
+    h = reversing(tmp_path)
+    first = open_long(h)
+    h.signal_next(LONG, stop=99.0)
+    h.play(100, 100.2, 99.8, 100.1)
+    assert h.engine.trades[SYM] is first and h.journal() == []
+
+
+def test_without_the_setting_an_opposite_signal_is_ignored(tmp_path):
+    h = Harness(tmp_path)
+    first = open_long(h)
+    h.signal_next(SHORT, stop=101.0)
+    h.play(100, 100.2, 99.8, 100.1)
+    assert h.engine.trades[SYM] is first and h.journal() == []
+
+
+def test_reversal_waits_for_closing_fills_that_show_up_late(tmp_path):
+    h = reversing(tmp_path)
+    open_long(h)
+    real, calls = h.engine.broker.closed_trade_info, []
+
+    def late(sym, trade, final=False):
+        calls.append(final)
+        return None if len(calls) == 1 else real(sym, trade, final)
+
+    h.engine.broker.closed_trade_info = late
+    h.signal_next(SHORT, stop=101.0)
+    h.play(100, 100.2, 99.8, 100.1)
+    assert len(calls) == 2 and h.journal()[0]["exit_reason"] == "REVERSE"
+    assert h.engine.trades[SYM].side == SHORT
+
+
+def test_no_reversal_on_top_of_a_trade_that_could_not_be_closed(tmp_path):
+    from scalper.exchange import BinanceAPIError
+
+    h = reversing(tmp_path)
+    first = open_long(h)
+
+    def refuse(sym, pos):
+        raise BinanceAPIError(400, -1001, "Internal error")
+
+    h.engine.broker.close_position = refuse
+    h.signal_next(SHORT, stop=101.0)
+    h.play(100, 100.2, 99.8, 100.1)
+    assert h.engine.trades[SYM] is first and h.fake.pos[SYM][0] == pytest.approx(first.qty)
+    assert h.journal() == [] and len(h.fake.open_algos(SYM)) == 1  # the stop still guards it
+    h.play(100, 100.1, 98.8, 99.0)  # the exchange stop closes it later: booked as SL, not REVERSE
+    assert h.journal()[0]["exit_reason"] == "SL"
+
+
+def test_filtered_opposite_cross_closes_without_reversing(tmp_path):
+    h = reversing(tmp_path)
+    exits = set()
+    h.engine.strategies[SYM] = ScriptedExits(SYM, h.plan, exits)
+    open_long(h)
+    exits.add(h.fake.candles[SYM][-1].open_time + STEP)
+    h.play(100, 100.2, 99.8, 100.1)
+    [row] = h.journal()
+    assert row["exit_reason"] == "REVERSE" and h.engine.trades == {} and h.fake.pos[SYM][0] == 0
+    assert h.fake.open_algos(SYM) == [] and h.fake.open_regular(SYM) == []
+
+
+def test_stale_opposite_signal_closes_but_does_not_reverse(tmp_path):
+    h = reversing(tmp_path)
+    open_long(h)
+    h.signal_next(SHORT, stop=101.0)
+    for _ in range(4):  # candles pass while the bot is not ticking
+        h.play(100, 100.1, 99.9, 100, tick=False)
+    h.engine.tick()
+    assert h.journal()[0]["exit_reason"] == "REVERSE"
+    assert h.engine.trades == {} and h.fake.pos[SYM][0] == 0
+
+
+def test_paper_mode_reverses_too(tmp_path):
+    s = Harness.default_settings("paper")
+    s.management.exit_on_opposite_signal = True
+    s.management.cooldown_bars_after_exit = 0
+    h = Harness(tmp_path, mode="paper", settings=s)
+    open_long(h)
+    h.signal_next(SHORT, stop=101.0)
+    h.play(100, 100.2, 99.8, 100.1)
+    assert h.journal()[0]["exit_reason"] == "REVERSE" and h.engine.trades[SYM].side == SHORT
