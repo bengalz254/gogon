@@ -223,7 +223,7 @@ footer { color: var(--muted); font-size: 12px; text-align: center; padding: 8px 
   </section>
 
   <section class="card">
-    <h2>Riset: token yang dibeli vs yang ditolak</h2>
+    <h2>Riset: token yang lolos filter vs yang ditolak</h2>
     <div class="sub" style="font-size:12px;margin-bottom:8px">Median kenaikan harga dari titik beli (menit setelah migrasi), dan persentase token yang naik. Ini yang menunjukkan apakah filter benar-benar membantu.</div>
     <div class="table-wrap" id="research"></div>
     <ul class="verdict" id="verdict"></ul>

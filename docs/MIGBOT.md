@@ -43,80 +43,210 @@ bisa langsung membuka token itu di GMGN dari HP.
 
 ---
 
-## Pasang di VPS (±15 menit)
+## Mulai dari sini (langkah demi langkah)
 
-Bot ini jalan berdampingan dengan bot lain di VPS yang sama (nama service dan port
-dashboard-nya sendiri: `migbot`, port 8780).
+Semua perintah diketik di VPS, kecuali yang ditandai **(di PC)** atau **(di browser)**.
+Setiap langkah punya **✅ Cek**. Jangan lanjut sebelum hasilnya sesuai; kalau ada
+**❌**, ikuti petunjuknya atau kirim tulisan di layar ke Claude.
 
-### 1. Ambil kode (folder baru, tidak mengganggu bot lain)
+Bot ini ringan dan bisa jalan di VPS yang sama dengan bot lain (service-nya
+`migbot`, dashboard-nya port 8780, folder-nya `~/migbot`).
+
+### Tahap A — Masuk ke VPS
+
+**Langkah 1 (di PC).** Buka PowerShell, lalu:
+
+```powershell
+ssh root@IP-VPS
+```
+
+Ganti `IP-VPS` dengan IP server Vultr-mu. Ketik password (hurufnya tidak muncul, itu
+normal), lalu Enter.
+
+✅ **Cek:** muncul `root@...:~#`.
+❌ `Connection timed out`: IP salah atau VPS mati. Cek di dashboard Vultr.
+
+### Tahap B — Pasang bot
+
+**Langkah 2.** Ambil kode ke folder baru `~/migbot`:
 
 ```bash
 cd ~
 git clone -b claude/kind-mayer-gr7tjq https://github.com/bengalz254/gogon.git migbot
-cd ~/migbot
 ```
 
-### 2. Jalankan skrip instalasi
+✅ **Cek:** tidak ada tulisan `fatal`.
+❌ `destination path 'migbot' already exists`: folder sudah ada. Jalankan
+`cd ~/migbot && git pull`, lalu lanjut ke Langkah 3.
+
+**Langkah 3.** Masuk ke folder:
+
+```bash
+cd ~/migbot
+ls
+```
+
+✅ **Cek:** terlihat `migbot`, `config`, `deploy`, `docs`, `tests`.
+
+**Langkah 4.** Jalankan skrip instalasi (2–5 menit, jangan ditutup):
 
 ```bash
 bash deploy/setup_migbot.sh
 ```
 
-Skrip ini memasang Python dan paket, menjalankan tes otomatis, membuat `.env`,
-mengecek koneksi ke semua sumber data (`python -m migbot check`), lalu memasang dua
-service yang otomatis hidup lagi setelah crash atau VPS restart:
+✅ **Cek:**
+- tahap `2/5` diakhiri `... passed` (tes otomatis lolos);
+- tahap `4/5` punya `[OK] PumpPortal` **atau** `[OK] GeckoTerminal`, dan
+  `[OK] DexScreener`. Baris `[!] GMGN ... diblokir` dan `[!] Telegram belum diisi`
+  itu normal;
+- paling bawah: `SELESAI. Bot migbot jalan 24/7 di VPS ini (mode PAPER).` beserta
+  perintah tunnel dashboard. Catat nomor port-nya (biasanya 8780).
 
-* `migbot`: bot-nya;
-* `migbot-dashboard`: dashboard di `127.0.0.1:8780` (atau port kosong berikutnya).
+❌ Berhenti dengan tulisan merah `GAGAL: ...`: salin semua tulisan dari `==> 4/5`
+sampai bawah dan kirim ke Claude. Jangan lanjut dulu.
 
-✅ **Cek:** di akhir muncul `SELESAI. Bot migbot jalan 24/7`.
+### Tahap C — Telegram dan RPC (disarankan)
 
-### 3. Isi `.env` (disarankan)
+**Langkah 5.** Cari token Telegram dari bot lain yang sudah pernah dipakai:
+
+```bash
+grep -H TELEGRAM ~/*/.env
+```
+
+✅ **Cek:** muncul baris seperti `/root/scalper-bot/.env:TELEGRAM_BOT_TOKEN=123456:ABC...`
+dan `...TELEGRAM_CHAT_ID=...`. Catat kedua nilainya. Bot Telegram yang sama boleh
+dipakai; pesan bot ini diawali `[migbot]`. Abaikan baris `/root/migbot/.env` yang
+masih kosong.
+❌ Tidak ada yang terisi: buat bot baru. Di Telegram buka **@BotFather**, kirim
+`/newbot`, ikuti petunjuknya, salin token. Kirim "halo" ke bot barumu, buka
+`https://api.telegram.org/bot<TOKEN>/getUpdates` di browser, lalu salin angka
+setelah `"chat":{"id":`.
+
+**Langkah 6 (di browser).** Daftar RPC Solana gratis di <https://www.helius.dev>
+(Sign up), lalu di dashboard Helius salin URL RPC **mainnet**, bentuknya
+`https://mainnet.helius-rpc.com/?api-key=...`.
+
+✅ **Cek:** kamu punya URL yang diawali `https://mainnet.helius-rpc.com/?api-key=`.
+Tanpa ini bot tetap jalan, tapi cek holder/dev sering dilewati karena RPC publik
+membatasi request.
+
+**Langkah 7.** Masukkan ke `.env`:
 
 ```bash
 nano ~/migbot/.env
 ```
 
-| Isian | Kegunaan |
-|---|---|
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Alert beli/jual + ringkasan harian ke HP (cara buat: @BotFather → `/newbot`) |
-| `SOLANA_RPC_URL` | **Sangat disarankan.** RPC publik Solana sering membatasi request, sehingga cek holder/dev bisa dilewati. Daftar gratis di [helius.dev](https://www.helius.dev), lalu isi `https://mainnet.helius-rpc.com/?api-key=KEY_KAMU` |
-| `PUMPPORTAL_API_KEY`, `JUPITER_API_KEY` | Opsional. Hanya kalau PumpPortal/Jupiter meminta key |
+Tekan panah ↓ sampai bagian `migbot` di bawah. Isi setelah tanda `=` (tanpa spasi;
+di PowerShell, klik kanan = tempel):
 
-Setelah mengubah `.env`: `sudo systemctl restart migbot`, lalu tes Telegram:
+```
+SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=...
+TELEGRAM_BOT_TOKEN=123456:ABC...
+TELEGRAM_CHAT_ID=123456789
+```
+
+Simpan: `Ctrl+O`, Enter, lalu `Ctrl+X`.
+
+✅ **Cek:** `grep -E "SOLANA_RPC_URL|TELEGRAM" ~/migbot/.env` menampilkan ketiga baris
+itu beserta isinya.
+
+**Langkah 8.** Restart bot dan tes semuanya:
 
 ```bash
+sudo systemctl restart migbot
 cd ~/migbot && venv/bin/python -m migbot check --telegram-test
 ```
 
----
+✅ **Cek:**
+- Telegram menerima `[migbot] Tes notifikasi ... berhasil ✅` dan `🟢 Bot migrated mulai (PAPER)`;
+- ada `[OK] Solana RPC` tanpa tulisan "sebagian gagal";
+- baris terakhir `✅ Siap.`
 
-## Dashboard
+❌ `[!] Telegram gagal`: token atau chat id salah ketik. Ulangi Langkah 7.
 
-**Dari PC (PowerShell)**, jalankan perintah tunnel yang dicetak skrip (biasanya):
+### Tahap D — Pastikan bot jalan
+
+**Langkah 9.** Lihat log:
+
+```bash
+sudo journalctl -u migbot -n 20 --no-pager
+```
+
+✅ **Cek:** ada `migbot 1.0.0 started (PAPER)` dan
+`PumpPortal connected, subscribing to migrations`.
+
+**Langkah 10.** Tunggu migrasi pertama (biasanya 5–30 menit, tergantung ramai pasar):
+
+```bash
+sudo journalctl -u migbot -f
+```
+
+✅ **Cek:** muncul `Migration ... via pumpportal`. Tekan `Ctrl+C` untuk keluar dari log
+(bot **tetap** jalan). Sekitar 3 menit setelah migrasi, token itu dibeli
+(`PAPER BUY`) atau ditolak (alasannya terlihat di dashboard).
+
+### Tahap E — Buka dashboard
+
+**Langkah 11 (di PC).** Buka jendela PowerShell **baru** (jendela SSH yang lama biarkan
+saja), lalu:
 
 ```powershell
 ssh -N -L 8780:127.0.0.1:8780 root@IP-VPS
 ```
 
-Biarkan jendelanya terbuka, lalu buka <http://127.0.0.1:8780>.
+Pakai nomor port dari Langkah 4 kalau bukan 8780. Masukkan password. Jendelanya
+terlihat diam: itu normal, biarkan terbuka. Lalu buka <http://127.0.0.1:8780> di browser.
 
-**Dari HP (Tailscale sudah terpasang di VPS):**
+✅ **Cek:** judul **Migrated Meme Bot** dan tulisan hijau **✓ bot jalan**.
+❌ `Address already in use`: port itu di PC dipakai program lain. Pakai
+`ssh -N -L 8790:127.0.0.1:8780 root@IP-VPS`, lalu buka <http://127.0.0.1:8790>.
+
+**Langkah 12 (opsional, dashboard di HP lewat Tailscale).** Di VPS:
 
 ```bash
-tailscale serve --bg --https=8453 8780
+tailscale status
 ```
 
-Lalu buka alamat `https://nama-vps.xxxx.ts.net:8453/` dari HP (Tailscale menyala).
+- Muncul daftar perangkat: jalankan `sudo tailscale serve --bg --https=8453 8780`.
+  ✅ **Cek:** muncul alamat `https://....ts.net:8453/`; buka di HP dengan aplikasi
+  Tailscale menyala.
+- `command not found`: pasang dulu dengan
+  `curl -fsSL https://tailscale.com/install.sh | sh` lalu
+  `sudo tailscale up --accept-dns=false`, buka link login yang muncul (akun Tailscale
+  yang sama dengan di HP), lalu jalankan perintah `tailscale serve` di atas.
+
 Jangan pakai `tailscale funnel` (itu membuka dashboard ke seluruh internet).
+
+### Tahap F — Setelah itu
+
+**Langkah 13.** Biarkan jalan minimal 3–7 hari **tanpa mengubah pengaturan**. Pantau
+dashboard dan Telegram (ringkasan harian jam 08:00 WITA / 07:00 WIB).
+
+**Langkah 14.** Ambil laporan dan kirim ke Claude:
+
+```bash
+cd ~/migbot && venv/bin/python -m migbot report
+```
+
+Dari laporan itu kelihatan apakah baris **lolos filter** lebih bagus dari **ditolak**.
+
+| Perlu | Perintah |
+|---|---|
+| Hentikan bot | `sudo systemctl stop migbot` |
+| Nyalakan lagi | `sudo systemctl start migbot` |
+| Update bot | `cd ~/migbot && git pull && bash deploy/setup_migbot.sh` |
+
+---
+
+## Dashboard
 
 Isi dashboard:
 
 * **P&L paper**: saldo + nilai posisi − modal awal (5 SOL simulasi).
-* **Token migrated yang sedang dipantau**: status (dipantau / dibeli / ditolak /
-  tanpa data), market cap, likuiditas, volume 5 menit, rasio beli, dan hasil setiap
+* **Token migrated yang sedang dipantau**: status (dipantau / dibeli / lolos, tak
+  dibeli / ditolak / tanpa data), market cap, likuiditas, volume 5 menit, rasio beli, dan hasil setiap
   filter (klik untuk melihat semua cek ✓/✕).
-* **Riset: dibeli vs ditolak**: bagian terpenting (lihat di bawah).
+* **Riset: lolos filter vs ditolak**: bagian terpenting (lihat di bawah).
 * **Sumber data**: status PumpPortal, GeckoTerminal, DexScreener, RPC, RugCheck,
   GMGN, Jupiter, dan Telegram.
 

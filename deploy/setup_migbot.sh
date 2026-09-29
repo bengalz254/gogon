@@ -221,5 +221,5 @@ Dashboard dari PC (PowerShell):
   Biarkan jendela itu terbuka, lalu buka http://127.0.0.1:$PORT di browser.
 
 Dashboard dari HP (kalau Tailscale sudah terpasang di VPS):
-  tailscale serve --bg --https=8453 $PORT
+  ${S}tailscale serve --bg --https=8453 $PORT
 EOF
