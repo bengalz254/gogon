@@ -32,9 +32,12 @@ tracking:
   track_minutes: 120             # SETIAP token migrasi dipantau 2 jam (dibeli atau tidak) untuk riset
   checkpoints_minutes: [1, 3, 5, 10, 15, 30, 60, 120]
 
-entry:
-  delay_seconds: 180             # jangan beli di detik-detik pertama: tunggu 3 menit (dump awal lewat dulu)
-  window_seconds: 900            # boleh beli sampai 15 menit setelah migrasi; lewat itu = ditolak
+entry:                           # BELI SAAT DIP, bukan saat launch
+  delay_seconds: 300             # tidak pernah beli di 5 menit pertama setelah migrasi
+  window_seconds: 3600           # boleh beli sampai 60 menit setelah migrasi; lewat itu = ditolak
+  dip_pct: 30                    # harga sekarang minimal 30% di bawah harga tertinggi sejak migrasi...
+  dip_bounce_pct: 10             # ...dan sudah naik lagi minimal 10% dari titik terendahnya (jatuhnya berhenti)
+                                 # dip_pct: 0 = cara lama: beli begitu semua filter lolos
 
 filters:                         # SEMUA harus lolos (mirip filter di GMGN)
   min_liquidity_usd: 10000
@@ -43,7 +46,7 @@ filters:                         # SEMUA harus lolos (mirip filter di GMGN)
   min_volume_5m_usd: 5000        # volume 5 menit terakhir
   min_txns_5m: 60                # jumlah transaksi 5 menit terakhir
   min_buy_ratio_5m: 0.50         # porsi transaksi beli (0.5 = 50%)
-  max_drop_from_first_pct: 40    # tolak kalau harga sudah turun > 40% dari harga pertama yang terlihat
+  max_drop_from_first_pct: 50    # tolak kalau harga sudah turun > 50% dari harga pertama yang terlihat (token sekarat)
   max_rise_from_first_pct: 300   # tolak kalau sudah naik > 300% (jangan mengejar)
   require_socials: false         # true = wajib punya link website/twitter/telegram di DexScreener
   require_mint_renounced: true   # token tidak bisa dicetak lagi
@@ -58,7 +61,7 @@ filters:                         # SEMUA harus lolos (mirip filter di GMGN)
   strict_missing_data: false     # true = cek yang datanya tidak ada dianggap GAGAL (bukan dilewati)
 
 safety:
-  refresh_seconds: 60            # data holder/dev diperbarui paling cepat tiap 60 detik per token
+  refresh_seconds: 180           # data holder/dev diperbarui paling cepat tiap 3 menit per token (hemat kuota Helius)
   amm_owners:                    # pemilik akun pool/burn: tidak dihitung sebagai holder
     - 5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1   # Raydium AMM v4
     - GpMZbSM2GgvTKHJirzeGfMFoaZ8UR2X7F4v8vHTvxFbL   # Raydium CPMM
@@ -84,11 +87,12 @@ trading:                         # uang SIMULASI
   max_daily_loss_sol: 2          # rugi hari ini (terealisasi + posisi terbuka) sampai 2 SOL -> berhenti beli sampai 00:00 UTC
 
 exits:
-  stop_loss_pct: 35              # jual semua kalau turun 35% dari harga beli (sudah termasuk fee)
-  take_profit: [[100, 0.5]]      # [naik %, porsi dijual]: +100% jual 50% posisi awal. Contoh bertingkat: [[50, 0.3], [150, 0.4]]
-  trailing_start_pct: 50         # trailing stop aktif setelah pernah naik 50%...
-  trailing_pct: 30               # ...lalu jual semua kalau turun 30% dari harga tertinggi
-  max_hold_minutes: 60           # jual semua setelah 60 menit
+  stop_loss_pct: 25              # jual semua kalau turun 25% dari harga beli (sudah termasuk fee)
+  breakeven_after_pct: 20        # setelah pernah naik 20%, stop loss naik ke harga beli: untung yang berbalik tidak jadi rugi besar
+  take_profit: [[40, 0.5]]       # [naik %, porsi dijual]: +40% jual 50% posisi awal. Contoh bertingkat: [[30, 0.3], [80, 0.4]]
+  trailing_start_pct: 40         # trailing stop aktif setelah pernah naik 40%...
+  trailing_pct: 25               # ...lalu jual semua kalau turun 25% dari harga tertinggi
+  max_hold_minutes: 45           # jual semua setelah 45 menit
   liquidity_drop_pct: 50         # jual semua kalau likuiditas turun 50% dari saat beli (tanda rug)
   no_data_exit_minutes: 10       # jual kalau harga tidak ada kabar 10 menit
 

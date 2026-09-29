@@ -70,6 +70,59 @@ def test_summary_numbers(tmp_path):
     assert "likuiditas" in text and "take profit +100% 1x" in text
 
 
+def closed_positions(data_dir, rows, dip=True):
+    """rows: (best price while held vs entry %, position P&L in SOL, exit reason)."""
+    trades = CsvJournal(os.path.join(data_dir, "trades.csv"), TRADE_FIELDS)
+    for i, (peak, pnl, reason) in enumerate(rows):
+        mint, symbol = f"D{i}", f"S{i}"
+        trades.append({"mint": mint, "symbol": symbol, "side": "BUY", "reason": "beli saat dip" if dip else "lolos filter",
+                       "sol": "0.101", "fee_sol": "0.001", "entry_age_min": "12.0"})
+        trades.append({"mint": mint, "symbol": symbol, "side": "SELL", "reason": reason, "sol": "0.07", "pnl_sol": str(pnl),
+                       "position_pnl_sol": str(pnl), "fee_sol": "0.001", "peak_pct": str(peak), "low_pct": "-30.0",
+                       "held_min": "8.0", "entry_age_min": "12.0"})
+
+
+def test_diagnosis_blames_the_entry_when_prices_never_rise(tmp_path):
+    rows = [(2, -0.03, "stop loss")] * 4 + [(5, -0.03, "stop loss"), (30, -0.004, "stop impas"), (60, 0.03, "trailing stop")]
+    closed_positions(str(tmp_path), rows)
+    rep = summarize(str(tmp_path))
+    assert rep["pnl"]["diagnosis"] == {"n": 7, "never_up": 5, "gave_back": 1, "median_entry_age_min": 12.0, "median_held_min": 8.0}
+    assert rep["pnl"]["dip_mode"]
+    text = format_report(rep)
+    assert "5 dari 7 posisi tidak pernah naik 10% setelah dibeli: masalah utamanya WAKTU BELI" in text
+    # In dip mode the research groups say nothing about the filters, so no verdict on them.
+    assert "Mode beli saat dip" in text and "Filter memilih" not in text and "Filter BELUM" not in text
+    recent = [line.split() for line in text.splitlines() if line.startswith("  $S")]
+    assert len(recent) == 7 and recent[0] == ["$S0", "12m", "+2%", "-30%", "stop", "loss"]
+    assert recent[-1] == ["$S6", "12m", "+60%", "+30%", "trailing", "stop"]
+
+
+def test_diagnosis_blames_the_exit_when_gains_are_given_back(tmp_path):
+    rows = [(35, -0.02, "stop loss")] * 3 + [(15, -0.03, "stop loss"), (50, 0.04, "trailing stop"), (12, -0.03, "waktu habis")]
+    closed_positions(str(tmp_path), rows, dip=False)
+    rep = summarize(str(tmp_path))
+    assert rep["pnl"]["diagnosis"]["never_up"] == 0 and rep["pnl"]["diagnosis"]["gave_back"] == 3
+    assert not rep["pnl"]["dip_mode"]
+    assert "3 dari 6 posisi sempat naik 20%+ tapi ditutup rugi: masalah utamanya CARA JUAL" in format_report(rep)
+
+
+def test_no_diagnosis_hint_on_too_few_positions_or_old_data(tmp_path):
+    closed_positions(str(tmp_path / "few"), [(1, -0.03, "stop loss")] * 4)
+    assert "masalah utamanya" not in format_report(summarize(str(tmp_path / "few")))
+    fill(str(tmp_path / "old"))  # trades from before the diagnosis columns existed
+    old = summarize(str(tmp_path / "old"))
+    assert old["pnl"]["diagnosis"]["n"] == 0 and len(old["pnl"]["recent"]) == 2
+    assert "Diagnosa" not in format_report(old)
+
+
+def test_report_reads_another_folder(tmp_path, capsys):
+    archive = tmp_path / "archive" / "20260929-150627"
+    fill(str(archive))
+    assert main(["report", "--dir", str(archive)]) == 0
+    assert "Token selesai dipantau: 7" in capsys.readouterr().out
+    assert main(["report", "--dir", str(tmp_path / "missing")]) == 1
+
+
 def test_empty_report(tmp_path):
     rep = summarize(str(tmp_path))
     assert rep["tokens_total"] == 0 and rep["pnl"]["closed"] == 0
@@ -121,13 +174,14 @@ def test_reset_archives_data(tmp_path, monkeypatch, capsys):
     data = tmp_path / "data"
     data.mkdir()
     (data / "trades.csv").write_text("x\n", encoding="utf-8")
+    (data / "paths.jsonl.gz").write_bytes(b"")
     write_json_atomic(str(data / "status.json"), {"running": True, "updated_at": time.time()})
     assert main(["--config", str(cfg), "reset", "--yes"]) == 1  # refuses while the bot runs
     write_json_atomic(str(data / "status.json"), {"running": False, "updated_at": time.time()})
     assert main(["reset", "--config", str(cfg), "--yes"]) == 0
     assert not (data / "trades.csv").exists()
     archived = list((data / "archive").iterdir())
-    assert len(archived) == 1 and (archived[0] / "trades.csv").exists()
+    assert len(archived) == 1 and (archived[0] / "trades.csv").exists() and (archived[0] / "paths.jsonl.gz").exists()
 
 
 def test_config_error_exits_with_code_2(tmp_path):

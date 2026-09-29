@@ -98,20 +98,29 @@ def links(mint: str, pair: str = "") -> str:
     )
 
 
+def entry_rule(entry) -> str:
+    """The entry rule in one line (Telegram start message and `migbot check`)."""
+    when = f"{fmt_dur(entry.delay_seconds)} sampai {fmt_dur(entry.window_seconds)} setelah migrasi"
+    if entry.dip_pct > 0:
+        bounce = f", lalu naik lagi ≥ {entry.dip_bounce_pct:g}% dari dasar" if entry.dip_bounce_pct > 0 else ""
+        return f"beli saat dip: harga ≥ {entry.dip_pct:g}% di bawah puncak sejak migrasi{bounce}; {when}"
+    return f"beli begitu filter lolos; {when}"
+
+
 def start_text(mode: str, balance: float, settings) -> str:
     f, x = settings.filters, settings.exits
     tps = ", ".join(f"+{g:g}% jual {p * 100:g}%" for g, p in x.take_profit) or "-"
+    breakeven = f", impas setelah +{x.breakeven_after_pct:g}%" if x.breakeven_after_pct > 0 else ""
     return (
         f"🟢 Bot migrated mulai ({mode}). Saldo paper {balance:.3f} SOL.\n"
-        f"Beli {settings.trading.buy_sol:g} SOL, {fmt_dur(settings.entry.delay_seconds)} sampai "
-        f"{fmt_dur(settings.entry.window_seconds)} setelah migrasi.\n"
+        f"Beli {settings.trading.buy_sol:g} SOL, {entry_rule(settings.entry)}.\n"
         f"Filter: likuiditas ≥ {fmt_usd(f.min_liquidity_usd)}, mcap {fmt_usd(f.min_market_cap_usd)}-"
         f"{fmt_usd(f.max_market_cap_usd) if f.max_market_cap_usd else '∞'}, vol 5m ≥ {fmt_usd(f.min_volume_5m_usd)}, "
         f"top10 ≤ {f.max_top10_pct:g}%, dev ≤ {f.max_dev_hold_pct:g}%"
         f"{f', holder ≥ {f.min_holders}' if f.min_holders > 0 else ''}.\n"
         f"Maks {settings.trading.max_open_positions} posisi, {settings.trading.max_buys_per_day} beli/hari, "
         f"berhenti kalau rugi hari ini {settings.trading.max_daily_loss_sol:g} SOL.\n"
-        f"Keluar: SL -{x.stop_loss_pct:g}%, TP {tps}, trailing {x.trailing_pct:g}% "
+        f"Keluar: SL -{x.stop_loss_pct:g}%{breakeven}, TP {tps}, trailing {x.trailing_pct:g}% "
         f"(aktif +{x.trailing_start_pct:g}%), maks {x.max_hold_minutes:g} mnt."
     )
 
@@ -129,9 +138,13 @@ def buy_text(tok, pos, fill, snap) -> str:
     if holders is not None and not safety.get("holder_count_complete", True):
         holders = f"{holders}+"
     impact = f", impact {fill.impact_pct:.1f}%" if fill.impact_pct is not None else ""
+    peak, low, price = tok.peak_price_usd, tok.dip_low_usd, snap.price_usd
+    dip = ""
+    if peak and low and price:
+        dip = f" · {(1 - price / peak) * 100:.0f}% di bawah puncak, +{(price / low - 1) * 100:.0f}% dari dasar"
     return (
         f"✅ BELI (paper) {tok.label} {tok.name}\n"
-        f"Umur {fmt_dur(pos.opened_at - tok.migrated_at)} sejak migrasi\n"
+        f"Umur {fmt_dur(pos.opened_at - tok.migrated_at)} sejak migrasi{dip}\n"
         f"Mcap {fmt_usd(snap.market_cap_usd)} · Likuiditas {fmt_usd(snap.liquidity_usd)} · "
         f"Vol 5m {fmt_usd(snap.volume_m5)} · Beli {'?' if ratio is None else f'{ratio * 100:.0f}%'}\n"
         f"Top10 {'?' if top10 is None else f'{top10:.0f}%'} · Dev {'?' if dev is None else f'{dev:.1f}%'}"

@@ -224,7 +224,7 @@ footer { color: var(--muted); font-size: 12px; text-align: center; padding: 8px 
 
   <section class="card">
     <h2>Riset: token yang lolos filter vs yang ditolak</h2>
-    <div class="sub" style="font-size:12px;margin-bottom:8px">Median kenaikan harga dari titik beli (menit setelah migrasi), dan persentase token yang naik. Ini yang menunjukkan apakah filter benar-benar membantu.</div>
+    <div class="sub" style="font-size:12px;margin-bottom:8px">Median kenaikan harga dari titik pembanding (awal jendela beli, sama untuk semua token), dan persentase token yang naik. Di mode beli saat dip, nilai strategi dari P&amp;L dan diagnosa posisi di laporan.</div>
     <div class="table-wrap" id="research"></div>
     <ul class="verdict" id="verdict"></ul>
   </section>
@@ -412,7 +412,7 @@ function renderStatus(st) {
       el("td", { class: "wrap-cell" }, detail));
   });
   replace("tokens", table([{ label: "Token" }, { label: "Status" }, { label: "Umur", num: 1 }, { label: "Mcap", num: 1 },
-    { label: "Likuiditas", num: 1 }, { label: "Vol 5m", num: 1 }, { label: "Beli 5m", num: 1 }, { label: "Dari titik beli", num: 1 },
+    { label: "Likuiditas", num: 1 }, { label: "Vol 5m", num: 1 }, { label: "Beli 5m", num: 1 }, { label: "Dari puncak", num: 1 },
     { label: "Filter" }], tokRows, "Belum ada migrasi yang terdeteksi. Migrasi pump.fun biasanya muncul beberapa kali per jam."));
 
   // activity

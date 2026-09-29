@@ -55,8 +55,11 @@ def cmd_dashboard(args) -> int:
 def cmd_report(args) -> int:
     from migbot.report import format_report, summarize
 
-    s = _settings(args)
-    print(format_report(summarize(s.data_dir)))
+    data_dir = args.dir or _settings(args).data_dir
+    if not os.path.isdir(data_dir):
+        print(f"GAGAL: folder {data_dir} tidak ada", file=sys.stderr)
+        return 1
+    print(format_report(summarize(data_dir)))
     return 0
 
 
@@ -68,7 +71,7 @@ def cmd_reset(args) -> int:
     if status.get("running") and time.time() - float(status.get("updated_at") or 0) < 60:
         print("GAGAL: bot masih jalan. Hentikan dulu (sudo systemctl stop migbot), lalu ulangi.", file=sys.stderr)
         return 1
-    names = ["state.json", "status.json", "tokens.csv", "trades.csv"]
+    names = ["state.json", "status.json", "tokens.csv", "trades.csv", "paths.jsonl.gz"]
     present = [n for n in names if os.path.exists(os.path.join(s.data_dir, n))]
     if not present:
         print("Tidak ada data untuk direset.")
@@ -108,7 +111,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--port", type=int, default=8780)
     p.add_argument("--no-browser", action="store_true")
     p.set_defaults(func=cmd_dashboard)
-    sub.add_parser("report", parents=[common], help="laporan riset dan P&L").set_defaults(func=cmd_report)
+    p = sub.add_parser("report", parents=[common], help="laporan riset dan P&L")
+    p.add_argument("--dir", default=None, help="folder data lain, mis. arsip: data/migbot/archive/20260929-150627")
+    p.set_defaults(func=cmd_report)
     p = sub.add_parser("reset", parents=[common], help="arsipkan data dan mulai dari nol")
     p.add_argument("--yes", action="store_true", help="tanpa konfirmasi")
     p.set_defaults(func=cmd_reset)

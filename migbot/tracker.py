@@ -37,6 +37,8 @@ class TrackedToken:
     ref_at: float | None = None
     max_price_usd: float | None = None
     min_price_usd: float | None = None
+    peak_price_usd: float | None = None  # highest price since the migration (for buying the dip)
+    dip_low_usd: float | None = None  # lowest price since that high
     checkpoints: dict[str, float] = field(default_factory=dict)
     last: dict = field(default_factory=dict)  # latest MarketSnapshot as a dict
     last_eval_ts: float = 0.0
@@ -73,6 +75,10 @@ class TrackedToken:
             return
         if self.first_price_usd is None:
             self.first_price_usd, self.first_price_at = price_usd, now
+        if self.peak_price_usd is None or price_usd > self.peak_price_usd:
+            self.peak_price_usd = self.dip_low_usd = price_usd
+        else:
+            self.dip_low_usd = min(self.dip_low_usd or price_usd, price_usd)
         if self.ref_price_usd is None and now >= self.migrated_at + delay_s:
             self.ref_price_usd, self.ref_at = price_usd, now
         for minute in checkpoints:

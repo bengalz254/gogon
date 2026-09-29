@@ -6,10 +6,11 @@ import textwrap
 import pytest
 
 from migbot.config import SOL_MINT, ConfigError, CostConfig, ExitConfig, FilterConfig, RugcheckConfig, TradingConfig, load_settings
-from migbot.filters import FAIL, OK, SKIP, FilterResult, fmt_usd, market_checks, safety_checks
+from migbot.filters import FAIL, OK, SKIP, FilterResult, dip_check, fmt_usd, market_checks, safety_checks
 from migbot.models import GmgnInfo, MarketSnapshot, Quote, RugcheckReport, SafetyReport
 from migbot.solana import b58decode, b58encode, bonding_curve_creator, is_pubkey, BONDING_CURVE_DISCRIMINATOR
 from migbot.sources.jupiter import NoRoute
+from migbot.tracker import TrackedToken
 from migbot.trading import NoFill, PaperBroker, Position, RiskManager, evaluate_exit
 from migbot_fakes import ROOT
 
@@ -40,7 +41,7 @@ def test_market_checks_pass():
         (dict(volume_m5=100.0), 0.0001, "volume 5m", "$100 < $5.0k"),
         (dict(buys_m5=20, sells_m5=20), 0.0001, "transaksi 5m", "40 < 60"),
         (dict(buys_m5=30, sells_m5=70), 0.0001, "rasio beli 5m", "30% < 50%"),
-        (dict(price_usd=0.00005), 0.0001, "harga vs awal", "turun 50%"),
+        (dict(price_usd=0.00004), 0.0001, "harga vs awal", "turun 60%"),
         (dict(price_usd=0.0005), 0.0001, "harga vs awal", "sudah naik 400%"),
     ],
 )
@@ -56,6 +57,28 @@ def test_missing_market_data_skips_unless_strict():
     assert FilterResult(market_checks(s, None, FilterConfig())).passed
     strict = FilterResult(market_checks(s, None, FilterConfig(strict_missing_data=True)))
     assert {c.name for c in strict.checks if c.status == FAIL} == {"volume 5m", "transaksi 5m", "rasio beli 5m", "harga vs awal"}
+
+
+def test_dip_check():
+    # high 0.0001, low 0.00006, now 0.000067: 33% under the high and 12% off the low
+    ok = dip_check(0.000067, 0.0001, 0.00006, 30, 10)
+    assert ok.status == OK and ok.detail == "33% di bawah puncak, naik 12% dari dasar"
+    shallow = dip_check(0.000085, 0.0001, 0.00008, 30, 10)
+    assert shallow.status == FAIL and shallow.detail == "baru 15% di bawah puncak (tunggu ≥ 30%)"
+    falling = dip_check(0.000062, 0.0001, 0.00006, 30, 10)
+    assert falling.status == FAIL and "baru naik 3% dari dasar (tunggu ≥ 10%)" in falling.detail
+    assert dip_check(0.0002, 0.0002, 0.0002, 30, 10).detail.startswith("baru 0% di bawah puncak")
+    assert dip_check(None, 0.0001, 0.00006, 30, 10).status == FAIL
+    assert dip_check(0.00007, 0.0001, 0.00007, 30, 0).status == OK  # no bounce asked for
+
+
+def test_tracker_follows_the_high_and_the_low_after_it():
+    tok = TrackedToken(mint="M", source="x", migrated_at=0.0, detected_at=0.0)
+    for price in (1.0, 1.5, 1.2, 0.9, 1.0):
+        tok.observe_price(price, 100.0, 300, [], 30)
+    assert tok.peak_price_usd == 1.5 and tok.dip_low_usd == 0.9
+    tok.observe_price(1.6, 110.0, 300, [], 30)  # a new high starts a new dip
+    assert tok.peak_price_usd == 1.6 and tok.dip_low_usd == 1.6
 
 
 def test_socials_required():
@@ -207,19 +230,41 @@ def position(**kw):
 
 
 def test_exit_rules():
-    cfg = ExitConfig()
+    cfg = ExitConfig()  # stop loss 25%, break-even after +20%, TP +40% half, trailing 25% after +40%, 45 min
     assert evaluate_exit(position(), 0.0001, 20_000.0, 60, cfg) is None
-    assert evaluate_exit(position(), 0.00006, 20_000.0, 60, cfg).reason == "stop loss"
+    assert evaluate_exit(position(), 0.00008, 20_000.0, 60, cfg) is None
+    assert evaluate_exit(position(), 0.000075, 20_000.0, 60, cfg).reason == "stop loss"
     assert evaluate_exit(position(), 0.0001, 9_000.0, 60, cfg).reason == "likuiditas anjlok"
-    assert evaluate_exit(position(last_price_at=3590), 0.0001, 20_000.0, 3600, cfg).reason == "waktu habis"
+    assert evaluate_exit(position(last_price_at=2690), 0.0001, 20_000.0, 2699, cfg) is None
+    assert evaluate_exit(position(last_price_at=2690), 0.0001, 20_000.0, 2700, cfg).reason == "waktu habis"
     assert evaluate_exit(position(last_price_at=0), 0.0001, 20_000.0, 601, cfg).reason == "data harga hilang"
-    tp = evaluate_exit(position(), 0.00021, 20_000.0, 60, cfg)
-    assert tp.reason == "take profit +100%" and tp.tokens_raw == 500 and tp.tp_index == 0
-    assert evaluate_exit(position(tp_done=[0], tokens_raw=500, peak_price_native=0.00021), 0.00021, 20_000.0, 60, cfg) is None
+    tp = evaluate_exit(position(), 0.00015, 20_000.0, 60, cfg)
+    assert tp.reason == "take profit +40%" and tp.tokens_raw == 500 and tp.tp_index == 0
+    assert evaluate_exit(position(tp_done=[0], tokens_raw=500, peak_price_native=0.00015), 0.00015, 20_000.0, 60, cfg) is None
     trail = evaluate_exit(position(peak_price_native=0.0003), 0.0002, 20_000.0, 60, cfg)
     assert trail.reason == "trailing stop" and trail.tokens_raw == 1000
     # below the activation level the trailing stop stays off
-    assert evaluate_exit(position(peak_price_native=0.00014), 0.00009, 20_000.0, 60, cfg) is None
+    no_breakeven = ExitConfig(breakeven_after_pct=0)
+    assert evaluate_exit(position(peak_price_native=0.00013), 0.000095, 20_000.0, 60, no_breakeven) is None
+
+
+def test_breakeven_stop_after_a_gain():
+    cfg = ExitConfig()
+    # Was +20%, now back at the entry price: out, instead of riding it down to the stop loss.
+    be = evaluate_exit(position(peak_price_native=0.00012), 0.0001, 20_000.0, 60, cfg)
+    assert be.reason == "stop impas" and be.tokens_raw == 1000
+    assert evaluate_exit(position(peak_price_native=0.00012), 0.000101, 20_000.0, 60, cfg) is None  # still above entry
+    assert evaluate_exit(position(peak_price_native=0.000119), 0.0001, 20_000.0, 60, cfg) is None  # never reached +20%
+    # A real crash still reads as a stop loss, not a break-even exit.
+    assert evaluate_exit(position(peak_price_native=0.00012), 0.00007, 20_000.0, 60, cfg).reason == "stop loss"
+    assert evaluate_exit(position(peak_price_native=0.00012), 0.0001, 20_000.0, 60, ExitConfig(breakeven_after_pct=0)) is None
+
+
+def test_position_diagnostics():
+    pos = position(opened_at=600.0, migrated_at=0.0, peak_price_native=0.00015, low_price_native=0.00008)
+    d = pos.diagnostics(now=1500.0)
+    assert d == {"peak_pct": "50.0", "low_pct": "-20.0", "held_min": "15.0", "entry_age_min": "10.0"}
+    assert position().diagnostics(now=60.0)["entry_age_min"] == "" and position().diagnostics(now=60.0)["low_pct"] == ""
 
 
 def test_take_profit_ladder_and_dust():

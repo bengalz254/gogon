@@ -7,9 +7,9 @@ import time
 
 from migbot.config import SOL_MINT, Settings
 from migbot.engine import Sources
-from migbot.filters import fmt_dur, fmt_usd
+from migbot.filters import fmt_usd
 from migbot.http import redact
-from migbot.notifier import Notifier
+from migbot.notifier import Notifier, entry_rule
 
 SAMPLE_MINT = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK: old, liquid, always listed
 
@@ -59,8 +59,16 @@ def _pumpportal(s: Settings, wait_s: float = 15.0) -> bool:
 def run_check(s: Settings, telegram_test: bool = False) -> int:
     f = s.filters
     print("Konfigurasi:", s.config_path)
+    x = s.exits
+    print(f"  {entry_rule(s.entry)}")
     print(
-        f"  beli {s.trading.buy_sol:g} SOL, {fmt_dur(s.entry.delay_seconds)} sampai {fmt_dur(s.entry.window_seconds)} setelah migrasi, "
+        f"  keluar: stop loss -{x.stop_loss_pct:g}%"
+        + (f", impas setelah +{x.breakeven_after_pct:g}%" if x.breakeven_after_pct > 0 else "")
+        + "".join(f", +{g:g}% jual {p * 100:g}%" for g, p in x.take_profit)
+        + f", trailing {x.trailing_pct:g}% setelah +{x.trailing_start_pct:g}%, maks {x.max_hold_minutes:g} mnt"
+    )
+    print(
+        f"  beli {s.trading.buy_sol:g} SOL, "
         f"saldo paper {s.trading.paper_balance_sol:g} SOL, maks {s.trading.max_open_positions} posisi, "
         f"maks {s.trading.max_buys_per_day} beli/hari, berhenti kalau rugi hari ini {s.trading.max_daily_loss_sol:g} SOL"
     )

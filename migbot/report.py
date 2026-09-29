@@ -15,6 +15,10 @@ from migbot.storage import read_csv
 from migbot.tracker import BOUGHT, NO_DATA, PASSED, REJECTED
 
 MIN_SAMPLE = 30
+DIAG_MIN = 5  # positions needed before the entry-or-exit hint is shown
+NEVER_UP_PCT = 10  # "never rose": the best price while held stayed under +10%
+GAVE_BACK_PCT = 20  # "gave back a gain": was +20% or more, closed at a loss
+RECENT_ROWS = 12
 
 
 def _f(value) -> float | None:
@@ -80,6 +84,7 @@ def summarize(data_dir: str) -> dict:
         timeline.append({"t": t.get("time_utc", ""), "pnl": round(cum, 6)})
     fees = sum(_f(t.get("fee_sol")) or 0.0 for t in trades)
     exits = Counter(t.get("reason") or "?" for t in sells)
+    positions = _positions(buys, closes)
     pnl = {
         "buys": len(buys),
         "closed": len(closes),
@@ -94,6 +99,9 @@ def summarize(data_dir: str) -> dict:
         "exit_reasons": dict(exits.most_common()),
         "methods": dict(Counter(t.get("method", "?") for t in trades).most_common()),
         "timeline": timeline[-500:],
+        "dip_mode": any((t.get("reason") or "").startswith("beli saat dip") for t in buys),
+        "diagnosis": _diagnosis(positions),
+        "recent": positions[-RECENT_ROWS:],
     }
     return {
         "tokens_total": len(tokens),
@@ -107,6 +115,54 @@ def summarize(data_dir: str) -> dict:
     }
 
 
+def _positions(buys: list[dict], closes: list[dict]) -> list[dict]:
+    """One row per closed position: final exit, whole-position P&L %, and how the price moved while held."""
+    buy_by_mint = {b.get("mint"): b for b in buys}
+    rows = []
+    for t in closes:
+        cost = _f((buy_by_mint.get(t.get("mint")) or {}).get("sol"))
+        pnl_sol = _f(t.get("position_pnl_sol"))
+        rows.append({
+            "time": t.get("time_utc", ""),
+            "symbol": t.get("symbol", ""),
+            "reason": t.get("reason", ""),
+            "pnl_sol": pnl_sol,
+            "pnl_pct": pnl_sol / cost * 100 if cost and pnl_sol is not None else None,
+            "peak_pct": _f(t.get("peak_pct")),
+            "low_pct": _f(t.get("low_pct")),
+            "held_min": _f(t.get("held_min")),
+            "entry_age_min": _f(t.get("entry_age_min")),
+        })
+    return rows
+
+
+def _diagnosis(positions: list[dict]) -> dict:
+    """Is the loss in the entry (price never rises after buying) or the exit (a gain given back)?"""
+    known = [p for p in positions if p["peak_pct"] is not None]
+    ages = [p["entry_age_min"] for p in known if p["entry_age_min"] is not None]
+    held = [p["held_min"] for p in known if p["held_min"] is not None]
+    return {
+        "n": len(known),
+        "never_up": sum(p["peak_pct"] < NEVER_UP_PCT for p in known),
+        "gave_back": sum(p["peak_pct"] >= GAVE_BACK_PCT and (p["pnl_sol"] or 0.0) <= 0 for p in known),
+        "median_entry_age_min": statistics.median(ages) if ages else None,
+        "median_held_min": statistics.median(held) if held else None,
+    }
+
+
+def _diagnosis_hint(d: dict) -> str | None:
+    if d["n"] < DIAG_MIN:
+        return None
+    never_up, gave_back = d["never_up"] / d["n"], d["gave_back"] / d["n"]
+    if never_up >= 0.5:
+        return (f"{d['never_up']} dari {d['n']} posisi tidak pernah naik {NEVER_UP_PCT}% setelah dibeli: "
+                "masalah utamanya WAKTU BELI (bot membeli lalu harga langsung turun).")
+    if gave_back >= 0.3:
+        return (f"{d['gave_back']} dari {d['n']} posisi sempat naik {GAVE_BACK_PCT}%+ tapi ditutup rugi: "
+                "masalah utamanya CARA JUAL (untung tidak diamankan).")
+    return None
+
+
 def verdict(research: dict, pnl: dict) -> list[str]:
     lines = []
     if pnl["closed"] < MIN_SAMPLE:
@@ -115,13 +171,18 @@ def verdict(research: dict, pnl: dict) -> list[str]:
             "sampai itu, untung/rugi masih bisa kebetulan."
         )
     col = next((c for c in ("ret_60m", "ret_30m", "ret_15m") if c in research["lolos filter"]["columns"]), None)
+    if pnl.get("dip_mode"):
+        # Tokens that pass in dip mode have, by definition, fallen after the reference point,
+        # so comparing groups from that point says nothing about the filters. Judge by P&L.
+        col = None
+        lines.append("Mode beli saat dip: nilai dari P&L dan diagnosa posisi; tabel riset diukur dari titik yang sama untuk semua token, bukan dari titik beli.")
     if col:
         b = research["lolos filter"]["columns"][col]
         r = research["ditolak"]["columns"][col]
         if b.get("n") and r.get("n"):
             better = b["median"] > r["median"]
             lines.append(
-                f"Median {col[4:]} setelah titik beli: lolos filter {b['median']:+.1f}% vs ditolak {r['median']:+.1f}%. "
+                f"Median {col[4:]} setelah titik pembanding: lolos filter {b['median']:+.1f}% vs ditolak {r['median']:+.1f}%. "
                 + ("Filter memilih token yang lebih baik dari yang ditolak." if better else "Filter BELUM terbukti lebih baik dari token yang ditolak.")
             )
     if pnl["closed"]:
@@ -129,6 +190,9 @@ def verdict(research: dict, pnl: dict) -> list[str]:
             f"P&L paper {pnl['realized_sol']:+.4f} SOL dari {pnl['closed']} posisi (win rate {pnl['win_rate']:.0f}%), "
             f"sudah termasuk fee {pnl['fees_sol']:.4f} SOL."
         )
+    hint = _diagnosis_hint(pnl.get("diagnosis") or {"n": 0})
+    if hint:
+        lines.append(hint)
     if pnl["closed"] >= MIN_SAMPLE and pnl["realized_sol"] <= 0:
         lines.append("Dengan pengaturan ini bot rugi. Jangan dipakai dengan uang sungguhan.")
     return lines
@@ -144,7 +208,7 @@ def format_report(summary: dict) -> str:
     cols = summary["ret_columns"]
     if cols:
         lines.append("")
-        lines.append("Kenaikan harga dari titik beli (median, dan % token yang naik):")
+        lines.append("Kenaikan harga dari titik pembanding, awal jendela beli (median, dan % token yang naik):")
         header = f"{'kelompok':<13}{'n':>5} " + "".join(f"{c[4:]:>13}" for c in cols) + f"{'pernah 2x':>11}{'pernah -50%':>13}"
         lines.append(header)
         for name, g in summary["research"].items():
@@ -180,6 +244,24 @@ def format_report(summary: dict) -> str:
         lines.append("  cara keluar: " + ", ".join(f"{k} {v}x" for k, v in p["exit_reasons"].items()))
     if p["methods"]:
         lines.append("  harga simulasi: " + ", ".join(f"{k} {v}x" for k, v in p["methods"].items()))
+    d = p.get("diagnosis") or {"n": 0}
+    if d["n"]:
+        lines.append("")
+        lines.append(f"Diagnosa {d['n']} posisi (harga selama dipegang, dibanding harga beli):")
+        lines.append(f"  tidak pernah naik {NEVER_UP_PCT}%: {d['never_up']}  (tanda waktu beli buruk)")
+        lines.append(f"  sempat +{GAVE_BACK_PCT}% lalu rugi: {d['gave_back']}  (tanda cara jual buruk)")
+        if d["median_entry_age_min"] is not None:
+            lines.append(f"  dibeli {d['median_entry_age_min']:.0f} mnt setelah migrasi, ditahan {d['median_held_min'] or 0:.0f} mnt (median)")
+    if p.get("recent"):
+        lines.append("")
+        lines.append("Posisi terakhir (puncak = naik tertinggi setelah dibeli):")
+        lines.append(f"  {'token':<9} {'umur':>4} {'puncak':>6} {'P&L':>5}  keluar")
+        for r in p["recent"]:
+            age = "-" if r["entry_age_min"] is None else f"{r['entry_age_min']:.0f}m"
+            peak = "-" if r["peak_pct"] is None else f"{r['peak_pct']:+.0f}%"
+            pnl_pct = "-" if r["pnl_pct"] is None else f"{r['pnl_pct']:+.0f}%"
+            symbol = ("$" + r["symbol"])[:9]
+            lines.append(f"  {symbol:<9} {age:>4} {peak:>6} {pnl_pct:>5}  {r['reason']}")
     lines.append("")
     lines.append("Kesimpulan:")
     for line in summary["verdict"] or ["Belum ada data."]:

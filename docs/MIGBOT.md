@@ -17,7 +17,7 @@ ala GMGN, lalu **membeli secara simulasi (paper)** token yang lolos.
 | Bot lama | Bot ini |
 |---|---|
 | Beli token di bonding curve (sebelum migrasi) atau copy wallet | **Hanya token yang sudah migrasi**, dengan likuiditas pool sungguhan |
-| Masuk secepat mungkin (bersaing dengan sniper) | **Sengaja menunggu 3 menit** setelah migrasi supaya dump awal dev/sniper lewat dulu |
+| Masuk secepat mungkin (bersaing dengan sniper) | **Tidak membeli saat launch.** Bot menunggu harga *dip* (turun jauh dari puncaknya lalu mulai naik lagi), paling cepat 5 menit setelah migrasi |
 | Bergantung penuh pada API tidak resmi GMGN (sering diblokir Cloudflare) | Data utama dari sumber publik yang stabil; **GMGN hanya tambahan**. Kalau GMGN memblokir, bot tetap jalan |
 | Tidak ada cara menilai apakah filternya bekerja | **Setiap token migrasi dipantau 2 jam, dibeli atau tidak.** Laporan membandingkan token yang dibeli dengan yang ditolak |
 
@@ -26,14 +26,18 @@ ala GMGN, lalu **membeli secara simulasi (paper)** token yang lolos.
 ```
 1. Deteksi migrasi   PumpPortal (WebSocket, real-time) + GeckoTerminal (cadangan)
 2. Pantau            harga, likuiditas, volume, jumlah transaksi dari DexScreener (tiap 10 detik)
-3. Tunggu            3 menit setelah migrasi (entry.delay_seconds)
+3. Tunggu dip        paling cepat 5 menit setelah migrasi, sampai harga ≥ 30% di bawah
+                     puncaknya lalu naik lagi ≥ 10% dari dasar (boleh sampai menit ke-60)
 4. Filter pasar      likuiditas, market cap, volume 5m, transaksi 5m, rasio beli, harga vs awal
 5. Filter keamanan   (on-chain lewat Solana RPC) mint/freeze authority, ekstensi Token-2022
                      berbahaya, top 10 holder, holder terbesar, % dev, jumlah holder;
                      RugCheck; GMGN kalau bisa
 6. Beli (paper)      harga dari quote Jupiter (fee pool + price impact asli) + selip + priority fee
-7. Jual (paper)      stop loss, take profit bertingkat, trailing stop, batas waktu, likuiditas anjlok
-8. Catat             setiap token: harga 1, 3, 5, 10, 15, 30, 60, 120 menit setelah migrasi
+7. Jual (paper)      stop loss, stop impas setelah untung, take profit bertingkat, trailing
+                     stop, batas waktu, likuiditas anjlok
+8. Catat             setiap token: harga 1, 3, 5, 10, 15, 30, 60, 120 menit setelah migrasi,
+                     plus pergerakan harganya tiap 10 detik (data/migbot/paths.jsonl.gz) untuk
+                     menguji aturan beli/jual lain pada token yang sama
 ```
 
 Holder dihitung **hanya dari wallet biasa**: vault pool, akun program, dan alamat burn
@@ -187,8 +191,9 @@ sudo journalctl -u migbot -f
 ```
 
 ✅ **Cek:** muncul `Migration ... via pumpportal`. Tekan `Ctrl+C` untuk keluar dari log
-(bot **tetap** jalan). Sekitar 3 menit setelah migrasi, token itu dibeli
-(`PAPER BUY`) atau ditolak (alasannya terlihat di dashboard).
+(bot **tetap** jalan). Token itu baru dibeli (`PAPER BUY`) kalau harganya dip dalam 60
+menit setelah migrasi; kalau tidak, ditolak (alasannya terlihat di dashboard, misalnya
+`dip: baru 12% di bawah puncak`).
 
 ### Tahap E — Buka dashboard
 
@@ -263,8 +268,8 @@ Isi dashboard:
 cd ~/migbot && venv/bin/python -m migbot report
 ```
 
-Laporan menampilkan kenaikan harga **dari titik beli** (3 menit setelah migrasi) untuk
-tiga kelompok:
+Laporan menampilkan kenaikan harga **dari titik yang sama untuk semua token** (5 menit
+setelah migrasi) untuk tiga kelompok:
 
 | Kelompok | Artinya |
 |---|---|
@@ -284,6 +289,18 @@ tiga kelompok:
   data baru.
 * Kolom `pernah 2x` dan `pernah −50%` menunjukkan seberapa sering token sempat
   naik 2x atau turun setengah dalam 2 jam.
+* **Mode beli saat dip:** token yang dibeli memang sudah turun dulu sebelum dibeli, jadi
+  tabel kelompok di atas tidak adil untuk menilai filternya. Nilai dari **P&L** dan
+  **Diagnosa posisi**.
+* **Diagnosa posisi** menjawab *di mana* ruginya:
+  * `tidak pernah naik 10%` banyak → harga langsung turun setelah dibeli: masalahnya
+    **waktu beli**;
+  * `sempat +20% lalu rugi` banyak → posisi sempat untung tapi tidak diamankan:
+    masalahnya **cara jual**.
+* **Posisi terakhir** menampilkan per posisi: berapa menit setelah migrasi dibeli,
+  naik tertinggi setelah dibeli (`puncak`), hasil akhir, dan cara keluarnya.
+* Data lama setelah `reset` tetap bisa dilihat:
+  `venv/bin/python -m migbot report --dir data/migbot/archive/<tanggal-jam>`.
 * **Alasan ditolak terbanyak** memberi tahu filter mana yang paling sering menolak.
   Kalau satu risiko RugCheck menolak hampir semua token, lihat daftarnya di laporan
   dan pertimbangkan `safety.rugcheck.ignore_risks`.
@@ -301,8 +318,11 @@ Semua pengaturan ada penjelasannya di file itu. Yang paling sering diubah:
 
 | Pengaturan | Bawaan | Arti |
 |---|---|---|
-| `entry.delay_seconds` | 180 | Tunggu 3 menit setelah migrasi sebelum boleh beli |
-| `entry.window_seconds` | 900 | Lewat 15 menit tanpa lolos filter = ditolak |
+| `entry.delay_seconds` | 300 | Tidak pernah beli di 5 menit pertama setelah migrasi |
+| `entry.window_seconds` | 3600 | Lewat 60 menit tanpa dip + lolos filter = ditolak |
+| `entry.dip_pct` | 30 | Beli hanya kalau harga ≥ 30% di bawah harga tertinggi sejak migrasi. 0 = cara lama (beli begitu filter lolos) |
+| `entry.dip_bounce_pct` | 10 | …dan sudah naik lagi ≥ 10% dari titik terendahnya (jatuhnya berhenti). 0 = tidak menunggu |
+| `filters.max_drop_from_first_pct` | 50 | Tolak token yang sudah turun > 50% dari harga pertamanya (sekarat) |
 | `filters.min_liquidity_usd` | 10000 | Likuiditas pool minimal |
 | `filters.min_market_cap_usd` / `max_market_cap_usd` | 40k / 1.5M | Rentang market cap |
 | `filters.min_volume_5m_usd`, `min_txns_5m`, `min_buy_ratio_5m` | 5000, 60, 0.5 | Token harus ramai dan lebih banyak yang beli |
@@ -314,10 +334,11 @@ Semua pengaturan ada penjelasannya di file itu. Yang paling sering diubah:
 | `trading.max_open_positions` | 6 | Posisi terbuka bersamaan |
 | `trading.max_buys_per_day` | 100 | Beli maksimal per hari (UTC) |
 | `trading.max_daily_loss_sol` | 2 | Rugi hari ini sampai segini → berhenti beli sampai 00:00 UTC (08:00 WITA) |
-| `exits.stop_loss_pct` | 35 | Jual semua kalau turun 35% dari harga beli |
-| `exits.take_profit` | `[[100, 0.5]]` | Naik 100% → jual 50% posisi awal |
-| `exits.trailing_start_pct` / `trailing_pct` | 50 / 30 | Setelah pernah +50%, jual semua kalau turun 30% dari puncak |
-| `exits.max_hold_minutes` | 60 | Jual semua setelah 60 menit |
+| `exits.stop_loss_pct` | 25 | Jual semua kalau turun 25% dari harga beli |
+| `exits.breakeven_after_pct` | 20 | Setelah pernah +20%, jual semua kalau harga kembali ke harga beli ("stop impas"). 0 = mati |
+| `exits.take_profit` | `[[40, 0.5]]` | Naik 40% → jual 50% posisi awal |
+| `exits.trailing_start_pct` / `trailing_pct` | 40 / 25 | Setelah pernah +40%, jual semua kalau turun 25% dari puncak |
+| `exits.max_hold_minutes` | 45 | Jual semua setelah 45 menit |
 
 Nama pengaturan yang salah ketik akan ditolak saat bot start (lihat
 `journalctl -u migbot`). Setelah mengubah config: `sudo systemctl restart migbot`.

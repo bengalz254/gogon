@@ -45,14 +45,20 @@ CREATOR = wallet(99)
 
 
 def price_at(s):
-    """USD price by seconds since migration."""
-    if s < 600:
+    """USD price by seconds since migration: a high, a 40% dip, a bounce (bought), a run to 2x, a fall."""
+    if s < 120:
         return 0.0001
-    if s < 900:
-        return 0.00025
+    if s < 240:
+        return 0.00015
+    if s < 600:
+        return 0.00009
     if s < 1200:
-        return 0.0003
-    return 0.0002
+        return 0.0001
+    if s < 1500:
+        return 0.00015
+    if s < 1800:
+        return 0.0002
+    return 0.00014
 
 
 class MockApis(BaseHTTPRequestHandler):
@@ -188,10 +194,11 @@ def test_full_lifecycle_through_real_clients(tmp_path, mock_server):
 
     trades = read_csv(os.path.join(s.data_dir, "trades.csv"))
     assert [(t["side"], t["reason"]) for t in trades] == [
-        ("BUY", "lolos filter"), ("SELL", "take profit +100%"), ("SELL", "trailing stop"),
+        ("BUY", "beli saat dip"), ("SELL", "take profit +40%"), ("SELL", "trailing stop"),
     ]
     assert all(t["method"] == "jupiter" for t in trades)
-    assert float(trades[-1]["position_pnl_sol"]) > 0.1
+    assert float(trades[-1]["position_pnl_sol"]) > 0.02
+    assert 10 <= float(trades[0]["entry_age_min"]) <= 10.5
 
     row = read_csv(os.path.join(s.data_dir, "tokens.csv"))[0]
     assert row["mint"] == MINT and row["symbol"] == "E2E" and row["status"] == "dibeli"

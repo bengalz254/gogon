@@ -83,8 +83,13 @@ class TrackingConfig:
 
 @dataclass
 class EntryConfig:
-    delay_seconds: float = 180.0
-    window_seconds: float = 900.0
+    delay_seconds: float = 300.0
+    window_seconds: float = 3600.0
+    # Buy the dip: the price must be at least dip_pct below the highest price seen
+    # since the migration, and at least dip_bounce_pct above the lowest price after
+    # that high (the fall has stopped). dip_pct 0 = off: buy as soon as the filters pass.
+    dip_pct: float = 30.0
+    dip_bounce_pct: float = 10.0
 
 
 @dataclass
@@ -95,7 +100,7 @@ class FilterConfig:
     min_volume_5m_usd: float = 5_000.0
     min_txns_5m: int = 60
     min_buy_ratio_5m: float = 0.50
-    max_drop_from_first_pct: float = 40.0
+    max_drop_from_first_pct: float = 50.0
     max_rise_from_first_pct: float = 300.0
     require_socials: bool = False
     require_mint_renounced: bool = True
@@ -134,7 +139,7 @@ class GmgnConfig:
 
 @dataclass
 class SafetyConfig:
-    refresh_seconds: float = 60.0
+    refresh_seconds: float = 180.0
     amm_owners: list[str] = field(default_factory=lambda: list(DEFAULT_AMM_OWNERS))
     rugcheck: RugcheckConfig = field(default_factory=RugcheckConfig)
     gmgn: GmgnConfig = field(default_factory=GmgnConfig)
@@ -152,12 +157,15 @@ class TradingConfig:
 
 @dataclass
 class ExitConfig:
-    stop_loss_pct: float = 35.0
+    stop_loss_pct: float = 25.0
+    # Once the price has been this % above the entry, the stop moves up to the
+    # entry price, so a gain that turns around is not ridden down to the stop loss. 0 = off.
+    breakeven_after_pct: float = 20.0
     # [[rise %, fraction of the original position to sell], ...]
-    take_profit: list[list[float]] = field(default_factory=lambda: [[100.0, 0.5]])
-    trailing_start_pct: float = 50.0
-    trailing_pct: float = 30.0
-    max_hold_minutes: float = 60.0
+    take_profit: list[list[float]] = field(default_factory=lambda: [[40.0, 0.5]])
+    trailing_start_pct: float = 40.0
+    trailing_pct: float = 25.0
+    max_hold_minutes: float = 45.0
     liquidity_drop_pct: float = 50.0
     no_data_exit_minutes: float = 10.0
 
@@ -274,6 +282,10 @@ def validate(s: Settings) -> None:
         errors.append("entry.window_seconds harus lebih besar dari entry.delay_seconds")
     if s.tracking.track_minutes * 60 < s.entry.window_seconds:
         errors.append("tracking.track_minutes harus mencakup entry.window_seconds")
+    if not 0 <= s.entry.dip_pct < 100:
+        errors.append("entry.dip_pct harus antara 0 dan 100 (0 = mati)")
+    if s.entry.dip_bounce_pct < 0:
+        errors.append("entry.dip_bounce_pct tidak boleh negatif (0 = tanpa menunggu pantulan)")
     cps = s.tracking.checkpoints_minutes
     if any(c <= 0 for c in cps) or cps != sorted(cps) or len(set(cps)) != len(cps):
         errors.append("tracking.checkpoints_minutes harus angka > 0, urut naik, tanpa duplikat")
@@ -294,6 +306,8 @@ def validate(s: Settings) -> None:
         errors.append("exits.stop_loss_pct harus antara 0 dan 100")
     if not 0 <= e.trailing_pct < 100:
         errors.append("exits.trailing_pct harus antara 0 dan 100 (0 = mati)")
+    if e.breakeven_after_pct < 0:
+        errors.append("exits.breakeven_after_pct tidak boleh negatif (0 = mati)")
     last_gain = 0.0
     total_frac = 0.0
     for i, level in enumerate(e.take_profit):

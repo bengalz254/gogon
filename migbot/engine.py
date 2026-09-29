@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from migbot import __version__
 from migbot import notifier as texts
 from migbot.config import Settings
-from migbot.filters import FilterResult, market_checks, safety_checks
+from migbot.filters import FilterResult, dip_check, market_checks, safety_checks
 from migbot.http import HttpError
 from migbot.models import GmgnInfo, MarketSnapshot, MigrationEvent, RugcheckReport, SafetyReport
 from migbot.notifier import Notifier
@@ -28,7 +28,7 @@ from migbot.sources.jupiter import JupiterSource
 from migbot.sources.pumpportal import PumpPortalFeed
 from migbot.sources.rugcheck import RugcheckSource
 from migbot.sources.solana_rpc import SolanaRpc
-from migbot.storage import TRADE_FIELDS, CsvJournal, read_json, write_json_atomic
+from migbot.storage import TRADE_FIELDS, CsvJournal, PathLog, read_json, write_json_atomic
 from migbot.tracker import BOUGHT, NO_DATA, PASSED, REJECTED, WATCHING, TrackedToken, research_row, token_fields
 from migbot.trading import DUST_FRACTION, NoFill, PaperBroker, Position, RiskManager, evaluate_exit, utc_day
 
@@ -38,6 +38,7 @@ STATE_VERSION = 1
 DONE_MEMORY = 2000
 EXTRA_CACHE_S = 300  # RugCheck / GMGN results are reused this long
 MERGE_WINDOW_S = 120  # two sources' times for one migration are this close
+PATH_MAX_POINTS = 1500  # price points kept per token (2 hours of 10 s refreshes is 720)
 
 
 @dataclass
@@ -110,6 +111,8 @@ class Engine:
             os.path.join(settings.data_dir, "tokens.csv"), token_fields(settings.tracking.checkpoints_minutes)
         )
         self.trades_journal = CsvJournal(os.path.join(settings.data_dir, "trades.csv"), TRADE_FIELDS)
+        self.path_log = PathLog(os.path.join(settings.data_dir, "paths.jsonl.gz"))
+        self.paths: dict[str, list[list]] = {}  # in memory only; written when a token's tracking ends
         self.tokens: dict[str, TrackedToken] = {}
         self.positions: dict[str, Position] = {}
         self.done: collections.OrderedDict[str, float] = collections.OrderedDict()
@@ -242,6 +245,24 @@ class Engine:
         """How late a checkpoint price may be recorded (a refresh or two)."""
         return max(30.0, 3 * self.s.market.refresh_seconds)
 
+    def _record_point(self, tok: TrackedToken, snap: MarketSnapshot, now: float) -> None:
+        if not snap.price_usd:
+            return
+        points = self.paths.setdefault(tok.mint, [])
+        if len(points) < PATH_MAX_POINTS:
+            whole = [None if v is None else int(v) for v in (snap.liquidity_usd, snap.market_cap_usd, snap.volume_m5)]
+            points.append([round(now - tok.migrated_at), float(f"{snap.price_usd:.6g}"), *whole, snap.buys_m5, snap.sells_m5])
+
+    def _write_path(self, tok: TrackedToken) -> None:
+        points = self.paths.pop(tok.mint, None)
+        if not points:
+            return
+        record = {"mint": tok.mint, "symbol": tok.symbol, "migrated_at": tok.migrated_at, "status": tok.status, "points": points}
+        try:
+            self.path_log.append(record)
+        except OSError as exc:
+            logger.warning("Could not write the price path of %s: %s", tok.mint, exc)
+
     def _refresh_market(self, now: float) -> None:
         mints = [m for m in self.tokens] + [m for m in self.positions if m not in self.tokens]
         if not mints or self.src.dexscreener is None:
@@ -264,6 +285,7 @@ class Engine:
                 if tok.first_mcap_usd is None and snap.market_cap_usd:
                     tok.first_mcap_usd = snap.market_cap_usd
                 tok.last = snap.to_dict()
+                self._record_point(tok, snap, now)
                 tok.observe_price(
                     snap.price_usd, now, self.s.entry.delay_seconds, self.s.tracking.checkpoints_minutes, tolerance
                 )
@@ -272,6 +294,7 @@ class Engine:
                 pos.last_price_native = snap.price_native
                 pos.last_price_at = now
                 pos.peak_price_native = max(pos.peak_price_native, snap.price_native)
+                pos.low_price_native = min(pos.low_price_native or snap.price_native, snap.price_native)
                 pos.last_liquidity_usd = snap.liquidity_usd
                 pos.last_mcap_usd = snap.market_cap_usd
         self._dirty = True
@@ -354,7 +377,11 @@ class Engine:
             tok.last_eval_ts = snap_ts
             tok.evaluations += 1
             snap = MarketSnapshot.from_dict(tok.last)
-            result = FilterResult(market_checks(snap, tok.first_price_usd, self.s.filters))
+            checks = []
+            if e.dip_pct > 0:
+                checks.append(dip_check(snap.price_usd, tok.peak_price_usd, tok.dip_low_usd, e.dip_pct, e.dip_bounce_pct))
+            checks.extend(market_checks(snap, tok.first_price_usd, self.s.filters))
+            result = FilterResult(checks)
             if result.passed:
                 safety, rug, gmgn = self._safety(tok, now)
                 result.checks.extend(safety_checks(safety, rug, gmgn, self.s.filters, self.s.safety.rugcheck))
@@ -398,6 +425,8 @@ class Engine:
             method=fill.method,
             last_liquidity_usd=snap.liquidity_usd,
             last_mcap_usd=snap.market_cap_usd,
+            low_price_native=snap.price_native or fill.price_native,
+            migrated_at=tok.migrated_at,
         )
         self.positions[tok.mint] = pos
         tok.status = BOUGHT
@@ -408,11 +437,13 @@ class Engine:
         self.stats.bought += 1
         self.trades_journal.append(
             {
-                "time_utc": _iso(now), "mint": tok.mint, "symbol": pos.symbol, "side": "BUY", "reason": "lolos filter",
+                "time_utc": _iso(now), "mint": tok.mint, "symbol": pos.symbol, "side": "BUY",
+                "reason": "beli saat dip" if self.s.entry.dip_pct > 0 else "lolos filter",
                 "sol": f"{fill.sol:.6f}", "tokens": f"{fill.tokens_raw / 10**decimals:.4f}",
                 "price_native": f"{fill.price_native:.12f}", "price_usd": snap.price_usd, "mcap_usd": snap.market_cap_usd,
                 "method": fill.method, "impact_pct": "" if fill.impact_pct is None else f"{fill.impact_pct:.2f}",
                 "fee_sol": f"{fill.fee_sol:.6f}", "balance_sol": f"{self.balance:.6f}",
+                "entry_age_min": pos.diagnostics(now)["entry_age_min"],
             }
         )
         self._event(now, "beli", f"BELI {tok.label} {fill.sol:.4f} SOL ({fill.method})", tok.mint)
@@ -459,6 +490,7 @@ class Engine:
                 "impact_pct": "" if fill.impact_pct is None else f"{fill.impact_pct:.2f}",
                 "fee_sol": f"{fill.fee_sol:.6f}", "pnl_sol": f"{pnl:.6f}", "pnl_pct": f"{pnl_pct:.2f}",
                 "position_pnl_sol": f"{position_pnl:.6f}" if closed else "", "balance_sol": f"{self.balance:.6f}",
+                **(pos.diagnostics(now) if closed else {}),
             }
         )
         label = f"${pos.symbol}"
@@ -486,6 +518,7 @@ class Engine:
             if tok.status == WATCHING:
                 self._reject(tok, now)
             self.tokens_journal.append(research_row(tok, self.s.tracking.checkpoints_minutes))
+            self._write_path(tok)
             del self.tokens[mint]
             self._remember_done(mint, now)
             self._dirty = True
@@ -560,8 +593,9 @@ class Engine:
                     "last": t.last,
                     "reasons": t.reasons,
                     "checks": t.checks,
-                    "change_pct": (t.last.get("price_usd") / t.ref_price_usd - 1) * 100
-                    if t.last.get("price_usd") and t.ref_price_usd
+                    # distance from the high since the migration (how close to a dip buy)
+                    "change_pct": (t.last.get("price_usd") / t.peak_price_usd - 1) * 100
+                    if t.last.get("price_usd") and t.peak_price_usd
                     else None,
                     "trade_pnl_sol": t.trade_pnl_sol,
                 }

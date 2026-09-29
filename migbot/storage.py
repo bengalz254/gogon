@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import gzip
 import json
 import logging
 import math
@@ -13,6 +14,8 @@ logger = logging.getLogger("migbot.storage")
 TRADE_FIELDS = [
     "time_utc", "mint", "symbol", "side", "reason", "sol", "tokens", "price_native", "price_usd",
     "mcap_usd", "method", "impact_pct", "fee_sol", "pnl_sol", "pnl_pct", "position_pnl_sol", "balance_sol",
+    # filled when a position closes: best/worst price vs the entry while held, minutes held, minutes after migration
+    "peak_pct", "low_pct", "held_min", "entry_age_min",
 ]
 
 
@@ -39,6 +42,37 @@ class CsvJournal:
             if new:
                 writer.writeheader()
             writer.writerow({k: ("" if row.get(k) is None else row.get(k)) for k in self.fields})
+
+
+class PathLog:
+    """Every tracked token's price path, one gzip JSON line per token, for testing
+    other entry/exit rules on the same tokens later. Each point is
+    [seconds after migration, price USD, liquidity USD, mcap USD, volume 5m USD, buys 5m, sells 5m]."""
+
+    def __init__(self, path: str):
+        self.path = path
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+
+    def append(self, record: dict) -> None:
+        with gzip.open(self.path, "at", encoding="utf-8") as fh:
+            fh.write(json.dumps(clean(record), separators=(",", ":")) + "\n")
+
+
+def read_paths(path: str) -> list[dict]:
+    """Records from a PathLog file; a line cut off by a crash ends the list instead of failing."""
+    out: list[dict] = []
+    if not os.path.exists(path):
+        return out
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    continue
+    except (OSError, EOFError):
+        pass
+    return out
 
 
 def read_csv(path: str) -> list[dict]:

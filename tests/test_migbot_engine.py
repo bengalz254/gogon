@@ -5,7 +5,7 @@ import os
 import pytest
 
 from migbot.engine import Engine, Sources
-from migbot.storage import read_csv
+from migbot.storage import read_csv, read_paths
 from migbot_fakes import (
     MINT_A, MINT_B, MINT_C, T0, Clock, FakeDex, FakeFeed, FakeGmgn, FakeJupiter, FakeRpc, FakeRug, settings,
 )
@@ -28,8 +28,32 @@ def thin_path(s):
     return None if s < 30 else {"price_usd": 0.0001, "liq": 5_000.0}
 
 
-def build(tmp_path, clock, paths, migrated, jupiter=True, rpc=None, rug=None, **overrides):
-    s = settings(tmp_path, **overrides)
+def dip_path(s):
+    """Up 50% after the migration, a 40% dip, a bounce, a run to 2x, then 30% off that high."""
+    if s < 30:
+        return None
+    if s < 120:
+        return {"price_usd": 0.0001}
+    if s < 240:
+        return {"price_usd": 0.00015}  # the high after the migration
+    if s < 600:
+        return {"price_usd": 0.00009}  # 40% under it, still falling / flat: wait
+    if s < 1200:
+        return {"price_usd": 0.0001}  # +11% off the low, 33% under the high: buy the dip
+    if s < 1500:
+        return {"price_usd": 0.00015}  # +50%: take profit on half
+    if s < 1800:
+        return {"price_usd": 0.0002}
+    return {"price_usd": 0.00014}  # 30% off the high: trailing stop
+
+
+# Most tests only need a position quickly: the old entry, buying at 3 minutes once the filters pass.
+MOMENTUM = {"entry__dip_pct": 0.0, "entry__delay_seconds": 180.0, "entry__window_seconds": 900.0}
+
+
+def build(tmp_path, clock, paths, migrated, jupiter=True, rpc=None, rug=None, dip=False, **overrides):
+    """dip=True runs the shipped entry rule (buy the dip) instead of MOMENTUM."""
+    s = settings(tmp_path, **({} if dip else MOMENTUM), **overrides)
     feed = FakeFeed()
     dex = FakeDex(clock, migrated)
     dex.paths.update(paths)
@@ -72,7 +96,7 @@ def test_winner_is_bought_takes_profit_and_trails_out(tmp_path):
     assert MINT_A not in engine.positions
     trades = read_csv(os.path.join(engine.s.data_dir, "trades.csv"))
     assert [t["side"] for t in trades] == ["BUY", "SELL", "SELL"]
-    assert trades[1]["reason"] == "take profit +100%"
+    assert trades[1]["reason"] == "take profit +40%"
     assert trades[2]["reason"] == "trailing stop"
     total = float(trades[2]["position_pnl_sol"])
     assert total > 0.1  # bought ~1x, sold half at 2.5x and half at 2x
@@ -90,6 +114,76 @@ def test_winner_is_bought_takes_profit_and_trails_out(tmp_path):
     assert float(row["max_ret_pct"]) == pytest.approx(200.0)
     assert float(row["trade_pnl_sol"]) == pytest.approx(total, abs=1e-4)
     assert MINT_A in engine.done and MINT_A not in engine.tokens
+
+
+def test_dip_is_bought_after_the_bounce_not_at_launch(tmp_path):
+    clock = Clock()
+    engine, feed, _ = build(tmp_path, clock, {MINT_A: dip_path}, {MINT_A: T0}, dip=True)
+    feed.push(MINT_A, T0, symbol="DIP")
+    run_for(engine, clock, 590)
+    tok = engine.tokens[MINT_A]
+    assert not engine.positions  # 40% under the high but no bounce yet
+    assert tok.reasons and tok.reasons[0].startswith("dip: 40% di bawah puncak, baru naik 0% dari dasar")
+    run_for(engine, clock, 30)
+    assert MINT_A in engine.positions
+    assert 600 <= engine.positions[MINT_A].opened_at - T0 <= 620
+
+    run_for(engine, clock, 7300)
+    trades = read_csv(os.path.join(engine.s.data_dir, "trades.csv"))
+    assert [(t["side"], t["reason"]) for t in trades] == [
+        ("BUY", "beli saat dip"), ("SELL", "take profit +40%"), ("SELL", "trailing stop"),
+    ]
+    close = trades[-1]
+    assert float(close["position_pnl_sol"]) > 0.02
+    assert 10 <= float(close["entry_age_min"]) <= 10.5 and float(trades[0]["entry_age_min"]) == float(close["entry_age_min"])
+    assert 90 < float(close["peak_pct"]) < 100  # 2x the bought price, less the buy costs
+    assert float(close["held_min"]) == pytest.approx(20, abs=0.5)
+
+
+def test_no_buy_in_the_first_minutes_even_after_a_dip(tmp_path):
+    def early_dip(s):
+        if s < 30:
+            return None
+        if s < 60:
+            return {"price_usd": 0.00015}
+        if s < 120:
+            return {"price_usd": 0.00009}
+        return {"price_usd": 0.0001}  # dipped and bounced by minute 2
+
+    clock = Clock()
+    engine, feed, _ = build(tmp_path, clock, {MINT_A: early_dip}, {MINT_A: T0}, dip=True)
+    feed.push(MINT_A, T0)
+    run_for(engine, clock, 295)
+    assert not engine.positions  # the launch minutes are never bought
+    run_for(engine, clock, 20)
+    assert MINT_A in engine.positions and engine.positions[MINT_A].opened_at - T0 >= 300
+
+
+def test_token_that_never_dips_is_rejected_at_the_end_of_the_window(tmp_path):
+    clock = Clock()
+    engine, feed, _ = build(tmp_path, clock, {MINT_A: lambda s: {"price_usd": 0.0001 + s * 1e-8}}, {MINT_A: T0}, dip=True)
+    feed.push(MINT_A, T0)
+    run_for(engine, clock, 3500)
+    assert engine.tokens[MINT_A].status == "dipantau"
+    run_for(engine, clock, 200)
+    tok = engine.tokens[MINT_A]
+    assert tok.status == "ditolak" and not engine.positions
+    assert tok.reasons[0].startswith("dip: baru 0% di bawah puncak")
+
+
+def test_price_path_is_saved_when_tracking_ends(tmp_path):
+    clock = Clock()
+    engine, feed, _ = build(tmp_path, clock, {MINT_B: thin_path}, {MINT_B: T0})
+    feed.push(MINT_B, T0, symbol="THIN")
+    run_for(engine, clock, 7300)
+    assert MINT_B not in engine.tokens and not engine.paths
+    [record] = read_paths(os.path.join(engine.s.data_dir, "paths.jsonl.gz"))
+    assert record["mint"] == MINT_B and record["symbol"] == "THIN" and record["status"] == "ditolak"
+    points = record["points"]
+    assert 700 <= len(points) <= 725  # every 10 s refresh for 2 hours
+    t, price, liq = points[0][:3]
+    assert 30 <= t <= 45 and price == 0.0001 and liq == 5000
+    assert [p[0] for p in points] == sorted(p[0] for p in points)
 
 
 def test_thin_liquidity_is_rejected_and_still_researched(tmp_path):

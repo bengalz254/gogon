@@ -70,6 +70,8 @@ class Position:
     realized_sol: float = 0.0
     last_liquidity_usd: float | None = None
     last_mcap_usd: float | None = None
+    low_price_native: float | None = None  # lowest price while held
+    migrated_at: float | None = None
 
     @property
     def tokens_ui(self) -> float:
@@ -86,6 +88,18 @@ class Position:
 
     def total_pnl_sol(self) -> float:
         return self.proceeds_sol + self.value_sol() - self.cost_sol
+
+    def diagnostics(self, now: float) -> dict:
+        """How the price moved while held: the best and worst point vs the entry, and the timing."""
+        def pct(price):
+            return "" if not price else f"{(price / self.entry_price_native - 1) * 100:.1f}"
+
+        return {
+            "peak_pct": pct(self.peak_price_native),
+            "low_pct": pct(self.low_price_native),
+            "held_min": f"{(now - self.opened_at) / 60:.1f}",
+            "entry_age_min": "" if self.migrated_at is None else f"{(self.opened_at - self.migrated_at) / 60:.1f}",
+        }
 
     def to_dict(self) -> dict:
         return dataclasses.asdict(self)
@@ -183,10 +197,12 @@ def evaluate_exit(
         return ExitDecision(everything, "likuiditas anjlok")
     if ratio <= 1 - cfg.stop_loss_pct / 100:
         return ExitDecision(everything, "stop loss")
+    peak_ratio = pos.peak_price_native / pos.entry_price_native
+    if cfg.breakeven_after_pct > 0 and peak_ratio >= 1 + cfg.breakeven_after_pct / 100 and ratio <= 1.0:
+        return ExitDecision(everything, "stop impas")
     if cfg.max_hold_minutes > 0 and now - pos.opened_at >= cfg.max_hold_minutes * 60:
         return ExitDecision(everything, "waktu habis")
     if cfg.trailing_pct > 0:
-        peak_ratio = pos.peak_price_native / pos.entry_price_native
         if peak_ratio >= 1 + cfg.trailing_start_pct / 100 and price_native <= pos.peak_price_native * (
             1 - cfg.trailing_pct / 100
         ):

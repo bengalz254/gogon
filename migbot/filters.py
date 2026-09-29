@@ -82,6 +82,19 @@ def _at_most(name: str, value, maximum, fmt, strict: bool, what: str) -> Check:
     return Check(name, OK if ok else FAIL, f"{fmt(value)} {'≤' if ok else '>'} {fmt(maximum)}")
 
 
+def dip_check(price: float | None, peak: float | None, low: float | None, dip_pct: float, bounce_pct: float) -> Check:
+    """Buy the dip: far enough below the high since the migration, and back up off the low since then."""
+    if not price or not peak or not low:
+        return Check("dip", FAIL, "belum ada data harga")
+    drop = (1 - price / peak) * 100
+    rise = (price / low - 1) * 100
+    if drop < dip_pct:
+        return Check("dip", FAIL, f"baru {max(drop, 0.0):.0f}% di bawah puncak (tunggu ≥ {dip_pct:g}%)")
+    if rise < bounce_pct:
+        return Check("dip", FAIL, f"{drop:.0f}% di bawah puncak, baru naik {rise:.0f}% dari dasar (tunggu ≥ {bounce_pct:g}%)")
+    return Check("dip", OK, f"{drop:.0f}% di bawah puncak, naik {rise:.0f}% dari dasar")
+
+
 def market_checks(snap: MarketSnapshot, first_price_usd: float | None, cfg: FilterConfig) -> list[Check]:
     strict = cfg.strict_missing_data
     checks = [
