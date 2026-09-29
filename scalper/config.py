@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 from scalper.models import INTERVAL_MS
 
 MODES = ("paper", "testnet", "live")
-STRATEGIES = ("trend_pullback", "range_reversion")
+STRATEGIES = ("trend_pullback", "range_reversion", "trend_follow")
 LIVE_FAPI_URL = "https://fapi.binance.com"
 TESTNET_FAPI_URL = "https://testnet.binancefuture.com"
 DEFAULT_CONFIG_PATH = "config/scalper.yaml"
@@ -70,12 +70,24 @@ class RangeReversionParams:
 
 
 @dataclass
+class TrendFollowParams:
+    entry_bars: int = 20  # breakout of the highest high / lowest low of the previous N candles
+    trend_ema: int = 100  # only trade in this EMA's direction (0 = no filter)
+    atr_period: int = 20
+    stop_atr: float = 3.0  # initial stop distance in ATR
+    tp_r: float = 0.0  # fixed target in R; 0 = none, the trailing stop is the exit
+    min_atr_pct: float = 0.2
+    max_atr_pct: float = 15.0
+
+
+@dataclass
 class StrategyConfig:
     name: str = "trend_pullback"
     allow_long: bool = True
     allow_short: bool = True
     trend_pullback: TrendPullbackParams = field(default_factory=TrendPullbackParams)
     range_reversion: RangeReversionParams = field(default_factory=RangeReversionParams)
+    trend_follow: TrendFollowParams = field(default_factory=TrendFollowParams)
 
 
 @dataclass
@@ -347,6 +359,24 @@ def validate(s: Settings) -> list[str]:
             errors.append("trend_pullback requires 0 < min_sl_atr <= max_sl_atr")
         if tp.tp_r <= 0:
             errors.append("trend_pullback.tp_r must be > 0")
+    tf = st.trend_follow
+    if st.name == "trend_follow":
+        if tf.entry_bars < 2 or tf.atr_period < 2 or tf.trend_ema < 0:
+            errors.append("trend_follow needs entry_bars >= 2, atr_period >= 2 and trend_ema >= 0")
+        if tf.stop_atr <= 0 or tf.tp_r < 0:
+            errors.append("trend_follow needs stop_atr > 0 and tp_r >= 0")
+        if not (0 <= tf.min_atr_pct < tf.max_atr_pct):
+            errors.append("trend_follow requires 0 <= min_atr_pct < max_atr_pct")
+        if tf.tp_r == 0 and s.management.trail_start_r <= 0:
+            errors.append(
+                "trend_follow with tp_r = 0 exits only through the trailing stop: "
+                "set management.trail_start_r > 0 (e.g. 1.0)"
+            )
+        if s.timeframe in INTERVAL_MS and INTERVAL_MS[s.timeframe] < INTERVAL_MS["1h"]:
+            warnings.append(
+                f"trend_follow on {s.timeframe}: it is built for 1h and above, where fees are a "
+                "small part of each trade. Backtest before using it on small timeframes."
+            )
 
     r = s.risk
     if not (0 < r.risk_per_trade_pct <= 5):

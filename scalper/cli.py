@@ -263,6 +263,12 @@ GRIDS = {
         "adx_max": [15.0, 20.0, 25.0],
         "min_rr": [0.8, 1.2],
     },
+    "trend_follow": {
+        "entry_bars": [20, 55],
+        "stop_atr": [2.0, 3.0],
+        "trend_ema": [0, 100, 200],
+        "mgmt_trail_atr": [2.5, 4.0],  # management.trail_atr
+    },
 }
 
 
@@ -274,6 +280,8 @@ def _apply_combo(settings: Settings, combo: dict) -> None:
             p.rsi_pullback_long, p.rsi_pullback_short = v
         elif k == "rsi_band":
             p.rsi_oversold, p.rsi_overbought = v
+        elif k.startswith("mgmt_"):
+            setattr(settings.management, k[len("mgmt_"):], v)
         else:
             setattr(p, k, v)
 

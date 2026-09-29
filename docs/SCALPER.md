@@ -425,6 +425,30 @@ whether user is logged on or not") yang menjalankan
 
 ---
 
+## Strategi trend following (timeframe besar)
+
+Backtest 6 bulan menunjukkan scalping 5m/15m dengan fee biasa tidak punya
+keunggulan: hampir semua kerugian berasal dari fee. Karena itu tersedia juga
+strategi `trend_follow` untuk timeframe 1h–4h, dengan konfigurasi sendiri di
+`config/trend.yaml` (folder data & log terpisah: `data/trend`, `logs/trend`):
+
+* **Masuk**: candle tutup menembus titik tertinggi (long) / terendah (short)
+  20 candle sebelumnya, searah EMA100. Satu sinyal per breakout.
+* **Stop awal**: 3 × ATR. **Keluar**: trailing stop 3 × ATR dari harga
+  terbaik setelah untung 1R. Tanpa target tetap dan tanpa batas waktu, jadi
+  tren besar dibiarkan berjalan.
+* **Karakter**: win rate rendah dan bisa lama tanpa untung. Sedikit tren
+  besar yang membayar banyak rugi kecil. Nilai strategi ini dari backtest
+  bertahun-tahun, bukan dari beberapa minggu.
+
+```bash
+python -m scalper --config config/trend.yaml backtest                  # 4h, ~5 tahun, 6 koin
+python -m scalper --config config/trend.yaml backtest --timeframe 1h
+python -m scalper --config config/trend.yaml optimize                  # 24 kombinasi, dicek out-of-sample
+```
+
+---
+
 ## Menambahkan strategi sendiri (misalnya strategi dari bot Grok)
 
 1. Buat file baru di `scalper/strategies/`, turunkan dari `Strategy`

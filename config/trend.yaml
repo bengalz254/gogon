@@ -1,0 +1,90 @@
+# Konfigurasi bot TREND FOLLOWING (timeframe besar). Dipakai dengan --config:
+#
+#   python -m scalper --config config/trend.yaml backtest
+#   python -m scalper --config config/trend.yaml optimize
+#
+# Terpisah dari config/scalper.yaml (bot scalping) dan memakai folder data &
+# log sendiri, jadi keduanya tidak saling mengganggu.
+# Rahasia (API key, token Telegram) TIDAK boleh ditulis di sini — taruh di .env.
+
+mode: paper
+
+symbols: [BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT, SUIUSDT, ZECUSDT]
+
+# Candle 4 jam: pergerakan harga per trade jauh lebih besar dari biaya fee.
+timeframe: 4h
+
+strategy:
+  name: trend_follow
+  allow_long: true
+  allow_short: true
+
+  trend_follow:
+    entry_bars: 20          # masuk saat candle TUTUP menembus titik tertinggi/terendah 20 candle sebelumnya
+    trend_ema: 100          # hanya searah EMA100: long di atasnya, short di bawahnya (0 = matikan)
+    atr_period: 20
+    stop_atr: 3.0           # stop awal = 3 x ATR dari harga entry
+    tp_r: 0                 # 0 = tanpa target tetap: keluar lewat trailing stop (tren dibiarkan jalan)
+    min_atr_pct: 0.2        # lewati pasar yang terlalu sepi
+    max_atr_pct: 15.0       # lewati pasar yang terlalu liar
+
+management:
+  breakeven_at_r: 0         # tidak buru-buru dipindah ke impas: tren butuh ruang bernapas
+  trail_start_r: 1.0        # setelah untung 1R, stop mulai mengikuti harga...
+  trail_atr: 3.0            # ...sejauh 3 x ATR dari harga terbaik
+  max_bars_in_trade: 0      # tanpa batas waktu: posisi ditahan selama tren jalan
+  cooldown_bars_after_exit: 1
+  min_stop_gap_atr: 0.1
+
+risk:
+  risk_per_trade_pct: 0.5   # rugi maksimal per trade = 0.5% saldo (termasuk fee)
+  max_open_positions: 3
+  max_daily_loss_pct: 3.0
+  max_drawdown_pct: 25.0    # trend following wajar mengalami drawdown lebih dalam dari scalping
+  max_consecutive_losses: 3
+  loss_cooldown_minutes: 60
+  max_trades_per_day: 30
+  max_notional_usd: 0
+  max_margin_use_pct: 80
+  min_sl_cost_ratio: 3.0
+  liquidation_buffer: 0.5
+  maintenance_margin_rate: 0.01
+
+execution:
+  leverage: 3               # stop lebar: leverage kecil supaya jauh dari likuidasi (risiko tetap 0.5%)
+  margin_type: ISOLATED
+  take_profit_order: market # target jauh dipasang sebagai order kondisional, bukan limit
+  stop_working_type: MARK_PRICE
+  conditional_order_api: auto
+  orphan_policy: adopt
+  orphan_sl_atr: 3.0
+  auto_one_way_mode: false
+  poll_seconds: 5
+  position_check_seconds: 10
+  order_check_seconds: 60
+  candle_close_delay_seconds: 2
+  recv_window_ms: 5000
+  warmup_bars: 1000
+  flatten_on_exit: false
+
+costs:
+  taker_fee: 0.0005
+  maker_fee: 0.0002
+  slippage_bps: 2
+  funding_bps_per_8h: 1
+  use_exchange_fee_rates: true
+
+paper:
+  starting_balance: 1000
+
+backtest:
+  starting_balance: 1000
+  days: 1800                # ~5 tahun: 2021-2026, termasuk pasar naik DAN turun
+  oos_fraction: 0.3         # 30% data terakhir (~1.5 tahun) = ujian yang jujur
+
+notify:
+  telegram_enabled: false
+  heartbeat_minutes: 240
+
+data_dir: data/trend
+log_dir: logs/trend
