@@ -1,0 +1,164 @@
+"""Telegram alerts (optional) and the message texts, in Indonesian.
+
+Messages go out from a background thread, so a slow or unreachable
+Telegram can never hold up the bot. Plain text, no Markdown to escape.
+"""
+from __future__ import annotations
+
+import logging
+import queue
+import threading
+from datetime import datetime, timezone
+
+import requests
+
+from migbot.filters import fmt_dur, fmt_usd
+
+logger = logging.getLogger("migbot.telegram")
+
+
+class Notifier:
+    def __init__(self, token: str = "", chat_id: str = "", enabled: bool = True, prefix: str = "[migbot] "):
+        self.enabled = bool(enabled and token and chat_id)
+        self.token, self.chat_id, self.prefix = token, chat_id, prefix
+        self.sent = 0
+        self.last_error = ""
+        self._q: "queue.Queue[str | None]" = queue.Queue(maxsize=200)
+        self._thread: threading.Thread | None = None
+        if self.enabled:
+            self._thread = threading.Thread(target=self._worker, name="telegram", daemon=True)
+            self._thread.start()
+
+    def send(self, text: str) -> None:
+        if not self.enabled:
+            return
+        msg = f"{self.prefix}{text}"[:4000]
+        try:
+            self._q.put_nowait(msg)
+        except queue.Full:
+            try:
+                self._q.get_nowait()
+                self._q.put_nowait(msg)
+            except (queue.Empty, queue.Full):
+                pass
+
+    def send_now(self, text: str) -> tuple[bool, str]:
+        """Synchronous send (for `check --telegram-test`)."""
+        if not (self.token and self.chat_id):
+            return False, "TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID belum diisi di .env"
+        try:
+            r = requests.post(
+                f"https://api.telegram.org/bot{self.token}/sendMessage",
+                data={"chat_id": self.chat_id, "text": f"{self.prefix}{text}", "disable_web_page_preview": "true"},
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            return False, str(exc)
+        return (r.status_code == 200), f"HTTP {r.status_code}"
+
+    def close(self, timeout: float = 5.0) -> None:
+        if self._thread is None:
+            return
+        try:
+            self._q.put(None, timeout=1)
+        except queue.Full:
+            return
+        self._thread.join(timeout)
+
+    def _worker(self) -> None:
+        session = requests.Session()
+        url = f"https://api.telegram.org/bot{self.token}/sendMessage"
+        while True:
+            msg = self._q.get()
+            if msg is None:
+                return
+            try:
+                r = session.post(
+                    url, data={"chat_id": self.chat_id, "text": msg, "disable_web_page_preview": "true"}, timeout=10
+                )
+                if r.status_code == 200:
+                    self.sent += 1
+                else:
+                    self.last_error = f"HTTP {r.status_code}"
+                    logger.warning("Telegram send failed: HTTP %s %s", r.status_code, r.text[:200])
+            except requests.RequestException as exc:
+                self.last_error = str(exc)[:200]
+                logger.warning("Telegram send failed: %s", exc)
+
+
+# --------------------------------------------------------------------------- texts
+
+
+def links(mint: str, pair: str = "") -> str:
+    return (
+        f"GMGN: https://gmgn.ai/sol/token/{mint}\n"
+        f"DexScreener: https://dexscreener.com/solana/{pair or mint}\n"
+        f"Mint: {mint}"
+    )
+
+
+def start_text(mode: str, balance: float, settings) -> str:
+    f, x = settings.filters, settings.exits
+    tps = ", ".join(f"+{g:g}% jual {p * 100:g}%" for g, p in x.take_profit) or "-"
+    return (
+        f"🟢 Bot migrated mulai ({mode}). Saldo paper {balance:.3f} SOL.\n"
+        f"Beli {settings.trading.buy_sol:g} SOL, {fmt_dur(settings.entry.delay_seconds)} sampai "
+        f"{fmt_dur(settings.entry.window_seconds)} setelah migrasi.\n"
+        f"Filter: likuiditas ≥ {fmt_usd(f.min_liquidity_usd)}, mcap {fmt_usd(f.min_market_cap_usd)}-"
+        f"{fmt_usd(f.max_market_cap_usd) if f.max_market_cap_usd else '∞'}, vol 5m ≥ {fmt_usd(f.min_volume_5m_usd)}, "
+        f"top10 ≤ {f.max_top10_pct:g}%, dev ≤ {f.max_dev_hold_pct:g}%.\n"
+        f"Keluar: SL -{x.stop_loss_pct:g}%, TP {tps}, trailing {x.trailing_pct:g}% "
+        f"(aktif +{x.trailing_start_pct:g}%), maks {x.max_hold_minutes:g} mnt."
+    )
+
+
+def migration_text(tok) -> str:
+    return f"🆕 Migrasi: {tok.label} ({tok.source})\n{links(tok.mint, tok.pair_address)}"
+
+
+def buy_text(tok, pos, fill, snap) -> str:
+    ratio = snap.buy_ratio_m5
+    safety = tok.safety or {}
+    dev = safety.get("dev_pct")
+    top10 = safety.get("top10_pct")
+    impact = f", impact {fill.impact_pct:.1f}%" if fill.impact_pct is not None else ""
+    return (
+        f"✅ BELI (paper) {tok.label} {tok.name}\n"
+        f"Umur {fmt_dur(pos.opened_at - tok.migrated_at)} sejak migrasi\n"
+        f"Mcap {fmt_usd(snap.market_cap_usd)} · Likuiditas {fmt_usd(snap.liquidity_usd)} · "
+        f"Vol 5m {fmt_usd(snap.volume_m5)} · Beli {'?' if ratio is None else f'{ratio * 100:.0f}%'}\n"
+        f"Top10 {'?' if top10 is None else f'{top10:.0f}%'} · Dev {'?' if dev is None else f'{dev:.1f}%'}\n"
+        f"Bayar {fill.sol:.4f} SOL ({fill.method}{impact})\n"
+        f"{links(tok.mint, tok.pair_address)}"
+    )
+
+
+def sell_text(pos, fill, reason: str, pnl_sol: float, pnl_pct: float, closed: bool) -> str:
+    icon = "💰" if pnl_sol >= 0 else "🔴"
+    head = "TUTUP" if closed else "JUAL SEBAGIAN"
+    total = f"\nTotal posisi: {pos.proceeds_sol - pos.cost_sol:+.4f} SOL" if closed else ""
+    return (
+        f"{icon} {head} (paper) ${pos.symbol} — {reason}\n"
+        f"Terima {fill.sol:.4f} SOL ({fill.method}), P&L bagian ini {pnl_sol:+.4f} SOL ({pnl_pct:+.0f}%)"
+        f"{total}\nGMGN: https://gmgn.ai/sol/token/{pos.mint}"
+    )
+
+
+def rejection_text(tok) -> str:
+    reasons = "\n".join(f"- {r}" for r in tok.reasons[:6]) or "- tidak ada data pasar"
+    return f"⛔ Tidak dibeli: {tok.label}\n{reasons}\nGMGN: https://gmgn.ai/sol/token/{tok.mint}"
+
+
+def summary_text(day: str, stats: dict, balance: float, open_count: int, realized: float) -> str:
+    return (
+        f"📊 Ringkasan {day} (UTC)\n"
+        f"Migrasi terdeteksi: {stats.get('migrations', 0)}\n"
+        f"Dibeli: {stats.get('bought', 0)} · Ditolak: {stats.get('rejected', 0)}\n"
+        f"Posisi ditutup: {stats.get('closed', 0)} (untung {stats.get('wins', 0)})\n"
+        f"P&L terealisasi: {realized:+.4f} SOL\n"
+        f"Saldo paper: {balance:.4f} SOL · posisi terbuka: {open_count}"
+    )
+
+
+def utc_now_text() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")

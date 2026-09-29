@@ -1,0 +1,110 @@
+# Bot meme coin MIGRATED (Solana, pump.fun -> PumpSwap) — MODE PAPER.
+#
+# Semua beli/jual hanya simulasi: tidak ada wallet, private key, atau uang sungguhan.
+# Token/URL rahasia (Telegram, RPC) taruh di .env, bukan di sini.
+# Nama pengaturan yang salah ketik akan ditolak saat bot start.
+#
+#   python -m migbot check        cek konfigurasi + koneksi ke semua sumber data
+#   python -m migbot run          jalankan bot
+#   python -m migbot dashboard    dashboard di http://127.0.0.1:8780
+#   python -m migbot report       laporan riset + P&L
+
+poll_seconds: 2                  # jeda antar putaran bot (detik)
+
+discovery:                       # dari mana bot tahu ada token yang baru migrasi
+  pumpportal:
+    enabled: true                # WebSocket PumpPortal (real-time, gratis)
+    ws_url: wss://pumpportal.fun/api/data
+    reconnect_after_silence_minutes: 30
+  geckoterminal:
+    enabled: true                # cadangan: daftar pool baru GeckoTerminal (telat ±1 menit)
+    base_url: https://api.geckoterminal.com/api/v2
+    poll_seconds: 30
+    dexes: [pumpswap]            # pool baru di DEX ini dianggap migrasi
+  mint_suffixes: [pump]          # alamat token pump.fun berakhiran "pump"; [] = terima semua
+  max_age_on_discovery_seconds: 600   # token yang ketahuan > 10 menit setelah migrasi dilewati
+
+market:
+  dexscreener_url: https://api.dexscreener.com
+  refresh_seconds: 10            # harga/likuiditas/volume diperbarui tiap 10 detik
+
+tracking:
+  track_minutes: 120             # SETIAP token migrasi dipantau 2 jam (dibeli atau tidak) untuk riset
+  checkpoints_minutes: [1, 3, 5, 10, 15, 30, 60, 120]
+
+entry:
+  delay_seconds: 180             # jangan beli di detik-detik pertama: tunggu 3 menit (dump awal lewat dulu)
+  window_seconds: 900            # boleh beli sampai 15 menit setelah migrasi; lewat itu = ditolak
+
+filters:                         # SEMUA harus lolos (mirip filter di GMGN)
+  min_liquidity_usd: 10000
+  min_market_cap_usd: 40000
+  max_market_cap_usd: 1500000    # 0 = tanpa batas atas
+  min_volume_5m_usd: 5000        # volume 5 menit terakhir
+  min_txns_5m: 60                # jumlah transaksi 5 menit terakhir
+  min_buy_ratio_5m: 0.50         # porsi transaksi beli (0.5 = 50%)
+  max_drop_from_first_pct: 40    # tolak kalau harga sudah turun > 40% dari harga pertama yang terlihat
+  max_rise_from_first_pct: 300   # tolak kalau sudah naik > 300% (jangan mengejar)
+  require_socials: false         # true = wajib punya link website/twitter/telegram di DexScreener
+  require_mint_renounced: true   # token tidak bisa dicetak lagi
+  require_freeze_renounced: true # token tidak bisa dibekukan
+  bad_token2022_extensions: [transferFeeConfig, transferHook, permanentDelegate, nonTransferable, defaultAccountState, pausableConfig]
+  max_top10_pct: 30              # 10 wallet terbesar (tanpa pool/akun program) maks 30% supply; 100 = mati
+  max_top_holder_pct: 10         # satu wallet terbesar maks 10%; 100 = mati
+  max_dev_hold_pct: 5            # pembuat token masih pegang maks 5%; 100 = mati
+  min_holders: 0                 # GMGN: jumlah holder minimal (0 = mati)
+  min_smart_buys: 0              # GMGN: pembelian smart money minimal (0 = mati)
+  max_sniper_count: 0            # GMGN: sniper maksimal (0 = mati)
+  strict_missing_data: false     # true = cek yang datanya tidak ada dianggap GAGAL (bukan dilewati)
+
+safety:
+  refresh_seconds: 60            # data holder/dev diperbarui paling cepat tiap 60 detik per token
+  amm_owners:                    # pemilik akun pool/burn: tidak dihitung sebagai holder
+    - 5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1   # Raydium AMM v4
+    - GpMZbSM2GgvTKHJirzeGfMFoaZ8UR2X7F4v8vHTvxFbL   # Raydium CPMM
+    - WLHv2UAZm6z4KyaaELi5pjdbJh6RESMva1Rnn8pJVVh    # Raydium LaunchLab
+    - HLnpSz9h2S4hiLQ43rnSD9XkcUThA7B8hQMKmDaiTLcC   # Meteora DAMM v2
+    - 1nc1nerator11111111111111111111111111111111    # alamat burn
+  rugcheck:
+    enabled: true
+    base_url: https://api.rugcheck.xyz/v1
+    reject_danger: true          # tolak token dengan risiko level "danger"
+    ignore_risks: []             # nama risiko yang diabaikan, mis. ["Low Liquidity"] (lihat report)
+    max_score: 0                 # skor risiko maksimal 0-100; 0 = mati
+  gmgn:
+    enabled: true                # data tambahan GMGN (holder, smart money, sniper) kalau bisa diakses
+    base_url: https://gmgn.ai
+    blocked_retry_minutes: 30
+
+trading:                         # uang SIMULASI
+  buy_sol: 0.1                   # per token
+  paper_balance_sol: 5
+  max_open_positions: 3
+  max_buys_per_day: 20
+  max_daily_loss_sol: 0.5        # rugi hari ini (terealisasi + posisi terbuka) sampai 0.5 SOL -> berhenti beli sampai 00:00 UTC
+
+exits:
+  stop_loss_pct: 35              # jual semua kalau turun 35% dari harga beli (sudah termasuk fee)
+  take_profit: [[100, 0.5]]      # [naik %, porsi dijual]: +100% jual 50% posisi awal. Contoh bertingkat: [[50, 0.3], [150, 0.4]]
+  trailing_start_pct: 50         # trailing stop aktif setelah pernah naik 50%...
+  trailing_pct: 30               # ...lalu jual semua kalau turun 30% dari harga tertinggi
+  max_hold_minutes: 60           # jual semua setelah 60 menit
+  liquidity_drop_pct: 50         # jual semua kalau likuiditas turun 50% dari saat beli (tanda rug)
+  no_data_exit_minutes: 10       # jual kalau harga tidak ada kabar 10 menit
+
+costs:                           # biaya dihitung supaya hasil paper tidak terlalu indah
+  use_jupiter: true              # harga beli/jual simulasi dari quote Jupiter (fee pool + price impact asli)
+  jupiter_url: https://lite-api.jup.ag/swap/v1
+  extra_slippage_pct: 1.0        # kerugian tambahan di atas quote (telat, MEV)
+  est_swap_fee_pct: 1.25         # dipakai kalau Jupiter tidak bisa diakses
+  est_slippage_pct: 3.0          # dipakai kalau Jupiter tidak bisa diakses
+  priority_fee_sol: 0.001        # priority fee + tip anti-MEV per transaksi (beli dan jual)
+
+notify:
+  telegram_enabled: true         # butuh TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID di .env
+  notify_migrations: false       # kirim pesan untuk setiap migrasi (ramai!)
+  notify_rejections: false       # kirim pesan untuk setiap token yang ditolak (ramai!)
+  daily_summary: true            # ringkasan harian jam 00:00 UTC
+
+data_dir: data/migbot
+log_dir: logs

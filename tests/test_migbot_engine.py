@@ -1,0 +1,298 @@
+"""Whole token lifecycles through the engine, in simulated time, with fake sources."""
+import json
+import os
+
+import pytest
+
+from migbot.engine import Engine, Sources
+from migbot.storage import read_csv
+from migbot_fakes import (
+    MINT_A, MINT_B, MINT_C, T0, Clock, FakeDex, FakeFeed, FakeGmgn, FakeJupiter, FakeRpc, FakeRug, settings,
+)
+
+
+def winner_path(s):
+    """No data for a minute, flat until 10 min, then 2.5x, 3x, and back to 2x."""
+    if s < 60:
+        return None
+    if s < 600:
+        return {"price_usd": 0.0001}
+    if s < 900:
+        return {"price_usd": 0.00025}
+    if s < 1200:
+        return {"price_usd": 0.0003}
+    return {"price_usd": 0.0002}
+
+
+def thin_path(s):
+    return None if s < 30 else {"price_usd": 0.0001, "liq": 5_000.0}
+
+
+def build(tmp_path, clock, paths, migrated, jupiter=True, rpc=None, rug=None, **overrides):
+    s = settings(tmp_path, **overrides)
+    feed = FakeFeed()
+    dex = FakeDex(clock, migrated)
+    dex.paths.update(paths)
+
+    def price_native(mint):
+        kw = dex.paths[mint](clock() - migrated[mint])
+        return kw["price_usd"] / 150.0
+
+    src = Sources(
+        pumpportal=feed,
+        dexscreener=dex,
+        rpc=rpc or FakeRpc(),
+        rugcheck=rug or FakeRug(),
+        gmgn=FakeGmgn(),
+        jupiter=FakeJupiter(price_native) if jupiter else None,
+    )
+    return Engine(s, src, clock=clock), feed, dex
+
+
+def run_for(engine, clock, seconds, step=5):
+    end = clock() + seconds
+    while clock() < end:
+        engine.tick()
+        clock.advance(step)
+
+
+def test_winner_is_bought_takes_profit_and_trails_out(tmp_path):
+    clock = Clock()
+    engine, feed, _ = build(tmp_path, clock, {MINT_A: winner_path}, {MINT_A: T0})
+    feed.push(MINT_A, T0, symbol="WIN")
+    run_for(engine, clock, 200)
+    assert MINT_A in engine.positions, engine.tokens[MINT_A].reasons
+    pos = engine.positions[MINT_A]
+    assert 180 <= pos.opened_at - T0 <= 200
+    assert pos.method == "jupiter"
+    assert engine.balance == pytest.approx(5.0 - 0.1 - engine.s.costs.priority_fee_sol)
+
+    run_for(engine, clock, 7300)  # past the 2-hour tracking window
+    assert MINT_A not in engine.positions
+    trades = read_csv(os.path.join(engine.s.data_dir, "trades.csv"))
+    assert [t["side"] for t in trades] == ["BUY", "SELL", "SELL"]
+    assert trades[1]["reason"] == "take profit +100%"
+    assert trades[2]["reason"] == "trailing stop"
+    total = float(trades[2]["position_pnl_sol"])
+    assert total > 0.1  # bought ~1x, sold half at 2.5x and half at 2x
+    assert engine.balance == pytest.approx(5.0 + total)
+    assert engine.stats.wins == 1 and engine.stats.closed == 1
+
+    rows = read_csv(os.path.join(engine.s.data_dir, "tokens.csv"))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["status"] == "dibeli" and row["symbol"] == "WIN"
+    assert row["ret_1m"] == "" and row["ret_3m"] == ""  # before the first possible buy
+    assert float(row["ret_10m"]) == pytest.approx(150.0)
+    assert float(row["ret_15m"]) == pytest.approx(200.0)
+    assert float(row["ret_120m"]) == pytest.approx(100.0)
+    assert float(row["max_ret_pct"]) == pytest.approx(200.0)
+    assert float(row["trade_pnl_sol"]) == pytest.approx(total, abs=1e-4)
+    assert MINT_A in engine.done and MINT_A not in engine.tokens
+
+
+def test_thin_liquidity_is_rejected_and_still_researched(tmp_path):
+    clock = Clock()
+    engine, feed, _ = build(tmp_path, clock, {MINT_B: thin_path}, {MINT_B: T0})
+    feed.push(MINT_B, T0)
+    run_for(engine, clock, 950)
+    tok = engine.tokens[MINT_B]
+    assert tok.status == "ditolak"
+    assert any(r.startswith("likuiditas") for r in tok.reasons)
+    assert not engine.positions
+    run_for(engine, clock, 6400)
+    row = read_csv(os.path.join(engine.s.data_dir, "tokens.csv"))[0]
+    assert row["status"] == "ditolak" and "likuiditas" in row["reasons"]
+    assert row["ret_60m"] == "0.00"
+
+
+def test_token_without_market_data_is_marked_no_data(tmp_path):
+    clock = Clock()
+    engine, feed, _ = build(tmp_path, clock, {}, {MINT_C: T0})
+    feed.push(MINT_C, T0)
+    run_for(engine, clock, 950)
+    assert engine.tokens[MINT_C].status == "tanpa data"
+
+
+def test_unsafe_token_is_rejected_by_safety_checks(tmp_path):
+    clock = Clock()
+    rpc = FakeRpc(top10=55.0, dev=12.0)
+    rug = FakeRug([{"name": "Freeze Authority still enabled", "level": "danger", "description": ""}])
+    engine, feed, _ = build(tmp_path, clock, {MINT_A: winner_path}, {MINT_A: T0}, rpc=rpc, rug=rug)
+    feed.push(MINT_A, T0)
+    run_for(engine, clock, 300)
+    tok = engine.tokens[MINT_A]
+    assert not engine.positions
+    joined = " ".join(tok.reasons)
+    assert "top10 holder" in joined and "dev pegang" in joined and "RugCheck" in joined
+    # safety data is cached, not refetched on every 10 s snapshot
+    assert rpc.calls <= 3
+
+
+def test_ignored_rugcheck_risk_does_not_block(tmp_path):
+    clock = Clock()
+    rug = FakeRug([{"name": "Low Liquidity", "level": "danger", "description": ""}])
+    engine, feed, _ = build(
+        tmp_path, clock, {MINT_A: winner_path}, {MINT_A: T0}, rug=rug, safety__rugcheck__ignore_risks=["low liquidity"]
+    )
+    feed.push(MINT_A, T0)
+    run_for(engine, clock, 200)
+    assert MINT_A in engine.positions
+
+
+def test_risk_limit_blocks_second_position(tmp_path):
+    clock = Clock()
+    migrated = {MINT_A: T0, MINT_B: T0}
+    engine, feed, _ = build(
+        tmp_path, clock, {MINT_A: winner_path, MINT_B: winner_path}, migrated, trading__max_open_positions=1
+    )
+    feed.push(MINT_A, T0)
+    feed.push(MINT_B, T0)
+    run_for(engine, clock, 250)
+    assert len(engine.positions) == 1
+    other = MINT_B if MINT_A in engine.positions else MINT_A
+    assert engine.tokens[other].reasons[0].startswith("risiko: sudah 1 posisi terbuka")
+    run_for(engine, clock, 700)  # the buy window closes while the slot is still taken
+    assert engine.tokens[other].status == "lolos, tak dibeli"
+
+
+def test_late_discovery_is_skipped(tmp_path):
+    clock = Clock(T0 + 1200)
+    engine, feed, _ = build(tmp_path, clock, {MINT_A: winner_path}, {MINT_A: T0})
+    feed.push(MINT_A, T0, received_at=T0 + 1200)
+    engine.tick()
+    assert MINT_A not in engine.tokens
+    assert engine.stats.late == 1
+    feed.push(MINT_A, T0, received_at=T0 + 1205)  # the same token again is ignored
+    engine.tick()
+    assert engine.stats.late == 1
+
+
+def test_duplicate_sources_merge(tmp_path):
+    clock = Clock()
+    engine, feed, _ = build(tmp_path, clock, {MINT_A: winner_path}, {MINT_A: T0})
+    feed.push(MINT_A, T0 + 5)
+    engine.tick()
+    from migbot.models import MigrationEvent
+
+    engine.register(MigrationEvent(MINT_A, "geckoterminal", T0, T0 + 40), clock())
+    tok = engine.tokens[MINT_A]
+    assert tok.sources == ["pumpportal", "geckoterminal"]
+    assert tok.migrated_at == T0  # the earlier (pool creation) time wins
+    assert engine.stats.migrations == 1
+    engine.register(MigrationEvent(MINT_A, "other", T0 - 3600, T0 + 40), clock())
+    assert tok.migrated_at == T0  # an hour-older pool is a different event
+
+
+def test_restart_restores_open_position(tmp_path):
+    clock = Clock()
+    engine, feed, dex = build(tmp_path, clock, {MINT_A: winner_path}, {MINT_A: T0})
+    feed.push(MINT_A, T0)
+    run_for(engine, clock, 200)
+    assert MINT_A in engine.positions
+    engine.save()
+    balance = engine.balance
+
+    engine2, _, _ = build(tmp_path, clock, {MINT_A: winner_path}, {MINT_A: T0})
+    assert MINT_A in engine2.positions and MINT_A in engine2.tokens
+    assert engine2.balance == pytest.approx(balance)
+    run_for(engine2, clock, 7300)
+    assert not engine2.positions
+    trades = read_csv(os.path.join(engine2.s.data_dir, "trades.csv"))
+    assert [t["side"] for t in trades] == ["BUY", "SELL", "SELL"]
+
+
+def test_stop_loss_and_estimated_fills_without_jupiter(tmp_path):
+    def loser(s):
+        if s < 30:
+            return None
+        return {"price_usd": 0.0001 if s < 400 else 0.00005}
+
+    clock = Clock()
+    engine, feed, _ = build(tmp_path, clock, {MINT_A: loser}, {MINT_A: T0}, jupiter=False)
+    feed.push(MINT_A, T0)
+    run_for(engine, clock, 500)
+    trades = read_csv(os.path.join(engine.s.data_dir, "trades.csv"))
+    assert [t["side"] for t in trades] == ["BUY", "SELL"]
+    assert trades[0]["method"] == "estimasi"
+    assert trades[1]["reason"] == "stop loss"
+    assert float(trades[1]["pnl_sol"]) < -0.05
+    assert engine.risk.realized_today == pytest.approx(float(trades[1]["pnl_sol"]), abs=1e-6)
+
+
+def test_daily_loss_limit_halts_buying(tmp_path):
+    clock = Clock()
+    engine, feed, _ = build(tmp_path, clock, {MINT_A: winner_path}, {MINT_A: T0}, trading__max_daily_loss_sol=0.05)
+    engine.risk.record_realized(-0.06)
+    feed.push(MINT_A, T0)
+    run_for(engine, clock, 250)
+    assert not engine.positions
+    assert "batas rugi harian" in engine.tokens[MINT_A].reasons[0]
+
+
+def test_rug_exit_on_liquidity_collapse(tmp_path):
+    def rug(s):
+        if s < 30:
+            return None
+        if s < 400:
+            return {"price_usd": 0.0001}
+        return {"price_usd": 0.00009, "liq": 3_000.0}
+
+    clock = Clock()
+    engine, feed, _ = build(tmp_path, clock, {MINT_A: rug}, {MINT_A: T0})
+    feed.push(MINT_A, T0)
+    run_for(engine, clock, 500)
+    trades = read_csv(os.path.join(engine.s.data_dir, "trades.csv"))
+    assert trades[-1]["reason"] == "likuiditas anjlok"
+
+
+def test_status_file_is_strict_json(tmp_path):
+    clock = Clock()
+    engine, feed, _ = build(tmp_path, clock, {MINT_A: winner_path}, {MINT_A: T0})
+    feed.push(MINT_A, T0)
+    run_for(engine, clock, 200)
+    with open(engine.status_path, encoding="utf-8") as fh:
+        text = fh.read()
+    status = json.loads(text, parse_constant=lambda c: pytest.fail(f"non-strict JSON constant {c}"))
+    assert status["mode"] == "PAPER" and status["positions"][0]["mint"] == MINT_A
+    assert status["tokens"][0]["status"] == "dibeli"
+    assert {f["name"] for f in status["feeds"]} >= {"PumpPortal", "DexScreener", "Solana RPC"}
+
+
+def test_dexscreener_outage_does_not_crash(tmp_path):
+    clock = Clock()
+    engine, feed, dex = build(tmp_path, clock, {MINT_A: winner_path}, {MINT_A: T0})
+    feed.push(MINT_A, T0)
+    dex.fail = True
+    run_for(engine, clock, 100)
+    assert engine.tokens[MINT_A].last == {}
+    dex.fail = False
+    run_for(engine, clock, 150)
+    assert MINT_A in engine.positions
+
+
+def test_day_rollover_resets_counters(tmp_path):
+    clock = Clock()
+    engine, feed, _ = build(tmp_path, clock, {}, {})
+    engine.stats.migrations = 7
+    engine.risk.buys_today = 3
+    clock.advance(86400)
+    engine.tick()
+    assert engine.stats.migrations == 0 and engine.risk.buys_today == 0
+
+
+def test_future_migration_time_is_clamped_to_now(tmp_path):
+    clock = Clock()
+    engine, feed, _ = build(tmp_path, clock, {MINT_A: winner_path}, {MINT_A: T0})
+    feed.push(MINT_A, T0 + 86_400, received_at=T0)  # a source with a skewed clock
+    engine.tick()
+    assert engine.tokens[MINT_A].migrated_at == T0
+
+
+def test_last_checkpoint_is_recorded_before_finalizing(tmp_path):
+    clock = Clock()
+    engine, feed, _ = build(tmp_path, clock, {MINT_B: thin_path}, {MINT_B: T0})
+    feed.push(MINT_B, T0)
+    run_for(engine, clock, 7400, step=7)  # ticks that never land exactly on the 120-minute mark
+    row = read_csv(os.path.join(engine.s.data_dir, "tokens.csv"))[0]
+    assert all(row[f"ret_{m}m"] != "" for m in (5, 10, 15, 30, 60, 120))

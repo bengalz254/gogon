@@ -1,4 +1,26 @@
-# gogon — Polymarket Auto-Trading Bot
+# gogon — trading bots
+
+| Bot | Market | Docs |
+|---|---|---|
+| **migbot** (`migbot/`) | Solana meme coins that just migrated from pump.fun to PumpSwap (GMGN's *Migrated* list). Paper trading only | [docs/MIGBOT.md](docs/MIGBOT.md) (Bahasa Indonesia) |
+| **Polymarket bot** (`bot/`) | Polymarket prediction markets | this README |
+
+Quick start for migbot (paper trading, no wallet or API key needed):
+
+```bash
+pip install -r requirements-migbot.txt
+python -m migbot check       # config + every data source
+python -m migbot run         # the bot
+python -m migbot dashboard   # http://127.0.0.1:8780
+python -m migbot report      # do the filters pick better tokens than the rejected ones?
+```
+
+On a VPS: `bash deploy/setup_migbot.sh` installs it as two systemd services.
+Tests: `python -m pytest tests/test_migbot_*.py`.
+
+---
+
+## Polymarket Auto-Trading Bot
 
 An automated trading bot for [Polymarket](https://polymarket.com) built on
 Polymarket's official CLOB (Central Limit Order Book) API. It scans active
