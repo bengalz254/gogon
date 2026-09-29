@@ -109,13 +109,34 @@ def test_missing_safety_data():
 
 
 def test_gmgn_checks_only_with_gmgn_data():
-    cfg = FilterConfig(min_holders=300, min_smart_buys=1, max_sniper_count=10, strict_missing_data=True)
+    cfg = FilterConfig(min_smart_buys=1, max_sniper_count=10, strict_missing_data=True)
     without = by_name(safety_checks(safe(), rug(), None, cfg, RugcheckConfig()))
     assert not any("GMGN" in n for n in without)
     with_data = by_name(safety_checks(safe(), rug(), GmgnInfo(ts=0, holders=120, smart_buys=0, sniper_count=25), cfg, RugcheckConfig()))
-    assert with_data["holder (GMGN)"].status == FAIL
     assert with_data["smart money (GMGN)"].status == FAIL
     assert with_data["sniper (GMGN)"].status == FAIL
+
+
+def test_holder_count_from_rpc_with_gmgn_as_fallback():
+    rc = RugcheckConfig()
+
+    def check(safety, gmgn=None, cfg=FilterConfig(min_holders=200)):
+        return by_name(safety_checks(safety, rug(), gmgn, cfg, rc))["jumlah holder"]
+
+    assert check(safe(holder_count=450)).status == OK
+    low = check(safe(holder_count=150))
+    assert low.status == FAIL and low.detail == "150 < 200"
+    # The RPC count wins; GMGN's count is used only when the RPC could not count.
+    assert check(safe(holder_count=150), GmgnInfo(ts=0, holders=900)).status == FAIL
+    assert check(safe(), GmgnInfo(ts=0, holders=900)).status == OK
+    # Nothing counted: skipped, or failed with strict_missing_data.
+    assert check(safe()).status == SKIP
+    assert check(safe(), cfg=FilterConfig(min_holders=200, strict_missing_data=True)).status == FAIL
+    # More holders than the pages that were read.
+    assert check(safe(holder_count=2000, holder_count_complete=False)).detail == "2000+ ≥ 200"
+    assert check(safe(holder_count=2000, holder_count_complete=False), cfg=FilterConfig(min_holders=5000)).status == SKIP
+    off = by_name(safety_checks(safe(holder_count=5), rug(), None, FilterConfig(min_holders=0), rc))
+    assert "jumlah holder" not in off
 
 
 def test_fmt_usd():

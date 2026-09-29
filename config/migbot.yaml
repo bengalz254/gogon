@@ -52,7 +52,7 @@ filters:                         # SEMUA harus lolos (mirip filter di GMGN)
   max_top10_pct: 30              # 10 wallet terbesar (tanpa pool/akun program) maks 30% supply; 100 = mati
   max_top_holder_pct: 10         # satu wallet terbesar maks 10%; 100 = mati
   max_dev_hold_pct: 5            # pembuat token masih pegang maks 5%; 100 = mati
-  min_holders: 0                 # GMGN: jumlah holder minimal (0 = mati)
+  min_holders: 200               # jumlah wallet pemegang minimal, dihitung lewat RPC (Helius); 0 = mati
   min_smart_buys: 0              # GMGN: pembelian smart money minimal (0 = mati)
   max_sniper_count: 0            # GMGN: sniper maksimal (0 = mati)
   strict_missing_data: false     # true = cek yang datanya tidak ada dianggap GAGAL (bukan dilewati)
@@ -78,10 +78,10 @@ safety:
 
 trading:                         # uang SIMULASI
   buy_sol: 0.1                   # per token
-  paper_balance_sol: 5
-  max_open_positions: 3
-  max_buys_per_day: 20
-  max_daily_loss_sol: 0.5        # rugi hari ini (terealisasi + posisi terbuka) sampai 0.5 SOL -> berhenti beli sampai 00:00 UTC
+  paper_balance_sol: 10          # modal simulasi; angka baru berlaku setelah `python -m migbot reset`
+  max_open_positions: 6
+  max_buys_per_day: 100
+  max_daily_loss_sol: 2          # rugi hari ini (terealisasi + posisi terbuka) sampai 2 SOL -> berhenti beli sampai 00:00 UTC
 
 exits:
   stop_loss_pct: 35              # jual semua kalau turun 35% dari harga beli (sudah termasuk fee)

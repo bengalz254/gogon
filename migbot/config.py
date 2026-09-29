@@ -104,8 +104,10 @@ class FilterConfig:
     max_top10_pct: float = 30.0
     max_top_holder_pct: float = 10.0
     max_dev_hold_pct: float = 5.0
+    # Wallets holding the token, counted over the RPC (Helius getTokenAccounts),
+    # GMGN's count when the RPC cannot. 0 = off.
+    min_holders: int = 200
     # GMGN-only checks: applied only when GMGN data is available. 0 = off.
-    min_holders: int = 0
     min_smart_buys: int = 0
     max_sniper_count: int = 0
     # false: a check whose data is unavailable is skipped. true: it fails.
@@ -141,11 +143,11 @@ class SafetyConfig:
 @dataclass
 class TradingConfig:
     buy_sol: float = 0.1
-    paper_balance_sol: float = 5.0
-    max_open_positions: int = 3
-    max_buys_per_day: int = 20
+    paper_balance_sol: float = 10.0
+    max_open_positions: int = 6
+    max_buys_per_day: int = 100
     # Daily loss (realized + open positions) that stops new buys until 00:00 UTC.
-    max_daily_loss_sol: float = 0.5
+    max_daily_loss_sol: float = 2.0
 
 
 @dataclass

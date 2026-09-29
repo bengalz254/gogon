@@ -114,14 +114,21 @@ class FakeDex:
 
 
 class FakeRpc:
-    def __init__(self, top10=18.0, top1=4.0, dev=0.0, mint_authority=None, freeze_authority=None):
-        self.report = dict(top10=top10, top1=top1, dev=dev, mint_authority=mint_authority, freeze_authority=freeze_authority)
+    """holders=None acts like an RPC without getTokenAccounts (not Helius)."""
+
+    def __init__(self, top10=18.0, top1=4.0, dev=0.0, mint_authority=None, freeze_authority=None, holders=450):
+        self.report = dict(
+            top10=top10, top1=top1, dev=dev, mint_authority=mint_authority, freeze_authority=freeze_authority, holders=holders
+        )
         self.calls = 0
+        self.holders_supported = None
         self.http = _http("Solana RPC")
 
-    def safety_report(self, mint, pair_address, amm_owners, creator=None):
+    def safety_report(self, mint, pair_address, amm_owners, creator=None, count_holders=False):
         self.calls += 1
         r = self.report
+        if count_holders:
+            self.holders_supported = r["holders"] is not None
         return SafetyReport(
             ts=0,
             decimals=6,
@@ -133,6 +140,7 @@ class FakeRpc:
             top10_pct=r["top10"],
             top_holder_pct=r["top1"],
             holders_seen=20,
+            holder_count=r["holders"] if count_holders else None,
             creator="Creator1111111111111111111111111111111111",
             dev_pct=r["dev"],
         )

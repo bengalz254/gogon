@@ -99,13 +99,20 @@ def _r(value, digits: int = 2) -> str:
     return "" if value is None else f"{value:.{digits}f}"
 
 
+def _holders(safety: dict) -> str:
+    count = safety.get("holder_count")
+    if count is None:
+        return ""
+    return f"{count}" if safety.get("holder_count_complete", True) else f"{count}+"
+
+
 def token_fields(checkpoints: list[float]) -> list[str]:
     return (
         [
             "migrated_at_utc", "mint", "symbol", "source", "detect_delay_s", "status", "reasons",
             "decided_after_s", "first_price_usd", "ref_price_usd", "first_mcap_usd",
             "mcap_usd", "liquidity_usd", "volume_5m_usd", "txns_5m", "buy_ratio_5m",
-            "top10_pct", "top_holder_pct", "dev_pct", "rugcheck_score", "rugcheck_danger",
+            "top10_pct", "top_holder_pct", "dev_pct", "holders", "rugcheck_score", "rugcheck_danger",
             "gmgn_holders", "gmgn_smart_buys",
         ]
         + [f"ret_{m:g}m" for m in checkpoints]
@@ -141,6 +148,7 @@ def research_row(tok: TrackedToken, checkpoints: list[float]) -> dict:
         "top10_pct": _r(safety.get("top10_pct"), 1),
         "top_holder_pct": _r(safety.get("top_holder_pct"), 1),
         "dev_pct": _r(safety.get("dev_pct"), 2),
+        "holders": _holders(safety),
         "rugcheck_score": _r(rug.get("score_normalised"), 0),
         "rugcheck_danger": "; ".join(danger),
         "gmgn_holders": "" if gmgn.get("holders") is None else str(gmgn["holders"]),

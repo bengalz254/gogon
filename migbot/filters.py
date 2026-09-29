@@ -126,6 +126,22 @@ def market_checks(snap: MarketSnapshot, first_price_usd: float | None, cfg: Filt
     return checks
 
 
+def holder_check(safety: SafetyReport | None, gmgn: GmgnInfo | None, minimum: int, strict: bool) -> Check:
+    """Holder count from the RPC; GMGN's count when the RPC could not count."""
+    count = safety.holder_count if safety else None
+    complete = safety.holder_count_complete if safety else True
+    if count is None and gmgn is not None and gmgn.holders is not None:
+        count, complete = gmgn.holders, True
+    if count is None:
+        return _missing("jumlah holder", "holder", strict)
+    shown = f"{count}" if complete else f"{count}+"
+    if count >= minimum:
+        return Check("jumlah holder", OK, f"{shown} ≥ {minimum}")
+    if not complete:  # only part of the holders was counted, the real number may be higher
+        return Check("jumlah holder", FAIL if strict else SKIP, f"{shown}, tidak terhitung sampai {minimum}")
+    return Check("jumlah holder", FAIL, f"{shown} < {minimum}")
+
+
 def safety_checks(
     safety: SafetyReport | None,
     rug: RugcheckReport | None,
@@ -161,6 +177,8 @@ def safety_checks(
     checks.append(_at_most("holder terbesar", top1, cfg.max_top_holder_pct, lambda v: fmt_pct(v, 1), strict, "holder"))
     dev = safety.dev_pct if safety else None
     checks.append(_at_most("dev pegang", dev, cfg.max_dev_hold_pct, lambda v: fmt_pct(v, 1), strict, "dev"))
+    if cfg.min_holders > 0:
+        checks.append(holder_check(safety, gmgn, cfg.min_holders, strict))
 
     if rug_cfg.enabled:
         if rug is None:
@@ -177,8 +195,6 @@ def safety_checks(
                 checks.append(Check("RugCheck", OK, f"skor {score}, {len(rug.risks)} catatan"))
 
     if gmgn is not None:
-        if cfg.min_holders > 0:
-            checks.append(_at_least("holder (GMGN)", gmgn.holders, cfg.min_holders, lambda v: f"{v:.0f}", False, "GMGN"))
         if cfg.min_smart_buys > 0:
             checks.append(
                 _at_least("smart money (GMGN)", gmgn.smart_buys, cfg.min_smart_buys, lambda v: f"{v:.0f}", False, "GMGN")

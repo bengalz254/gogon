@@ -107,7 +107,10 @@ def start_text(mode: str, balance: float, settings) -> str:
         f"{fmt_dur(settings.entry.window_seconds)} setelah migrasi.\n"
         f"Filter: likuiditas ≥ {fmt_usd(f.min_liquidity_usd)}, mcap {fmt_usd(f.min_market_cap_usd)}-"
         f"{fmt_usd(f.max_market_cap_usd) if f.max_market_cap_usd else '∞'}, vol 5m ≥ {fmt_usd(f.min_volume_5m_usd)}, "
-        f"top10 ≤ {f.max_top10_pct:g}%, dev ≤ {f.max_dev_hold_pct:g}%.\n"
+        f"top10 ≤ {f.max_top10_pct:g}%, dev ≤ {f.max_dev_hold_pct:g}%"
+        f"{f', holder ≥ {f.min_holders}' if f.min_holders > 0 else ''}.\n"
+        f"Maks {settings.trading.max_open_positions} posisi, {settings.trading.max_buys_per_day} beli/hari, "
+        f"berhenti kalau rugi hari ini {settings.trading.max_daily_loss_sol:g} SOL.\n"
         f"Keluar: SL -{x.stop_loss_pct:g}%, TP {tps}, trailing {x.trailing_pct:g}% "
         f"(aktif +{x.trailing_start_pct:g}%), maks {x.max_hold_minutes:g} mnt."
     )
@@ -122,13 +125,17 @@ def buy_text(tok, pos, fill, snap) -> str:
     safety = tok.safety or {}
     dev = safety.get("dev_pct")
     top10 = safety.get("top10_pct")
+    holders = safety.get("holder_count")
+    if holders is not None and not safety.get("holder_count_complete", True):
+        holders = f"{holders}+"
     impact = f", impact {fill.impact_pct:.1f}%" if fill.impact_pct is not None else ""
     return (
         f"✅ BELI (paper) {tok.label} {tok.name}\n"
         f"Umur {fmt_dur(pos.opened_at - tok.migrated_at)} sejak migrasi\n"
         f"Mcap {fmt_usd(snap.market_cap_usd)} · Likuiditas {fmt_usd(snap.liquidity_usd)} · "
         f"Vol 5m {fmt_usd(snap.volume_m5)} · Beli {'?' if ratio is None else f'{ratio * 100:.0f}%'}\n"
-        f"Top10 {'?' if top10 is None else f'{top10:.0f}%'} · Dev {'?' if dev is None else f'{dev:.1f}%'}\n"
+        f"Top10 {'?' if top10 is None else f'{top10:.0f}%'} · Dev {'?' if dev is None else f'{dev:.1f}%'}"
+        f" · Holder {'?' if holders is None else holders}\n"
         f"Bayar {fill.sol:.4f} SOL ({fill.method}{impact})\n"
         f"{links(tok.mint, tok.pair_address)}"
     )

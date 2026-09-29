@@ -29,7 +29,8 @@ ala GMGN, lalu **membeli secara simulasi (paper)** token yang lolos.
 3. Tunggu            3 menit setelah migrasi (entry.delay_seconds)
 4. Filter pasar      likuiditas, market cap, volume 5m, transaksi 5m, rasio beli, harga vs awal
 5. Filter keamanan   (on-chain lewat Solana RPC) mint/freeze authority, ekstensi Token-2022
-                     berbahaya, top 10 holder, holder terbesar, % dev; RugCheck; GMGN kalau bisa
+                     berbahaya, top 10 holder, holder terbesar, % dev, jumlah holder;
+                     RugCheck; GMGN kalau bisa
 6. Beli (paper)      harga dari quote Jupiter (fee pool + price impact asli) + selip + priority fee
 7. Jual (paper)      stop loss, take profit bertingkat, trailing stop, batas waktu, likuiditas anjlok
 8. Catat             setiap token: harga 1, 3, 5, 10, 15, 30, 60, 120 menit setelah migrasi
@@ -127,7 +128,7 @@ PowerShell.
 
 ✅ **Cek:** kamu punya URL yang diawali `https://mainnet.helius-rpc.com/?api-key=`.
 Tanpa ini bot tetap jalan, tapi cek holder/dev sering dilewati karena RPC publik
-membatasi request.
+membatasi request, dan jumlah holder tidak bisa dihitung sama sekali.
 
 **Langkah 7.** Isi keduanya dengan panduan otomatis (tidak perlu mengedit file):
 
@@ -163,6 +164,7 @@ venv/bin/python -m migbot check --telegram-test
 - `reset` menulis `Data lama dipindah ke ...` atau `Tidak ada data untuk direset.`;
 - Telegram menerima `[migbot] Tes notifikasi ... berhasil ✅` dan `🟢 Bot migrated mulai (PAPER)`;
 - ada `[OK] Solana RPC` tanpa tulisan "sebagian gagal";
+- ada `[OK] Holder ... holder; filter: minimal 200`;
 - baris terakhir `✅ Siap.`
 
 ❌ `[!] Telegram gagal`: jalankan lagi `venv/bin/python -m migbot setup` (Langkah 7).
@@ -245,7 +247,7 @@ Dari laporan itu kelihatan apakah baris **lolos filter** lebih bagus dari **dito
 
 Isi dashboard:
 
-* **P&L paper**: saldo + nilai posisi − modal awal (5 SOL simulasi).
+* **P&L paper**: saldo + nilai posisi − modal awal (10 SOL simulasi).
 * **Token migrated yang sedang dipantau**: status (dipantau / dibeli / lolos, tak
   dibeli / ditolak / tanpa data), market cap, likuiditas, volume 5 menit, rasio beli, dan hasil setiap
   filter (klik untuk melihat semua cek ✓/✕).
@@ -267,7 +269,7 @@ tiga kelompok:
 | Kelompok | Artinya |
 |---|---|
 | `semua` | Semua token migrasi. Ini gambaran "beli acak" |
-| `lolos filter` | Token yang lolos semua filter (termasuk yang tidak jadi dibeli karena batas risiko, misalnya sudah 3 posisi terbuka) |
+| `lolos filter` | Token yang lolos semua filter (termasuk yang tidak jadi dibeli karena batas risiko, misalnya sudah 6 posisi terbuka) |
 | `dibeli` | Token yang benar-benar dibeli (paper) |
 | `ditolak` | Token yang tidak lolos |
 
@@ -305,10 +307,13 @@ Semua pengaturan ada penjelasannya di file itu. Yang paling sering diubah:
 | `filters.min_market_cap_usd` / `max_market_cap_usd` | 40k / 1.5M | Rentang market cap |
 | `filters.min_volume_5m_usd`, `min_txns_5m`, `min_buy_ratio_5m` | 5000, 60, 0.5 | Token harus ramai dan lebih banyak yang beli |
 | `filters.max_top10_pct`, `max_top_holder_pct`, `max_dev_hold_pct` | 30, 10, 5 | Konsentrasi holder (100 = mati) |
-| `filters.min_holders`, `min_smart_buys`, `max_sniper_count` | 0 | Filter GMGN (0 = mati; hanya berlaku kalau GMGN bisa diakses) |
+| `filters.min_holders` | 200 | Jumlah wallet pemegang minimal, dihitung lewat RPC (butuh Helius; pool tidak dihitung). 0 = mati |
+| `filters.min_smart_buys`, `max_sniper_count` | 0 | Filter GMGN (0 = mati; hanya berlaku kalau GMGN bisa diakses) |
 | `trading.buy_sol` | 0.1 | Ukuran beli simulasi per token |
-| `trading.max_open_positions` | 3 | Posisi terbuka bersamaan |
-| `trading.max_daily_loss_sol` | 0.5 | Rugi hari ini sampai segini → berhenti beli sampai 00:00 UTC (08:00 WITA) |
+| `trading.paper_balance_sol` | 10 | Modal simulasi. Perubahan baru berlaku setelah `python -m migbot reset` |
+| `trading.max_open_positions` | 6 | Posisi terbuka bersamaan |
+| `trading.max_buys_per_day` | 100 | Beli maksimal per hari (UTC) |
+| `trading.max_daily_loss_sol` | 2 | Rugi hari ini sampai segini → berhenti beli sampai 00:00 UTC (08:00 WITA) |
 | `exits.stop_loss_pct` | 35 | Jual semua kalau turun 35% dari harga beli |
 | `exits.take_profit` | `[[100, 0.5]]` | Naik 100% → jual 50% posisi awal |
 | `exits.trailing_start_pct` / `trailing_pct` | 50 / 30 | Setelah pernah +50%, jual semua kalau turun 30% dari puncak |
@@ -318,9 +323,11 @@ Nama pengaturan yang salah ketik akan ditolak saat bot start (lihat
 `journalctl -u migbot`). Setelah mengubah config: `sudo systemctl restart migbot`.
 
 **Soal GMGN:** GMGN tidak punya API publik resmi dan sering memblokir request dari
-server. Bot memakai data GMGN (holder, smart money, sniper) hanya kalau bisa diakses,
+server. Bot memakai data GMGN (smart money, sniper) hanya kalau bisa diakses,
 tanpa mencoba mengakali blokirnya. Kalau diblokir, dashboard menulis "diblokir oleh
-GMGN" dan filter khusus GMGN dilewati; filter lainnya tetap berjalan.
+GMGN" dan filter khusus GMGN dilewati; filter lainnya tetap berjalan. Jumlah holder
+tidak bergantung pada GMGN: bot menghitungnya sendiri lewat RPC Helius
+(`getTokenAccounts`), dan angka GMGN hanya dipakai kalau RPC tidak bisa menghitung.
 
 ---
 

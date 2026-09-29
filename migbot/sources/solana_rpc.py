@@ -1,8 +1,10 @@
 """On-chain safety data over plain Solana JSON-RPC (any RPC URL works).
 
 Per token: mint/freeze authority and Token-2022 extensions, the top holders
-(pool vaults and burn addresses left out), and how much the creator (read
-from pump.fun's bonding-curve account) still holds.
+(pool vaults and burn addresses left out), how much the creator (read from
+pump.fun's bonding-curve account) still holds, and optionally the number of
+holders. Counting holders uses the DAS method getTokenAccounts (Helius and
+other DAS providers); on an RPC without it the count is simply left out.
 """
 from __future__ import annotations
 
@@ -18,8 +20,20 @@ from migbot.solana import b58decode, bonding_curve_address, bonding_curve_creato
 logger = logging.getLogger("migbot.rpc")
 
 
+HOLDER_PAGE_SIZE = 1000  # getTokenAccounts maximum per page
+HOLDER_MAX_PAGES = 2  # counts up to 2000 holders; more is reported as "2000+"
+
+
 class RpcError(RuntimeError):
-    pass
+    def __init__(self, message: str, code: int | None = None):
+        super().__init__(message)
+        self.code = code
+
+    @property
+    def unsupported(self) -> bool:
+        """The RPC does not offer this method at all (as opposed to a passing failure)."""
+        text_ = str(self).lower()
+        return self.code == -32601 or "method not found" in text_ or "not supported" in text_
 
 
 def parse_mint_info(value) -> dict:
@@ -86,6 +100,27 @@ def parse_owner_balance(value) -> int:
     return total
 
 
+def parse_token_accounts(result) -> list[tuple[str, int]]:
+    """getTokenAccounts (DAS) page -> [(owner, raw amount)]."""
+    rows = result.get("token_accounts") if isinstance(result, dict) else None
+    out = []
+    for row in rows or []:
+        owner = text(row, "owner") if isinstance(row, dict) else ""
+        if not owner:
+            continue
+        try:
+            amount = int(row.get("amount") or 0)
+        except (TypeError, ValueError):
+            continue
+        out.append((owner, amount))
+    return out
+
+
+def count_holders(rows: list[tuple[str, int]], excluded_owners: set[str]) -> int:
+    """Distinct owners with a balance; the pool and other listed owners are left out."""
+    return len({owner for owner, amount in rows if amount > 0 and owner not in excluded_owners})
+
+
 def is_program_owned(owner: str) -> bool:
     """Wallet addresses are ed25519 keys; program-derived addresses (pool
     vaults, lockers, bonding curves) are deliberately off the curve."""
@@ -126,8 +161,9 @@ class SolanaRpc:
         self.url = url
         self.http = http or JsonHttp("Solana RPC", min_interval=0.15, retries=3, timeout=15)
         self._id = 0
+        self.holders_supported: bool | None = None  # False once the RPC turned out to lack getTokenAccounts
 
-    def call(self, method: str, params: list):
+    def call(self, method: str, params: list | dict):
         self._id += 1
         payload = self.http.post_json(self.url, {"jsonrpc": "2.0", "id": self._id, "method": method, "params": params})
         if not isinstance(payload, dict):
@@ -135,7 +171,8 @@ class SolanaRpc:
         if payload.get("error"):
             err = payload["error"]
             message = err.get("message") if isinstance(err, dict) else str(err)
-            raise RpcError(f"{method}: {message}")
+            code = err.get("code") if isinstance(err, dict) else None
+            raise RpcError(f"{method}: {message}", code if isinstance(code, int) else None)
         result = payload.get("result")
         return result.get("value") if isinstance(result, dict) and "value" in result else result
 
@@ -166,11 +203,32 @@ class SolanaRpc:
         )
         return parse_owner_balance(value)
 
+    def holder_count(self, mint: str, excluded_owners: set[str]) -> tuple[int, bool]:
+        """(holders, complete). complete is False when there were more pages than were read."""
+        rows: list[tuple[str, int]] = []
+        for page in range(1, HOLDER_MAX_PAGES + 1):
+            try:
+                result = self.call("getTokenAccounts", {"mint": mint, "page": page, "limit": HOLDER_PAGE_SIZE})
+            except RpcError as exc:
+                if exc.unsupported:
+                    self.holders_supported = False
+                raise
+            self.holders_supported = True
+            if not isinstance(result, dict):
+                raise RpcError("getTokenAccounts: jawaban RPC tidak dikenal")
+            batch = result.get("token_accounts") or []
+            rows.extend(parse_token_accounts(result))
+            if len(batch) < HOLDER_PAGE_SIZE:
+                return count_holders(rows, excluded_owners), True
+        return count_holders(rows, excluded_owners), False
+
     def creator_of(self, mint: str) -> str | None:
         data = self.account_bytes(bonding_curve_address(mint))
         return bonding_curve_creator(data) if data else None
 
-    def safety_report(self, mint: str, pair_address: str, amm_owners: list[str], creator: str | None = None) -> SafetyReport:
+    def safety_report(
+        self, mint: str, pair_address: str, amm_owners: list[str], creator: str | None = None, count_holders: bool = False
+    ) -> SafetyReport:
         """Everything the safety filters need. Steps that fail are listed in `errors`."""
         report = SafetyReport(ts=time.time())
         supply_raw = 0
@@ -187,11 +245,11 @@ class SolanaRpc:
         except (RpcError, HttpError) as exc:
             report.errors.append(f"mint: {exc}")
 
+        excluded = set(amm_owners) | {pair_address, bonding_curve_address(mint)}
         if supply_raw > 0:
             try:
                 largest = self.largest_accounts(mint)
                 owners = self.owners([a for a, _ in largest])
-                excluded = set(amm_owners) | {pair_address, bonding_curve_address(mint)}
                 top10, top1, kept, dropped = concentration(largest, owners, supply_raw, excluded)
                 report.top10_pct, report.top_holder_pct = top10, top1
                 report.holders_seen, report.excluded_accounts = kept, dropped
@@ -204,4 +262,11 @@ class SolanaRpc:
                     report.dev_pct = self.owner_balance(report.creator, mint) / supply_raw * 100
             except (RpcError, HttpError) as exc:
                 report.errors.append(f"dev: {exc}")
+
+        if count_holders and supply_raw > 0 and self.holders_supported is not False:
+            try:
+                report.holder_count, report.holder_count_complete = self.holder_count(mint, excluded)
+            except (RpcError, HttpError) as exc:
+                if self.holders_supported is not False:  # an RPC without the method is reported once, by the engine
+                    report.errors.append(f"jumlah holder: {exc}")
         return report

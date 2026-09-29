@@ -78,6 +78,8 @@ class SafetyReport:
     top_holder_pct: float | None = None
     holders_seen: int = 0
     excluded_accounts: int = 0
+    holder_count: int | None = None  # wallets holding the token (pool accounts left out)
+    holder_count_complete: bool = True  # False: more holders than were counted
     creator: str | None = None
     dev_pct: float | None = None
     errors: list[str] = field(default_factory=list)

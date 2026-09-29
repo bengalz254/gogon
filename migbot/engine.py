@@ -281,9 +281,18 @@ class Engine:
         sf = self.s.safety
         if self.src.rpc is not None and (tok.safety is None or now - tok.safety_at >= sf.refresh_seconds):
             creator = (tok.safety or {}).get("creator")
+            count_holders = self.s.filters.min_holders > 0
             try:
-                report = self.src.rpc.safety_report(tok.mint, tok.pair_address, sf.amm_owners, creator)
+                report = self.src.rpc.safety_report(
+                    tok.mint, tok.pair_address, sf.amm_owners, creator, count_holders=count_holders
+                )
                 tok.safety, tok.safety_at = report.to_dict(), now
+                if count_holders and self.src.rpc.holders_supported is False:
+                    self._warn_once(
+                        "holders-unsupported",
+                        "RPC ini tidak bisa menghitung holder (butuh Helius di SOLANA_RPC_URL); filter jumlah holder dilewati",
+                        now, 6 * 3600,
+                    )
                 if report.decimals is not None:
                     tok.decimals = report.decimals
                 if report.errors:

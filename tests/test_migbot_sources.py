@@ -15,7 +15,9 @@ from migbot.sources.gmgn import GmgnSource, parse_token_info
 from migbot.sources.jupiter import NoRoute, parse_quote
 from migbot.sources.pumpportal import PumpPortalFeed, parse_migration
 from migbot.sources.rugcheck import parse_summary
-from migbot.sources.solana_rpc import SolanaRpc, concentration, is_program_owned, parse_mint_info
+from migbot.sources.solana_rpc import (
+    RpcError, SolanaRpc, concentration, count_holders, is_program_owned, parse_mint_info, parse_token_accounts,
+)
 
 MINT = b58encode(hashlib.sha256(b"mint").digest())[:-4] + "pump"
 while len(b58decode(MINT)) != 32:  # make sure the fixture mint is a real 32-byte address
@@ -284,16 +286,25 @@ def test_concentration_leaves_out_pools_and_program_accounts():
 class RpcRouter:
     """Answers JSON-RPC calls like a node would, for one mint."""
 
-    def __init__(self, mint, pair, creator, dev_raw=20_000_000):
+    def __init__(self, mint, pair, creator, dev_raw=20_000_000, das=True):
         self.health = Health("rpc")
-        self.mint, self.pair, self.creator, self.dev_raw = mint, pair, creator, dev_raw
+        self.mint, self.pair, self.creator, self.dev_raw, self.das = mint, pair, creator, dev_raw, das
         self.curve = bonding_curve_address(mint)
         self.w = [wallet(f"h{i}") for i in range(12)]
         self.pool_owner = pair  # PumpSwap: the pool account owns its vaults
+        self.calls = []
 
     def post_json(self, url, payload, headers=None):
         method, params = payload["method"], payload["params"]
+        self.calls.append(method)
         ctx = {"context": {"slot": 1}}
+        if method == "getTokenAccounts" and self.das:  # DAS: named params, result without "value"
+            assert params["mint"] == self.mint
+            rows = [{"address": "vault", "owner": self.pool_owner, "amount": 400 * 10**12}]
+            rows += [{"address": f"acc{i}", "owner": self.w[i], "amount": (30 - i) * 10**12} for i in range(12)]
+            rows = rows if params["page"] == 1 else []
+            result = {"total": len(rows), "limit": params["limit"], "page": params["page"], "token_accounts": rows}
+            return {"jsonrpc": "2.0", "id": payload["id"], "result": result}
         if method == "getAccountInfo" and params[0] == self.mint:
             info = {"decimals": 6, "supply": str(10**15), "mintAuthority": None, "freezeAuthority": None}
             value = {"owner": "Tokenkeg", "data": {"program": "spl-token", "parsed": {"type": "mint", "info": info}}}
@@ -329,6 +340,74 @@ def test_safety_report_end_to_end():
     assert rep.top10_pct == pytest.approx(sum(range(21, 31)) * 10**12 / 10**15 * 100)
     assert rep.top_holder_pct == pytest.approx(3.0)
     assert rep.excluded_accounts == 1
+    assert rep.holder_count is None and "getTokenAccounts" not in rpc.http.calls  # only counted when asked
+
+    counted = rpc.safety_report(MINT, rpc.http.pair, amm_owners=[], count_holders=True)
+    assert counted.errors == [] and rpc.holders_supported
+    assert counted.holder_count == 12 and counted.holder_count_complete  # the pool vault is not a holder
+
+
+def test_rpc_without_getTokenAccounts_leaves_the_holder_count_out_quietly():
+    rpc = SolanaRpc("http://rpc", http=RpcRouter(MINT, pair=pda("pair"), creator=wallet("creator"), das=False))
+    rep = rpc.safety_report(MINT, rpc.http.pair, amm_owners=[], count_holders=True)
+    assert rep.holder_count is None and rep.errors == [] and rpc.holders_supported is False
+    assert rep.top10_pct is not None  # the other checks still work
+    rpc.http.calls.clear()
+    rpc.safety_report(MINT, rpc.http.pair, amm_owners=[], count_holders=True)
+    assert "getTokenAccounts" not in rpc.http.calls  # not asked again
+
+
+def test_count_holders_counts_each_wallet_once_and_leaves_out_pools():
+    page = {"total": 7, "limit": 1000, "page": 1, "token_accounts": [
+        {"address": "a1", "owner": "W1", "amount": 10},
+        {"address": "a2", "owner": "W1", "amount": "5"},  # a second account of the same wallet
+        {"address": "a3", "owner": "W2", "amount": 0},  # emptied account
+        {"address": "a4", "owner": "POOL", "amount": 10**15},
+        {"address": "a5", "owner": "W3", "amount": 7},
+        {"address": "a6", "amount": 7},  # no owner
+        {"address": "a7", "owner": "W4", "amount": "x"},  # unreadable amount
+    ]}
+    rows = parse_token_accounts(page)
+    assert ("W1", 5) in rows and len(rows) == 5
+    assert count_holders(rows, {"POOL"}) == 2
+    assert parse_token_accounts(None) == [] and parse_token_accounts({"token_accounts": None}) == []
+
+
+class DasPages:
+    """getTokenAccounts for a token held by `holders` wallets, 1 account each."""
+
+    def __init__(self, holders, error=None):
+        self.health = Health("rpc")
+        self.holders, self.error, self.pages = holders, error, []
+
+    def post_json(self, url, payload, headers=None):
+        if self.error:
+            return {"jsonrpc": "2.0", "id": payload["id"], "error": self.error}
+        params = payload["params"]
+        self.pages.append(params["page"])
+        start = (params["page"] - 1) * params["limit"]
+        rows = [{"address": f"a{i}", "owner": f"W{i}", "amount": 1} for i in range(start, min(start + params["limit"], self.holders))]
+        return {"jsonrpc": "2.0", "id": payload["id"], "result": {"token_accounts": rows}}
+
+
+def test_holder_count_reads_pages_up_to_a_limit():
+    rpc = SolanaRpc("http://rpc", http=DasPages(1500))
+    assert rpc.holder_count(MINT, set()) == (1500, True) and rpc.http.pages == [1, 2]
+    assert SolanaRpc("http://rpc", http=DasPages(300)).holder_count(MINT, {"W0"}) == (299, True)
+    big = SolanaRpc("http://rpc", http=DasPages(50_000))
+    assert big.holder_count(MINT, set()) == (2000, False)  # shown as "2000+"
+    assert big.http.pages == [1, 2]
+
+
+def test_holder_count_errors():
+    missing = SolanaRpc("http://rpc", http=DasPages(0, error={"code": -32601, "message": "Method not found"}))
+    with pytest.raises(RpcError):
+        missing.holder_count(MINT, set())
+    assert missing.holders_supported is False
+    busy = SolanaRpc("http://rpc", http=DasPages(0, error={"code": -32429, "message": "rate limited"}))
+    with pytest.raises(RpcError):
+        busy.holder_count(MINT, set())
+    assert busy.holders_supported is None  # a passing failure: tried again next time
 
 
 def test_safety_report_collects_errors_instead_of_raising():

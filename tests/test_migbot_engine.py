@@ -65,7 +65,8 @@ def test_winner_is_bought_takes_profit_and_trails_out(tmp_path):
     pos = engine.positions[MINT_A]
     assert 180 <= pos.opened_at - T0 <= 200
     assert pos.method == "jupiter"
-    assert engine.balance == pytest.approx(5.0 - 0.1 - engine.s.costs.priority_fee_sol)
+    start = engine.s.trading.paper_balance_sol
+    assert engine.balance == pytest.approx(start - 0.1 - engine.s.costs.priority_fee_sol)
 
     run_for(engine, clock, 7300)  # past the 2-hour tracking window
     assert MINT_A not in engine.positions
@@ -75,7 +76,7 @@ def test_winner_is_bought_takes_profit_and_trails_out(tmp_path):
     assert trades[2]["reason"] == "trailing stop"
     total = float(trades[2]["position_pnl_sol"])
     assert total > 0.1  # bought ~1x, sold half at 2.5x and half at 2x
-    assert engine.balance == pytest.approx(5.0 + total)
+    assert engine.balance == pytest.approx(start + total)
     assert engine.stats.wins == 1 and engine.stats.closed == 1
 
     rows = read_csv(os.path.join(engine.s.data_dir, "tokens.csv"))
@@ -127,6 +128,31 @@ def test_unsafe_token_is_rejected_by_safety_checks(tmp_path):
     assert "top10 holder" in joined and "dev pegang" in joined and "RugCheck" in joined
     # safety data is cached, not refetched on every 10 s snapshot
     assert rpc.calls <= 3
+
+
+def test_token_with_too_few_holders_is_not_bought(tmp_path):
+    clock = Clock()
+    engine, feed, _ = build(tmp_path, clock, {MINT_A: winner_path}, {MINT_A: T0}, rpc=FakeRpc(holders=120))
+    feed.push(MINT_A, T0)
+    run_for(engine, clock, 300)
+    assert not engine.positions
+    assert "jumlah holder: 120 < 200" in engine.tokens[MINT_A].reasons  # the RPC count wins over GMGN's 500
+
+
+def test_rpc_that_cannot_count_holders_skips_the_check_and_warns_once(tmp_path):
+    clock = Clock()
+    paths, migrated = {MINT_A: winner_path, MINT_B: winner_path}, {MINT_A: T0, MINT_B: T0}
+    engine, feed, _ = build(tmp_path, clock, paths, migrated, rpc=FakeRpc(holders=None))
+    engine.src.gmgn = None  # and no GMGN count to fall back on
+    sent = []
+    engine.notify.send = sent.append
+    feed.push(MINT_A, T0)
+    feed.push(MINT_B, T0)
+    run_for(engine, clock, 200)
+    assert MINT_A in engine.positions and MINT_B in engine.positions
+    checks = {c["name"]: c["status"] for c in engine.tokens[MINT_A].checks}
+    assert checks["jumlah holder"] == "lewati"
+    assert sum("tidak bisa menghitung holder" in m for m in sent) == 1
 
 
 def test_ignored_rugcheck_risk_does_not_block(tmp_path):

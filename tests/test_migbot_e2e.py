@@ -140,6 +140,13 @@ class MockApis(BaseHTTPRequestHandler):
             ]
         elif method == "getTokenAccountsByOwner":
             result["value"] = []  # the creator sold everything
+        elif method == "getTokenAccounts":  # DAS (Helius): named params, no "value" wrapper
+            rows = [{"address": "vault", "owner": POOL, "amount": 500 * 10**12}]
+            rows += [{"address": f"acc{i}", "owner": w, "amount": (20 - i) * 10**12} for i, w in enumerate(WALLETS)]
+            rows += [{"address": f"small{i}", "owner": f"Small{i}", "amount": 10**9} for i in range(300)]
+            rows = rows if params["page"] == 1 else []
+            page = {"total": len(rows), "limit": params["limit"], "page": params["page"], "token_accounts": rows}
+            return self._json({"jsonrpc": "2.0", "id": payload["id"], "result": page})
         else:
             return self._json({"jsonrpc": "2.0", "id": payload["id"], "error": {"code": -32601, "message": "nope"}})
         return self._json({"jsonrpc": "2.0", "id": payload["id"], "result": result})
@@ -191,6 +198,7 @@ def test_full_lifecycle_through_real_clients(tmp_path, mock_server):
     assert row["source"] == "geckoterminal"
     assert float(row["top10_pct"]) == pytest.approx(sum(range(11, 21)) * 10**12 / 10**15 * 100)
     assert float(row["dev_pct"]) == 0.0 and row["rugcheck_score"] == "1"
+    assert row["holders"] == "312"  # 12 + 300 wallets; the pool vault is not a holder
 
     health = {h["name"]: h for h in src.health()}
     assert health["DexScreener"]["ok_count"] > 100 and health["Solana RPC"]["error_count"] == 0

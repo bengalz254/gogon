@@ -61,13 +61,14 @@ def run_check(s: Settings, telegram_test: bool = False) -> int:
     print("Konfigurasi:", s.config_path)
     print(
         f"  beli {s.trading.buy_sol:g} SOL, {fmt_dur(s.entry.delay_seconds)} sampai {fmt_dur(s.entry.window_seconds)} setelah migrasi, "
-        f"saldo paper {s.trading.paper_balance_sol:g} SOL, maks {s.trading.max_open_positions} posisi"
+        f"saldo paper {s.trading.paper_balance_sol:g} SOL, maks {s.trading.max_open_positions} posisi, "
+        f"maks {s.trading.max_buys_per_day} beli/hari, berhenti kalau rugi hari ini {s.trading.max_daily_loss_sol:g} SOL"
     )
     print(
         f"  filter: likuiditas ≥ {fmt_usd(f.min_liquidity_usd)}, mcap {fmt_usd(f.min_market_cap_usd)}-"
         f"{fmt_usd(f.max_market_cap_usd) if f.max_market_cap_usd else '∞'}, vol 5m ≥ {fmt_usd(f.min_volume_5m_usd)}, "
         f"txn 5m ≥ {f.min_txns_5m}, beli ≥ {f.min_buy_ratio_5m * 100:g}%, top10 ≤ {f.max_top10_pct:g}%, "
-        f"dev ≤ {f.max_dev_hold_pct:g}%"
+        f"dev ≤ {f.max_dev_hold_pct:g}%{f', holder ≥ {f.min_holders}' if f.min_holders > 0 else ''}"
     )
     print(f"  RPC: {s.rpc_url.split('?')[0]}{' (+ key)' if '?' in s.rpc_url else ''}")
     print()
@@ -110,7 +111,7 @@ def run_check(s: Settings, telegram_test: bool = False) -> int:
     try:
         version = src.rpc.call("getVersion", [])
         pair = snap.pair_address if snap else ""
-        report = src.rpc.safety_report(sample, pair, s.safety.amm_owners)
+        report = src.rpc.safety_report(sample, pair, s.safety.amm_owners, count_holders=f.min_holders > 0)
         detail = (
             f"versi {version.get('solana-core', '?') if isinstance(version, dict) else version}; contoh: "
             f"top10 {'?' if report.top10_pct is None else f'{report.top10_pct:.1f}%'}, "
@@ -120,6 +121,14 @@ def run_check(s: Settings, telegram_test: bool = False) -> int:
             _line("!", "Solana RPC", detail + " | sebagian gagal: " + "; ".join(report.errors)[:200])
         else:
             _line("OK", "Solana RPC", detail)
+        if f.min_holders > 0:
+            if report.holder_count is not None:
+                shown = f"{report.holder_count}{'' if report.holder_count_complete else '+'}"
+                _line("OK", "Holder", f"token contoh punya {shown} holder; filter: minimal {f.min_holders}")
+            elif src.rpc.holders_supported is False:
+                _line("!", "Holder", "RPC ini tidak bisa menghitung holder; filter jumlah holder dilewati. Pakai RPC Helius")
+            else:
+                _line("!", "Holder", "jumlah holder belum terbaca; filter jumlah holder dilewati sampai terbaca")
     except Exception as exc:  # noqa: BLE001
         _line("!", "Solana RPC", f"{exc} — cek keamanan (holder/dev/authority) akan dilewati. Isi SOLANA_RPC_URL (mis. Helius gratis)")
 
