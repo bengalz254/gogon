@@ -20,7 +20,7 @@ def test_vps_scripts_are_valid_bash(name):
 def test_vps_service_stops_the_bot_gracefully():
     with open(SCRIPT, encoding="utf-8") as f:
         text = f.read()
-    assert "-m scalper run --yes" in text
+    assert "-m scalper $CFG_ARG run $MODE_ARG --yes" in text
     assert "KillSignal=SIGINT" in text  # same as Ctrl+C: state is saved, exchange stops stay
     assert "RestartPreventExitStatus=2" in text  # no restart loop on a config error
 

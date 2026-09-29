@@ -447,6 +447,17 @@ python -m scalper --config config/trend.yaml backtest --timeframe 1h
 python -m scalper --config config/trend.yaml optimize                  # 24 kombinasi, dicek out-of-sample
 ```
 
+**Uji maju di VPS (mode paper: harga asli, uang simulasi)**, berdampingan dengan
+bot scalping sebagai service terpisah `scalper-trend` / `scalper-trend-dashboard`:
+
+```bash
+cd ~/scalper-bot && git pull
+bash deploy/setup_vps.sh config/trend.yaml paper
+tailscale serve --bg --https=10000 8778    # dashboard di HP; 8778 = port yang dicetak skrip
+```
+
+Log: `journalctl -u scalper-trend -f`. Stop: `systemctl disable --now scalper-trend scalper-trend-dashboard`.
+
 ---
 
 ## Menambahkan strategi sendiri (misalnya strategi dari bot Grok)
