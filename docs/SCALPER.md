@@ -236,7 +236,7 @@ File penting:
 | Pengaturan | Default | Arti |
 |---|---|---|
 | `risk.risk_per_trade_pct` | 0.5 | Rugi maksimal per trade (% saldo), termasuk fee. 0,25–1% itu wajar. |
-| `risk.max_open_positions` | 2 | BTC/ETH/SOL bergerak bersama; banyak posisi = satu taruhan besar. |
+| `risk.max_open_positions` | 2 | Koin kripto bergerak bersama; banyak posisi = satu taruhan besar. |
 | `risk.max_daily_loss_pct` | 3.0 | Rugi harian tercapai → tidak ada entry baru sampai 00:00 UTC (07:00 WIB). |
 | `risk.max_drawdown_pct` | 15.0 | Turun 15% dari puncak → bot **berhenti total** sampai `reset-risk`. |
 | `risk.max_consecutive_losses` | 3 | Rugi 3x beruntun → jeda `loss_cooldown_minutes`. |
@@ -379,6 +379,13 @@ seluruh internet. Untuk berhenti membagikan dashboard:
 | `sudo systemctl stop scalper` / `start` / `restart` | Hentikan / nyalakan / restart bot. Setelah `stop`, bot tetap menyala lagi otomatis kalau VPS restart |
 | `sudo systemctl disable --now scalper` | Hentikan bot **dan** jangan nyalakan lagi saat VPS restart. Nyalakan kembali dengan `sudo systemctl enable --now scalper` |
 | `systemctl is-active scalper` | `active` = bot jalan, `inactive` = bot berhenti |
+
+**Mengganti pair.** Ubah baris `symbols:` di `config/scalper.yaml`. Sebelum
+restart, pastikan tidak ada posisi terbuka di pair yang dihapus
+(`venv/bin/python -m scalper status`), karena bot tidak mengurusnya lagi. Lalu
+jalankan `venv/bin/python -m scalper check` untuk memastikan semua pair ada
+di exchange/testnet (hasilnya harus semua `[OK]`), dan
+`sudo systemctl restart scalper scalper-dashboard`.
 
 Saat bot dihentikan, posisi yang masih terbuka **tidak** ditutup. Posisi itu
 tetap dilindungi stop-loss & take-profit di exchange. Kalau ingin menutupnya,

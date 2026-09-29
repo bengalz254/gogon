@@ -137,9 +137,13 @@ class Engine:
             logger.warning("State file belongs to mode %s, not %s; ignoring it", data.get("mode"), self.mode)
             return {}
         self.guard = RiskGuard.from_dict(self.s.risk, data.get("risk"))
-        self.trades = {
-            s: Trade.from_dict(t) for s, t in (data.get("trades") or {}).items() if s in self.symbols
-        }
+        saved = data.get("trades") or {}
+        self.trades = {s: Trade.from_dict(t) for s, t in saved.items() if s in self.symbols}
+        for s in saved:
+            if s not in self.symbols:
+                logger.warning("%s: had an open trade but is no longer in `symbols`, so the bot stops managing it. "
+                               "Its stop-loss/take-profit stay on the exchange; close it there.", s)
+                self.notify.send(f"⚠️ {s} was removed from the symbol list with an open trade; manage it on Binance")
         self.last_candle = {k: int(v) for k, v in (data.get("last_candle") or {}).items()}
         self.pending_entry = dict(data.get("pending_entry") or {})
         if hasattr(self.broker, "load_dict"):

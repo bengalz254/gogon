@@ -400,6 +400,18 @@ def test_account_balance_is_saved_for_the_dashboard(tmp_path):
     assert account["balance"] == pytest.approx(1234.5) and account["at"]
 
 
+def test_open_trade_on_a_symbol_removed_from_the_config_is_reported(tmp_path):
+    sent = []
+    h = Harness(tmp_path)
+    h.engine.notify = type("N", (), {"send": staticmethod(sent.append)})()
+    StateStore(str(tmp_path / "state_testnet.json")).save(
+        {"version": 1, "mode": "testnet", "trades": {"XRPUSDT": {"side": LONG}}}
+    )
+    h.engine.load()
+    assert h.engine.trades == {}
+    assert any("XRPUSDT" in m and "removed" in m for m in sent)
+
+
 def test_every_candle_is_explained_for_the_dashboard(tmp_path):
     s = Harness.default_settings("testnet")
     s.risk.min_sl_cost_ratio = 3.0  # fee filter on: the stop must be >= 3x the round-trip cost

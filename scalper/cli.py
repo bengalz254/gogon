@@ -455,6 +455,11 @@ def cmd_check(args) -> int:
                 if pos or orders:
                     _warn(f"{sym}: existing position {pos.qty if pos else 0} and {len(orders)} open order(s); "
                           "the bot will adopt/clean these up on start")
+            for p in client.position_risk():
+                amt = float(p.get("positionAmt") or 0.0)
+                if amt and p.get("symbol") not in rules:
+                    _warn(f"{p.get('symbol')}: open position {amt:g} is not in `symbols`, so the bot will not "
+                          "manage it (its orders stay on the exchange). Close it on Binance or add it back.")
             if settings.mode == "live":
                 try:
                     perms = client.api_restrictions()

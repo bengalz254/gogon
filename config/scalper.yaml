@@ -8,7 +8,10 @@
 mode: paper
 
 # Pair perpetual yang ditradingkan. Pilih yang likuid.
-symbols: [BTCUSDT, ETHUSDT, SOLUSDT]
+# Setelah mengganti: pastikan tidak ada posisi terbuka di pair yang dihapus
+# (bot tidak mengurusnya lagi), jalankan `python -m scalper check` (memastikan
+# pair ada di exchange/testnet), lalu restart bot.
+symbols: [XRPUSDT, SUIUSDT, ZECUSDT]
 
 # Timeframe candle utama. 5m = kompromi terbaik untuk scalping: pergerakan
 # harga cukup besar dibanding biaya fee. 1m hampir selalu kalah oleh fee.
@@ -72,7 +75,7 @@ management:
 
 risk:
   risk_per_trade_pct: 0.5     # rugi maksimal per trade = 0.5% saldo (termasuk fee)
-  max_open_positions: 2       # BTC/ETH/SOL sangat berkorelasi: jangan terlalu banyak
+  max_open_positions: 2       # koin kripto bergerak bersama: jangan terlalu banyak
   max_daily_loss_pct: 3.0     # rugi 3% sehari -> berhenti entry sampai 00:00 UTC
   max_drawdown_pct: 15.0      # turun 15% dari puncak -> bot berhenti total (reset manual)
   max_consecutive_losses: 3   # 3x rugi beruntun -> istirahat
