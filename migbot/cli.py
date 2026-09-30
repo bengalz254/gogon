@@ -1,4 +1,4 @@
-"""Command line: python -m migbot {run,check,setup,dashboard,report,reset}."""
+"""Command line: python -m migbot {run,check,setup,dashboard,report,analyze,reset}."""
 from __future__ import annotations
 
 import argparse
@@ -63,6 +63,17 @@ def cmd_report(args) -> int:
     return 0
 
 
+def cmd_analyze(args) -> int:
+    from migbot.analyze import analyze, format_analysis
+
+    data_dir = args.dir or _settings(args).data_dir
+    if not os.path.isdir(data_dir):
+        print(f"GAGAL: folder {data_dir} tidak ada", file=sys.stderr)
+        return 1
+    print(format_analysis(analyze(data_dir)))
+    return 0
+
+
 def cmd_reset(args) -> int:
     from migbot.storage import read_json
 
@@ -114,6 +125,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("report", parents=[common], help="laporan riset dan P&L")
     p.add_argument("--dir", default=None, help="folder data lain, mis. arsip: data/migbot/archive/20260929-150627")
     p.set_defaults(func=cmd_report)
+    p = sub.add_parser("analyze", parents=[common], help="token mana yang hancur, dan apa yang membedakannya")
+    p.add_argument("--dir", default=None, help="folder data lain, mis. arsip")
+    p.set_defaults(func=cmd_analyze)
     p = sub.add_parser("reset", parents=[common], help="arsipkan data dan mulai dari nol")
     p.add_argument("--yes", action="store_true", help="tanpa konfirmasi")
     p.set_defaults(func=cmd_reset)

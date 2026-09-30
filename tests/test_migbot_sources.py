@@ -16,7 +16,8 @@ from migbot.sources.jupiter import NoRoute, parse_quote
 from migbot.sources.pumpportal import PumpPortalFeed, parse_migration
 from migbot.sources.rugcheck import parse_summary
 from migbot.sources.solana_rpc import (
-    RpcError, SolanaRpc, concentration, count_holders, is_program_owned, parse_mint_info, parse_token_accounts,
+    RpcError, SolanaRpc, concentration, count_holders, holder_distribution, is_program_owned, parse_mint_info,
+    parse_token_accounts,
 )
 
 MINT = b58encode(hashlib.sha256(b"mint").digest())[:-4] + "pump"
@@ -345,6 +346,8 @@ def test_safety_report_end_to_end():
     counted = rpc.safety_report(MINT, rpc.http.pair, amm_owners=[], count_holders=True)
     assert counted.errors == [] and rpc.holders_supported
     assert counted.holder_count == 12 and counted.holder_count_complete  # the pool vault is not a holder
+    # 12 wallets holding 30..19 x 10^12 of 10^15: every one of them ≥ 1%, together 29.4%
+    assert counted.wallets_1pct == 12 and counted.top50_pct == pytest.approx(29.4)
 
 
 def test_rpc_without_getTokenAccounts_leaves_the_holder_count_out_quietly():
@@ -355,6 +358,19 @@ def test_rpc_without_getTokenAccounts_leaves_the_holder_count_out_quietly():
     rpc.http.calls.clear()
     rpc.safety_report(MINT, rpc.http.pair, amm_owners=[], count_holders=True)
     assert "getTokenAccounts" not in rpc.http.calls  # not asked again
+
+
+def test_holder_distribution_finds_supply_spread_over_mid_size_wallets():
+    supply = 1_000_000
+    bundle = [(wallet(f"b{i}"), 20_000) for i in range(25)]  # 25 wallets x 2% = 50% of supply
+    crowd = [(wallet(f"c{i}"), 50) for i in range(400)]  # 400 small holders, 2% together
+    rows = bundle + crowd + [(pda("pool"), 300_000), ("LISTED", 90_000), (bundle[0][0], 5_000)]
+    top50, big = holder_distribution(rows, {"LISTED"}, supply)
+    # the pool (a program account) and the listed owner are left out; the bundle's first
+    # wallet has two accounts and counts once with both
+    assert big == 25
+    assert top50 == pytest.approx((25 * 20_000 + 5_000 + 25 * 50) / supply * 100)
+    assert holder_distribution(rows, set(), 0) == (None, None)
 
 
 def test_count_holders_counts_each_wallet_once_and_leaves_out_pools():
@@ -393,6 +409,9 @@ class DasPages:
 def test_holder_count_reads_pages_up_to_a_limit():
     rpc = SolanaRpc("http://rpc", http=DasPages(1500))
     assert rpc.holder_count(MINT, set()) == (1500, True) and rpc.http.pages == [1, 2]
+    stats = SolanaRpc("http://rpc", http=DasPages(50_000)).holder_stats(MINT, set(), 10**9)
+    assert stats["holder_count"] == 2000 and not stats["holder_count_complete"]
+    assert stats["top50_pct"] is None and stats["wallets_1pct"] is None  # not from a partial list
     assert SolanaRpc("http://rpc", http=DasPages(300)).holder_count(MINT, {"W0"}) == (299, True)
     big = SolanaRpc("http://rpc", http=DasPages(50_000))
     assert big.holder_count(MINT, set()) == (2000, False)  # shown as "2000+"

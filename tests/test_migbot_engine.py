@@ -186,6 +186,22 @@ def test_price_path_is_saved_when_tracking_ends(tmp_path):
     assert [p[0] for p in points] == sorted(p[0] for p in points)
 
 
+def test_every_token_gets_holder_data_at_the_start_of_the_window(tmp_path):
+    clock = Clock()
+    rpc = FakeRpc(holders=321)
+    engine, feed, _ = build(tmp_path, clock, {MINT_B: thin_path}, {MINT_B: T0}, rpc=rpc, dip=True)
+    feed.push(MINT_B, T0)
+    run_for(engine, clock, 320)
+    tok = engine.tokens[MINT_B]
+    assert rpc.calls == 1 and tok.safety_first["holder_count"] == 321  # checked although the market checks fail
+    assert tok.ref_snapshot["liquidity_usd"] == 5_000.0 and 300 <= tok.ref_at - T0 <= 310
+    run_for(engine, clock, 3500)
+    assert rpc.calls == 1  # once for research; the token never became a buy candidate
+    run_for(engine, clock, 3600)
+    row = read_csv(os.path.join(engine.s.data_dir, "tokens.csv"))[0]
+    assert row["holders"] == "321" and row["ref_liquidity_usd"] == "5000" and row["ref_txns_5m"] == "110"
+
+
 def test_thin_liquidity_is_rejected_and_still_researched(tmp_path):
     clock = Clock()
     engine, feed, _ = build(tmp_path, clock, {MINT_B: thin_path}, {MINT_B: T0})

@@ -49,6 +49,8 @@ class TrackedToken:
     decided_at: float | None = None
     decision_snapshot: dict = field(default_factory=dict)
     safety: dict | None = None
+    safety_first: dict | None = None  # the first safety report (start of the buy window), for research
+    ref_snapshot: dict = field(default_factory=dict)  # market data at the reference point, for research
     rugcheck: dict | None = None
     gmgn: dict | None = None
     safety_at: float = 0.0
@@ -118,7 +120,10 @@ def token_fields(checkpoints: list[float]) -> list[str]:
             "migrated_at_utc", "mint", "symbol", "source", "detect_delay_s", "status", "reasons",
             "decided_after_s", "first_price_usd", "ref_price_usd", "first_mcap_usd",
             "mcap_usd", "liquidity_usd", "volume_5m_usd", "txns_5m", "buy_ratio_5m",
-            "top10_pct", "top_holder_pct", "dev_pct", "holders", "rugcheck_score", "rugcheck_danger",
+            # at the reference point (start of the buy window), the same moment for every token
+            "ref_mcap_usd", "ref_liquidity_usd", "ref_volume_5m_usd", "ref_txns_5m", "ref_buy_ratio_5m",
+            "top10_pct", "top_holder_pct", "dev_pct", "holders", "top50_pct", "wallets_1pct",
+            "rugcheck_score", "rugcheck_danger",
             "gmgn_holders", "gmgn_smart_buys",
         ]
         + [f"ret_{m:g}m" for m in checkpoints]
@@ -130,7 +135,12 @@ def research_row(tok: TrackedToken, checkpoints: list[float]) -> dict:
     snap = tok.decision_snapshot or tok.last or {}
     buys, sells = snap.get("buys_m5"), snap.get("sells_m5")
     txns = buys + sells if buys is not None and sells is not None else None
-    safety = tok.safety or {}
+    ref = tok.ref_snapshot or {}
+    ref_buys, ref_sells = ref.get("buys_m5"), ref.get("sells_m5")
+    ref_txns = ref_buys + ref_sells if ref_buys is not None and ref_sells is not None else None
+    # Holder data from the first check, taken at the start of the buy window for every token,
+    # so tokens are compared at the same moment (later checks exist only for buy candidates).
+    safety = tok.safety_first or tok.safety or {}
     rug = tok.rugcheck or {}
     danger = [r.get("name", "") for r in rug.get("risks", []) if r.get("level") == "danger"]
     gmgn = tok.gmgn or {}
@@ -151,10 +161,17 @@ def research_row(tok: TrackedToken, checkpoints: list[float]) -> dict:
         "volume_5m_usd": _r(snap.get("volume_m5"), 0),
         "txns_5m": "" if txns is None else str(txns),
         "buy_ratio_5m": "" if not txns else f"{buys / txns:.3f}",
+        "ref_mcap_usd": _r(ref.get("market_cap_usd"), 0),
+        "ref_liquidity_usd": _r(ref.get("liquidity_usd"), 0),
+        "ref_volume_5m_usd": _r(ref.get("volume_m5"), 0),
+        "ref_txns_5m": "" if ref_txns is None else str(ref_txns),
+        "ref_buy_ratio_5m": "" if not ref_txns else f"{ref_buys / ref_txns:.3f}",
         "top10_pct": _r(safety.get("top10_pct"), 1),
         "top_holder_pct": _r(safety.get("top_holder_pct"), 1),
         "dev_pct": _r(safety.get("dev_pct"), 2),
         "holders": _holders(safety),
+        "top50_pct": _r(safety.get("top50_pct"), 1),
+        "wallets_1pct": "" if safety.get("wallets_1pct") is None else str(safety["wallets_1pct"]),
         "rugcheck_score": _r(rug.get("score_normalised"), 0),
         "rugcheck_danger": "; ".join(danger),
         "gmgn_holders": "" if gmgn.get("holders") is None else str(gmgn["holders"]),

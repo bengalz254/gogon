@@ -206,6 +206,9 @@ def test_full_lifecycle_through_real_clients(tmp_path, mock_server):
     assert float(row["top10_pct"]) == pytest.approx(sum(range(11, 21)) * 10**12 / 10**15 * 100)
     assert float(row["dev_pct"]) == 0.0 and row["rugcheck_score"] == "1"
     assert row["holders"] == "312"  # 12 + 300 wallets; the pool vault is not a holder
+    # the 12 big wallets hold 2.0% .. 0.9% each: 11 of them ≥ 1%; top 50 = those 12 + 38 small ones
+    assert row["wallets_1pct"] == "11" and row["top50_pct"] == "17.4"
+    assert row["ref_liquidity_usd"] == "30000" and row["ref_txns_5m"] == "140" and row["ref_buy_ratio_5m"] == "0.643"
 
     health = {h["name"]: h for h in src.health()}
     assert health["DexScreener"]["ok_count"] > 100 and health["Solana RPC"]["error_count"] == 0

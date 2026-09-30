@@ -289,6 +289,8 @@ class Engine:
                 tok.observe_price(
                     snap.price_usd, now, self.s.entry.delay_seconds, self.s.tracking.checkpoints_minutes, tolerance
                 )
+                if tok.ref_at == now and not tok.ref_snapshot:
+                    tok.ref_snapshot = dict(tok.last)
             pos = self.positions.get(mint)
             if pos is not None and snap.price_native:
                 pos.last_price_native = snap.price_native
@@ -300,11 +302,13 @@ class Engine:
         self._dirty = True
 
     # ------------------------------------------------------------------ entries
-    def _safety(self, tok: TrackedToken, now: float) -> tuple[SafetyReport | None, RugcheckReport | None, GmgnInfo | None]:
+    def _safety(
+        self, tok: TrackedToken, now: float, research: bool = False
+    ) -> tuple[SafetyReport | None, RugcheckReport | None, GmgnInfo | None]:
         sf = self.s.safety
         if self.src.rpc is not None and (tok.safety is None or now - tok.safety_at >= sf.refresh_seconds):
             creator = (tok.safety or {}).get("creator")
-            count_holders = self.s.filters.min_holders > 0
+            count_holders = research or self.s.filters.min_holders > 0
             try:
                 report = self.src.rpc.safety_report(
                     tok.mint, tok.pair_address, sf.amm_owners, creator, count_holders=count_holders
@@ -376,6 +380,12 @@ class Engine:
                 continue  # wait for a new snapshot
             tok.last_eval_ts = snap_ts
             tok.evaluations += 1
+            if tok.safety_first is None and self.src.rpc is not None:
+                # Research: holder data for EVERY token at the start of the buy window, not only for
+                # the few that pass the market checks, so `migbot analyze` can compare them all.
+                self._safety(tok, now, research=True)
+                if tok.safety:
+                    tok.safety_first = dict(tok.safety)
             snap = MarketSnapshot.from_dict(tok.last)
             checks = []
             if e.dip_pct > 0:

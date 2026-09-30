@@ -310,6 +310,29 @@ tambahan 1%, dan priority fee + tip 0.001 SOL per transaksi (2% pulang-pergi unt
 posisi 0.1 SOL). Transaksi sungguhan bisa
 tetap lebih buruk (telat, MEV), jadi hasil paper adalah batas atas, bukan jaminan.
 
+### Token mana yang hancur? (`migbot analyze`)
+
+```bash
+cd ~/migbot && venv/bin/python -m migbot analyze
+```
+
+Kebanyakan token migrated hancur (turun 80%+) dalam 1–2 jam, sering dalam sekali jual
+besar oleh orang dalam, dan tidak ada stop loss yang bisa lolos dari itu. Satu-satunya
+jalan adalah **tidak membeli** token seperti itu. Karena itu bot mencatat data SETIAP
+token di awal jendela beli (jumlah holder, berapa dompet memegang ≥ 1% supply, porsi 50
+dompet terbesar, dev, RugCheck, mcap, likuiditas, volume, transaksi), lalu `analyze`
+membagi token per ukuran menjadi tiga kelompok (rendah/sedang/tinggi) dan menunjukkan
+berapa persen yang hancur di tiap kelompok.
+
+* **Paling membedakan** di bagian atas adalah ukuran yang selisih hancurnya paling besar
+  antar kelompok. Itu kandidat filter.
+* Di bawah 150 token, selisih 10–15 poin masih bisa kebetulan.
+* Kalau tidak ada ukuran yang membedakan (semua kelompok hancur sama seringnya), berarti
+  data publik tidak cukup untuk menghindari token yang akan di-dump, dan strategi ini
+  sebaiknya tidak dipakai dengan uang sungguhan.
+* Data lama: `venv/bin/python -m migbot analyze --dir data/migbot/archive/<tanggal-jam>`
+  (data sebelum versi ini hanya punya data holder untuk token yang lolos filter pasar).
+
 ---
 
 ## Pengaturan penting (`config/migbot.yaml`)
@@ -358,6 +381,7 @@ tidak bergantung pada GMGN: bot menghitungnya sendiri lewat RPC Helius
 |---|---|
 | `sudo journalctl -u migbot -f` | Log langsung (Ctrl+C = keluar, bot tetap jalan) |
 | `cd ~/migbot && venv/bin/python -m migbot report` | Laporan riset + P&L |
+| `cd ~/migbot && venv/bin/python -m migbot analyze` | Token mana yang hancur, dan apa yang membedakannya |
 | `cd ~/migbot && venv/bin/python -m migbot check` | Cek koneksi semua sumber data |
 | `cd ~/migbot && venv/bin/python -m migbot setup` | Isi/ganti token Telegram dan RPC (langsung dites), lalu `sudo systemctl restart migbot` |
 | `sudo systemctl stop migbot` / `start migbot` | Hentikan / nyalakan bot |

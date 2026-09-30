@@ -121,6 +121,23 @@ def count_holders(rows: list[tuple[str, int]], excluded_owners: set[str]) -> int
     return len({owner for owner, amount in rows if amount > 0 and owner not in excluded_owners})
 
 
+def holder_distribution(rows: list[tuple[str, int]], excluded_owners: set[str], supply_raw: int) -> tuple[float | None, int | None]:
+    """(% of supply held by the 50 largest wallets, number of wallets holding ≥ 1% of supply).
+
+    Supply spread over many mid-size wallets is what a bundled launch looks like: the
+    top-10 check misses it, these two numbers do not.
+    """
+    if supply_raw <= 0:
+        return None, None
+    per_owner: dict[str, int] = {}
+    for owner, amount in rows:
+        if amount > 0 and owner not in excluded_owners:
+            per_owner[owner] = per_owner.get(owner, 0) + amount
+    ranked = sorted(per_owner.items(), key=lambda kv: kv[1], reverse=True)[:60]
+    sizes = [amount for owner, amount in ranked if not is_program_owned(owner)][:50]
+    return sum(sizes) / supply_raw * 100, sum(1 for amount in sizes if amount * 100 >= supply_raw)
+
+
 def is_program_owned(owner: str) -> bool:
     """Wallet addresses are ed25519 keys; program-derived addresses (pool
     vaults, lockers, bonding curves) are deliberately off the curve."""
@@ -205,6 +222,22 @@ class SolanaRpc:
 
     def holder_count(self, mint: str, excluded_owners: set[str]) -> tuple[int, bool]:
         """(holders, complete). complete is False when there were more pages than were read."""
+        rows, complete = self.holder_rows(mint)
+        return count_holders(rows, excluded_owners), complete
+
+    def holder_stats(self, mint: str, excluded_owners: set[str], supply_raw: int) -> dict:
+        """Holder count, plus the distribution when every account was read."""
+        rows, complete = self.holder_rows(mint)
+        top50, big = holder_distribution(rows, excluded_owners, supply_raw) if complete else (None, None)
+        return {
+            "holder_count": count_holders(rows, excluded_owners),
+            "holder_count_complete": complete,
+            "top50_pct": top50,
+            "wallets_1pct": big,
+        }
+
+    def holder_rows(self, mint: str) -> tuple[list[tuple[str, int]], bool]:
+        """Every token account as (owner, raw amount), up to HOLDER_MAX_PAGES pages, and whether that was all."""
         rows: list[tuple[str, int]] = []
         for page in range(1, HOLDER_MAX_PAGES + 1):
             try:
@@ -219,8 +252,8 @@ class SolanaRpc:
             batch = result.get("token_accounts") or []
             rows.extend(parse_token_accounts(result))
             if len(batch) < HOLDER_PAGE_SIZE:
-                return count_holders(rows, excluded_owners), True
-        return count_holders(rows, excluded_owners), False
+                return rows, True
+        return rows, False
 
     def creator_of(self, mint: str) -> str | None:
         data = self.account_bytes(bonding_curve_address(mint))
@@ -265,7 +298,8 @@ class SolanaRpc:
 
         if count_holders and supply_raw > 0 and self.holders_supported is not False:
             try:
-                report.holder_count, report.holder_count_complete = self.holder_count(mint, excluded)
+                for key, value in self.holder_stats(mint, excluded, supply_raw).items():
+                    setattr(report, key, value)
             except (RpcError, HttpError) as exc:
                 if self.holders_supported is not False:  # an RPC without the method is reported once, by the engine
                     report.errors.append(f"jumlah holder: {exc}")
