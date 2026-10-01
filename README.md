@@ -15,6 +15,7 @@ python -m migbot run         # the bot
 python -m migbot dashboard   # http://127.0.0.1:8780
 python -m migbot report      # do the filters pick better tokens than the rejected ones?
 python -m migbot analyze     # which tokens crash, and does anything known beforehand tell them apart?
+python -m migbot backtest    # replay entry rules on every recorded token's price path
 ```
 
 On a VPS: `bash deploy/setup_migbot.sh` installs it as two systemd services.

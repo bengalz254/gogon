@@ -58,21 +58,24 @@ class PathLog:
             fh.write(json.dumps(clean(record), separators=(",", ":")) + "\n")
 
 
-def read_paths(path: str) -> list[dict]:
-    """Records from a PathLog file; a line cut off by a crash ends the list instead of failing."""
-    out: list[dict] = []
+def iter_paths(path: str):
+    """Records from a PathLog file, one at a time (the file can hold thousands of tokens).
+    A line cut off by a crash ends the stream instead of failing."""
     if not os.path.exists(path):
-        return out
+        return
     try:
         with gzip.open(path, "rt", encoding="utf-8") as fh:
             for line in fh:
                 try:
-                    out.append(json.loads(line))
+                    yield json.loads(line)
                 except ValueError:
                     continue
     except (OSError, EOFError):
-        pass
-    return out
+        return
+
+
+def read_paths(path: str) -> list[dict]:
+    return list(iter_paths(path))
 
 
 def read_csv(path: str) -> list[dict]:

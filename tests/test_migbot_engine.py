@@ -202,6 +202,20 @@ def test_every_token_gets_holder_data_at_the_start_of_the_window(tmp_path):
     assert row["holders"] == "321" and row["ref_liquidity_usd"] == "5000" and row["ref_txns_5m"] == "110"
 
 
+def test_no_buy_when_jupiter_and_dexscreener_disagree(tmp_path):
+    clock = Clock()
+    engine, feed, _ = build(tmp_path, clock, {MINT_A: winner_path}, {MINT_A: T0})
+    real = engine.src.jupiter.price_native_fn
+    engine.src.jupiter.price_native_fn = lambda mint: real(mint) * 1.5  # DexScreener lags a 50% spike
+    feed.push(MINT_A, T0)
+    run_for(engine, clock, 250)
+    assert not engine.positions
+    assert engine.tokens[MINT_A].reasons[0].startswith("beli batal: harga Jupiter +")
+    engine.src.jupiter.price_native_fn = real  # prices agree again: bought
+    run_for(engine, clock, 30)
+    assert MINT_A in engine.positions
+
+
 def test_thin_liquidity_is_rejected_and_still_researched(tmp_path):
     clock = Clock()
     engine, feed, _ = build(tmp_path, clock, {MINT_B: thin_path}, {MINT_B: T0})

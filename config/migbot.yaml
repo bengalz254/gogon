@@ -17,7 +17,8 @@ discovery:                       # dari mana bot tahu ada token yang baru migras
     ws_url: wss://pumpportal.fun/api/data
     reconnect_after_silence_minutes: 30
   geckoterminal:
-    enabled: true                # cadangan: daftar pool baru GeckoTerminal (telat ±1 menit)
+    enabled: false               # MATI: pool PumpSwap baru di sini kebanyakan pool sampah untuk token lama,
+                                 # bukan migrasi (dari 481 temuan yang hanya dari sini, hampir tidak ada yang diperdagangkan)
     base_url: https://api.geckoterminal.com/api/v2
     poll_seconds: 30
     dexes: [pumpswap]            # pool baru di DEX ini dianggap migrasi

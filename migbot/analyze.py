@@ -5,8 +5,11 @@ Every token has its holder data and market data recorded at the same moment,
 the reference point (the start of the buy window). For each measure the tokens
 are split into three groups (low / middle / high values) and each group shows
 how many crashed (fell 80% or more below the reference price while tracked)
-and the median change after 60 minutes. A measure can only work as a filter
-when one of its groups crashes clearly less often than the others.
+and how many rose 50% or more at some point. A measure can only work as a
+filter when one of its groups crashes clearly less often than the others.
+
+Tokens seen only by GeckoTerminal are left out: those were pools somebody
+created for old pump tokens, not migrations (they barely ever trade).
 """
 from __future__ import annotations
 
@@ -17,6 +20,8 @@ from migbot.filters import fmt_usd
 from migbot.storage import read_csv
 
 CRASH_PCT = -80.0
+UP_PCT = 50.0
+JUNK_SOURCE = "geckoterminal"  # seen only by GeckoTerminal: a new pool for an old token, not a migration
 MIN_GROUP = 10  # groups smaller than this are shown but never picked as the headline
 RELIABLE_N = 150  # below this, a difference of 10-15 points between groups can be chance
 
@@ -51,7 +56,7 @@ def _show(value: float, kind: str) -> str:
     if kind == "usd":
         return fmt_usd(value)
     if kind == "pct":
-        return f"{value:.0f}%"
+        return f"{value:.1f}%" if value < 10 else f"{value:.0f}%"
     if kind == "ratio":
         return f"{value * 100:.0f}%"
     return f"{value:.0f}"
@@ -63,6 +68,7 @@ def _group(tokens: list[dict], label: str) -> dict:
         "label": label,
         "n": len(tokens),
         "crash_pct": sum(t["crashed"] for t in tokens) / len(tokens) * 100,
+        "up_pct": sum(t["rose"] for t in tokens) / len(tokens) * 100,
         "median_60m": statistics.median(rets) if rets else None,
     }
 
@@ -88,13 +94,24 @@ def _thirds(pairs: list[tuple[float, dict]], kind: str) -> list[dict]:
 
 
 def analyze(data_dir: str) -> dict:
-    tokens = []
+    tokens, junk = [], 0
     for row in read_csv(os.path.join(data_dir, "tokens.csv")):
         low = _num(row.get("min_ret_pct"))
         if low is None:  # never had a reference price: no market data
             continue
-        tokens.append({"row": row, "crashed": low <= CRASH_PCT, "ret_60m": _num(row.get("ret_60m"))})
-    result = {"n": len(tokens), "overall": _group(tokens, "semua") if tokens else None, "measures": [], "best": None}
+        if row.get("source") == JUNK_SOURCE:
+            junk += 1
+            continue
+        high = _num(row.get("max_ret_pct"))
+        tokens.append({
+            "row": row,
+            "crashed": low <= CRASH_PCT,
+            "rose": high is not None and high >= UP_PCT,
+            "ret_60m": _num(row.get("ret_60m")),
+        })
+    result = {
+        "n": len(tokens), "junk": junk, "overall": _group(tokens, "semua") if tokens else None, "measures": [], "best": None,
+    }
     if not tokens:
         return result
     for label, column, kind in MEASURES:
@@ -118,8 +135,7 @@ def analyze(data_dir: str) -> dict:
 
 
 def _line(g: dict) -> str:
-    median = "-" if g["median_60m"] is None else f"{g['median_60m']:+.0f}%"
-    return f"  {g['label']:<14} n={g['n']:<4} hancur {g['crash_pct']:3.0f}%  60m {median:>5}"
+    return f"  {g['label']:<14} n={g['n']:<4} hancur {g['crash_pct']:3.0f}%  naik {g['up_pct']:3.0f}%"
 
 
 def format_analysis(result: dict) -> str:
@@ -129,9 +145,13 @@ def format_analysis(result: dict) -> str:
         return "\n".join(lines)
     o = result["overall"]
     median = "-" if o["median_60m"] is None else f"{o['median_60m']:+.0f}%"
-    lines.append(f"Hancur = pernah turun {-CRASH_PCT:.0f}%+ dari harga di awal")
-    lines.append("jendela beli. Angka kiri = nilai saat itu.")
-    lines.append(f"Semua: {o['n']} token, hancur {o['crash_pct']:.0f}%, median 60m {median}")
+    lines.append(f"Hancur = pernah turun {-CRASH_PCT:.0f}%+, naik = pernah naik")
+    lines.append(f"{UP_PCT:.0f}%+, dari harga di awal jendela beli.")
+    lines.append("Angka kiri = nilai saat itu.")
+    lines.append(f"Semua: {o['n']} token, hancur {o['crash_pct']:.0f}%, naik {o['up_pct']:.0f}%,")
+    lines.append(f"median 60m {median}")
+    if result.get("junk"):
+        lines.append(f"Tidak dihitung: {result['junk']} pool sampah (hanya dari GeckoTerminal).")
     b = result["best"]
     if b:
         lines.append("")

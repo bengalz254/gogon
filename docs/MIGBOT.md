@@ -24,7 +24,8 @@ ala GMGN, lalu **membeli secara simulasi (paper)** token yang lolos.
 ## Cara kerja
 
 ```
-1. Deteksi migrasi   PumpPortal (WebSocket, real-time) + GeckoTerminal (cadangan)
+1. Deteksi migrasi   PumpPortal (WebSocket, real-time). GeckoTerminal dimatikan: pool
+                     PumpSwap baru di sana kebanyakan pool sampah untuk token lama
 2. Pantau            harga, likuiditas, volume, jumlah transaksi dari DexScreener (tiap 10 detik)
 3. Tunggu dip        paling cepat 5 menit setelah migrasi, sampai harga ≥ 30% di bawah
                      puncaknya lalu naik lagi ≥ 10% dari dasar (boleh sampai menit ke-60)
@@ -332,6 +333,33 @@ berapa persen yang hancur di tiap kelompok.
   sebaiknya tidak dipakai dengan uang sungguhan.
 * Data lama: `venv/bin/python -m migbot analyze --dir data/migbot/archive/<tanggal-jam>`
   (data sebelum versi ini hanya punya data holder untuk token yang lolos filter pasar).
+* Token yang hanya ditemukan GeckoTerminal tidak dihitung: itu pool sampah untuk token
+  lama, bukan migrasi.
+
+### Aturan beli mana yang untung? (`migbot backtest`)
+
+```bash
+cd ~/migbot && venv/bin/python -m migbot backtest
+```
+
+Bot mencatat harga, likuiditas, volume, dan transaksi setiap token tiap 10 detik
+(`data/migbot/paths.jsonl.gz`). `backtest` mencoba beberapa aturan beli pada SEMUA token
+itu sekaligus, menjual dengan aturan keluar bot (kolom `ketat`) dan aturan yang lebih
+longgar (kolom `longgar`), lalu memotong biaya di setiap beli dan jual:
+
+| Aturan | Beli kalau |
+|---|---|
+| `acak menit 5` | semua migrasi asli, di menit ke-5 (pembanding) |
+| `ramai menit 5` | 1000+ transaksi dalam 5 menit (trending saat launch) |
+| `sepi menit 5` | 10–300 transaksi dalam 5 menit |
+| `sepi+tersebar` | sepi, 50 dompet terbesar ≤ 25% supply, paling banyak 1 dompet ≥ 1% |
+| `aturan bot` | aturan bot sekarang dari config (dip + filter + cek holder) |
+| `bertahan 30m` | menit ke-30 harga masih ≥ separuh harga menit ke-5 |
+| `trending 30-60m` | menit 30–60 ramai lagi (300+ transaksi) dan dekat harga tertingginya |
+
+Angka di tabel = rata-rata untung/rugi per beli; dalam kurung = berapa persen yang
+untung. Aturan yang rata-ratanya positif dengan 100+ beli baru layak diuji langsung (paper).
+Kalau semua negatif, aturan-aturan itu tidak bisa untung di pasar ini.
 
 ---
 
@@ -382,6 +410,7 @@ tidak bergantung pada GMGN: bot menghitungnya sendiri lewat RPC Helius
 | `sudo journalctl -u migbot -f` | Log langsung (Ctrl+C = keluar, bot tetap jalan) |
 | `cd ~/migbot && venv/bin/python -m migbot report` | Laporan riset + P&L |
 | `cd ~/migbot && venv/bin/python -m migbot analyze` | Token mana yang hancur, dan apa yang membedakannya |
+| `cd ~/migbot && venv/bin/python -m migbot backtest` | Uji aturan beli pada catatan harga semua token |
 | `cd ~/migbot && venv/bin/python -m migbot check` | Cek koneksi semua sumber data |
 | `cd ~/migbot && venv/bin/python -m migbot setup` | Isi/ganti token Telegram dan RPC (langsung dites), lalu `sudo systemctl restart migbot` |
 | `sudo systemctl stop migbot` / `start migbot` | Hentikan / nyalakan bot |

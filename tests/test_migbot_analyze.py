@@ -48,8 +48,21 @@ def test_equal_values_stay_in_one_group(tmp_path):
     rows = [{"dev_pct": 0 if i < 40 else 3 + i % 4, "min_ret_pct": -90, "ret_60m": -80} for i in range(50)]
     write_tokens(str(tmp_path), rows)
     dev = next(m for m in analyze(str(tmp_path))["measures"] if m["label"] == "dev pegang")
-    assert dev["groups"][0]["label"] == "0%" and dev["groups"][0]["n"] == 40
+    assert dev["groups"][0]["label"] == "0.0%" and dev["groups"][0]["n"] == 40
     assert sum(g["n"] for g in dev["groups"]) == 50
+
+
+def test_junk_pools_are_left_out_and_upside_is_counted(tmp_path):
+    real = [{"min_ret_pct": -90 if i < 6 else -20, "max_ret_pct": 80 if i % 2 else 10, "ret_60m": -50} for i in range(10)]
+    junk = [{"source": "geckoterminal", "min_ret_pct": 0, "max_ret_pct": 0, "ret_60m": 0} for _ in range(30)]
+    both = [{"source": "pumpportal+geckoterminal", "min_ret_pct": -95, "max_ret_pct": 120, "ret_60m": -90}]
+    write_tokens(str(tmp_path), real + junk + both)
+    result = analyze(str(tmp_path))
+    assert result["n"] == 11 and result["junk"] == 30
+    assert round(result["overall"]["crash_pct"]) == 64 and round(result["overall"]["up_pct"]) == 55  # 7/11, 6/11
+    text = format_analysis(result)
+    assert "Tidak dihitung: 30 pool sampah (hanya dari GeckoTerminal)." in text
+    assert "Semua: 11 token, hancur 64%, naik 55%," in text
 
 
 def test_no_data_and_cli(tmp_path, capsys):

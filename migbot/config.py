@@ -50,7 +50,9 @@ class PumpPortalConfig:
 
 @dataclass
 class GeckoTerminalConfig:
-    enabled: bool = True
+    # Off: anybody can open a PumpSwap pool for an old pump token, and those new pools are
+    # nearly all junk rather than migrations. PumpPortal reports the real migrations.
+    enabled: bool = False
     base_url: str = "https://api.geckoterminal.com/api/v2"
     poll_seconds: float = 30.0
     # GeckoTerminal DEX ids whose new pools count as migrations.

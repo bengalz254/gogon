@@ -39,6 +39,9 @@ DONE_MEMORY = 2000
 EXTRA_CACHE_S = 300  # RugCheck / GMGN results are reused this long
 MERGE_WINDOW_S = 120  # two sources' times for one migration are this close
 PATH_MAX_POINTS = 1500  # price points kept per token (2 hours of 10 s refreshes is 720)
+# A buy is cancelled when Jupiter's price (costs included, normally about +5%) is this far from
+# DexScreener's: the price is moving faster than the data, and the exits would fire on stale prices.
+QUOTE_GAP_MIN, QUOTE_GAP_MAX = -0.15, 0.25
 
 
 @dataclass
@@ -414,6 +417,11 @@ class Engine:
         except NoFill as exc:
             tok.reasons = [f"beli gagal: {exc}"]
             return
+        if fill.method == "jupiter" and snap.price_native:
+            gap = fill.price_native / snap.price_native - 1
+            if not QUOTE_GAP_MIN <= gap <= QUOTE_GAP_MAX:
+                tok.reasons = [f"beli batal: harga Jupiter {gap * 100:+.0f}% dari DexScreener (harga bergerak terlalu cepat)"]
+                return
         decimals = fill.decimals
         self.balance -= fill.sol
         pos = Position(
@@ -550,7 +558,8 @@ class Engine:
     def _check_feeds(self, now: float) -> None:
         pp = self.src.pumpportal
         if pp is not None and not pp.connected and now - self.started_at > 120:
-            self._warn_once("pumpportal-down", "PumpPortal tidak tersambung; deteksi migrasi hanya dari GeckoTerminal", now)
+            backup = "deteksi migrasi hanya dari GeckoTerminal" if self.src.gecko is not None else "migrasi baru tidak terdeteksi"
+            self._warn_once("pumpportal-down", f"PumpPortal tidak tersambung; {backup}", now)
         ds = self.src.dexscreener
         if ds is not None and ds.http.health.consecutive_errors >= 10:
             self._warn_once("dexscreener-down", f"DexScreener gagal terus: {ds.http.health.last_error}", now)
