@@ -111,8 +111,14 @@ def start_text(mode: str, balance: float, settings) -> str:
     f, x = settings.filters, settings.exits
     tps = ", ".join(f"+{g:g}% jual {p * 100:g}%" for g, p in x.take_profit) or "-"
     breakeven = f", impas setelah +{x.breakeven_after_pct:g}%" if x.breakeven_after_pct > 0 else ""
+    research = ""
+    if not settings.trading.enabled:
+        research = "MODE RISET: tidak ada yang dibeli; token hanya dipantau dan dicatat.\n"
+    if settings.long_tracking.enabled:
+        research += f"Token yang masih hidup diikuti sampai {settings.long_tracking.max_days:g} hari (uji meme coin lama).\n"
     return (
         f"🟢 Bot migrated mulai ({mode}). Saldo paper {balance:.3f} SOL.\n"
+        f"{research}"
         f"Beli {settings.trading.buy_sol:g} SOL, {entry_rule(settings.entry)}.\n"
         f"Filter: likuiditas ≥ {fmt_usd(f.min_liquidity_usd)}, mcap {fmt_usd(f.min_market_cap_usd)}-"
         f"{fmt_usd(f.max_market_cap_usd) if f.max_market_cap_usd else '∞'}, vol 5m ≥ {fmt_usd(f.min_volume_5m_usd)}, "

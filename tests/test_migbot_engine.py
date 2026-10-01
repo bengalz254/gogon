@@ -4,8 +4,11 @@ import os
 
 import pytest
 
+from datetime import datetime, timezone
+
 from migbot.engine import Engine, Sources
-from migbot.storage import read_csv, read_paths
+from migbot.storage import CsvJournal, iter_long_samples, read_csv, read_paths
+from migbot.tracker import token_fields
 from migbot_fakes import (
     MINT_A, MINT_B, MINT_C, T0, Clock, FakeDex, FakeFeed, FakeGmgn, FakeJupiter, FakeRpc, FakeRug, settings,
 )
@@ -214,6 +217,75 @@ def test_no_buy_when_jupiter_and_dexscreener_disagree(tmp_path):
     engine.src.jupiter.price_native_fn = real  # prices agree again: bought
     run_for(engine, clock, 30)
     assert MINT_A in engine.positions
+
+
+def test_research_mode_buys_nothing_and_skips_candidate_checks(tmp_path):
+    clock = Clock()
+    rpc = FakeRpc()
+    engine, feed, _ = build(tmp_path, clock, {MINT_A: winner_path}, {MINT_A: T0}, rpc=rpc, trading__enabled=False)
+    feed.push(MINT_A, T0)
+    run_for(engine, clock, 400)
+    tok = engine.tokens[MINT_A]
+    assert not engine.positions and tok.passed_filters
+    assert tok.reasons == ["risiko: pembelian dimatikan (mode riset)"]
+    assert rpc.calls == 1  # only the research snapshot; no paid re-checks for a buy that cannot happen
+
+
+def long_rows(engine, mint):
+    path = os.path.join(engine.s.data_dir, "long_samples.csv.gz")
+    return [r for r in iter_long_samples(path) if r[1] == mint]
+
+
+def test_survivors_are_followed_for_days_and_dead_tokens_dropped(tmp_path):
+    def survivor(s):
+        return {"price_usd": 0.0002, "liq": 40_000.0}
+
+    def rugged_at_3h(s):
+        return {"price_usd": 0.0001, "liq": 20_000.0} if s < 3 * 3600 else {"price_usd": 1e-7, "liq": 50.0}
+
+    clock = Clock()
+    paths, migrated = {MINT_A: survivor, MINT_B: rugged_at_3h}, {MINT_A: T0, MINT_B: T0}
+    engine, feed, _ = build(tmp_path, clock, paths, migrated, trading__enabled=False, long_tracking__max_days=0.5)
+    feed.push(MINT_A, T0)
+    feed.push(MINT_B, T0)
+    run_for(engine, clock, 7300, step=10)  # past the 2-hour detailed tracking
+    assert set(engine.long) == {MINT_A, MINT_B}
+    run_for(engine, clock, 4 * 3600, step=60)
+    assert set(engine.long) == {MINT_A}  # MINT_B: three dead samples in a row
+    run_for(engine, clock, 8 * 3600, step=60)
+    assert not engine.long  # MINT_A: past max_days (12 h)
+
+    a = long_rows(engine, MINT_A)
+    ages = [int(r[2]) for r in a]
+    assert 120 <= ages[0] <= 125 and ages[-1] <= 12 * 60 + 15
+    assert all(9 <= later - earlier <= 11 for earlier, later in zip(ages, ages[1:]))  # every 10 minutes
+    assert a[0][3:9] == ["0.0002", "40000", "80000", "108000", "840", "480"]
+    b = long_rows(engine, MINT_B)
+    assert b[-1][3] == "0" and [r[3] for r in b[-4:-1]] == ["1e-07"] * 3  # dead marker after 3 dead samples
+
+
+def test_backfill_follows_recent_real_migrations_once(tmp_path):
+    now = T0 + 3 * 86_400
+    s = settings(tmp_path)
+    journal = CsvJournal(os.path.join(s.data_dir, "tokens.csv"), token_fields(s.tracking.checkpoints_minutes))
+
+    def iso(ts):
+        return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+    journal.append({"mint": MINT_A, "source": "pumpportal", "migrated_at_utc": iso(now - 2 * 86_400)})
+    journal.append({"mint": MINT_B, "source": "geckoterminal", "migrated_at_utc": iso(now - 86_400)})  # junk pool
+    journal.append({"mint": MINT_C, "source": "pumpportal+geckoterminal", "migrated_at_utc": iso(now - 8 * 86_400)})
+    clock = Clock(now)
+    alive = {"price_usd": 0.001, "liq": 50_000.0}
+    migrated = {MINT_A: now - 2 * 86_400, MINT_B: now - 86_400, MINT_C: now - 8 * 86_400}
+    paths = {m: (lambda sec: alive) for m in migrated}
+    engine, _, _ = build(tmp_path, clock, paths, migrated)
+    run_for(engine, clock, 30)
+    assert set(engine.long) == {MINT_A} and engine.long_backfilled  # not the junk pool, not the 8-day-old one
+    assert 2 * 24 * 60 <= int(long_rows(engine, MINT_A)[0][2]) <= 2 * 24 * 60 + 1
+    engine.save()
+    engine2, _, _ = build(tmp_path, clock, paths, migrated)
+    assert engine2.long_backfilled and set(engine2.long) == {MINT_A}
 
 
 def test_thin_liquidity_is_rejected_and_still_researched(tmp_path):

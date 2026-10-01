@@ -58,6 +58,41 @@ class PathLog:
             fh.write(json.dumps(clean(record), separators=(",", ":")) + "\n")
 
 
+LONG_FIELDS = [
+    "ts", "mint", "age_min", "price_usd", "liquidity_usd", "mcap_usd", "volume_h1_usd", "buys_h1", "sells_h1",
+]
+
+
+class LongSampleLog:
+    """Samples of tokens followed for days after migration (gzip CSV, one gzip member per write).
+    A row with price 0 marks the moment a token was dropped as dead."""
+
+    def __init__(self, path: str):
+        self.path = path
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+
+    def append(self, rows: list[list]) -> None:
+        new = not os.path.exists(self.path)
+        with gzip.open(self.path, "at", newline="", encoding="utf-8") as fh:
+            writer = csv.writer(fh)
+            if new:
+                writer.writerow(LONG_FIELDS)
+            writer.writerows(rows)
+
+
+def iter_long_samples(path: str):
+    """Rows of a LongSampleLog as lists of strings; a row cut off by a crash ends the stream."""
+    if not os.path.exists(path):
+        return
+    try:
+        with gzip.open(path, "rt", newline="", encoding="utf-8") as fh:
+            for row in csv.reader(fh):
+                if len(row) == len(LONG_FIELDS) and row[0] != "ts":
+                    yield row
+    except (OSError, EOFError):
+        return
+
+
 def iter_paths(path: str):
     """Records from a PathLog file, one at a time (the file can hold thousands of tokens).
     A line cut off by a crash ends the stream instead of failing."""

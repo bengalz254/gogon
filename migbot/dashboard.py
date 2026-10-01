@@ -354,7 +354,9 @@ function renderStatus(st) {
   const tiles = [
     ["Migrasi hari ini", String(t.migrations ?? 0), (t.late ? t.late + " terlambat ditemukan · " : "") + "hari UTC"],
     ["Dibeli / ditolak", (t.bought ?? 0) + " / " + (t.rejected ?? 0), "hari ini"],
-    ["Posisi terbuka", (st.positions || []).length + " / " + (r.max_open_positions ?? "?"), "beli " + fmtSol(st.settings && st.settings.buy_sol, 2, false) + " per token"],
+    ["Posisi terbuka", (st.positions || []).length + " / " + (r.max_open_positions ?? "?"),
+      st.settings && st.settings.trading_enabled === false ? "mode riset: tidak membeli"
+        : "beli " + fmtSol(st.settings && st.settings.buy_sol, 2, false) + " per token"],
     ["P&L hari ini", fmtSol(r.realized_today, 4), "terealisasi, batas rugi " + fmtSol(r.max_daily_loss_sol, 2, false)],
     ["Posisi ditutup", String(t.closed ?? 0), (t.wins ?? 0) + " untung hari ini"],
   ];
@@ -382,8 +384,10 @@ function renderStatus(st) {
 
   // tokens
   const s = st.settings || {};
-  $("watch-note").textContent = "Beli dipertimbangkan " + fmtAge(s.entry_delay_s) + " sampai " + fmtAge(s.entry_window_s)
-    + " setelah migrasi; setiap token dipantau " + (s.track_minutes || "?") + " menit untuk riset.";
+  $("watch-note").textContent = (s.trading_enabled === false ? "Mode riset: tidak ada yang dibeli. "
+    : "Beli dipertimbangkan " + fmtAge(s.entry_delay_s) + " sampai " + fmtAge(s.entry_window_s) + " setelah migrasi; ")
+    + "setiap token dipantau " + (s.track_minutes || "?") + " menit untuk riset"
+    + (s.long_max_days ? ", lalu " + (s.long_tracked || 0) + " token yang masih hidup diikuti sampai " + s.long_max_days + " hari." : ".");
   const tokRows = (st.tokens || []).map((tk) => {
     const last = tk.last || {};
     const [kind, label] = STATUS_KIND[tk.status] || ["neutral", tk.status];

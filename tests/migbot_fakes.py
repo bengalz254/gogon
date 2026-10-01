@@ -18,6 +18,7 @@ MINT_C = "C3" + "3" * 38 + "pump"
 
 def settings(tmp_path, **overrides):
     s = load_settings(os.path.join(ROOT, "config", "migbot.yaml"), env_path=None)
+    s.trading.enabled = True  # the shipped config is research-only; most tests need buys
     s.data_dir = str(tmp_path / "data")
     s.log_dir = str(tmp_path / "logs")
     s.telegram_token = s.telegram_chat_id = ""
@@ -82,6 +83,9 @@ def snap(now: float, price_usd: float, *, liq=25_000.0, mcap=80_000.0, vol=9_000
         volume_m5=vol,
         buys_m5=buys,
         sells_m5=sells,
+        volume_h1=vol * 12,
+        buys_h1=buys * 12,
+        sells_h1=sells * 12,
         symbol="TEST",
         name="Test token",
     )

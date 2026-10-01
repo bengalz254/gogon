@@ -1,4 +1,5 @@
 """Filters, paper fills, exit rules, risk limits, config loading and Solana helpers."""
+import dataclasses
 import hashlib
 import os
 import textwrap
@@ -301,7 +302,9 @@ def write(tmp_path, text):
 
 def test_shipped_config_matches_defaults():
     s = load_settings(os.path.join(ROOT, "config", "migbot.yaml"), env_path=None)
-    assert s.filters == FilterConfig() and s.exits == ExitConfig() and s.trading == TradingConfig()
+    assert not s.trading.enabled  # shipped in research mode on purpose
+    assert s.filters == FilterConfig() and s.exits == ExitConfig()
+    assert dataclasses.replace(s.trading, enabled=True) == TradingConfig()
     assert s.costs == CostConfig()
 
 

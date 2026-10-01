@@ -60,6 +60,11 @@ def run_check(s: Settings, telegram_test: bool = False) -> int:
     f = s.filters
     print("Konfigurasi:", s.config_path)
     x = s.exits
+    if not s.trading.enabled:
+        print("  MODE RISET: tidak ada yang dibeli (trading.enabled: false)")
+    if s.long_tracking.enabled:
+        lt = s.long_tracking
+        print(f"  token lama: diikuti tiap {lt.sample_minutes:g} mnt sampai {lt.max_days:g} hari")
     print(f"  {entry_rule(s.entry)}")
     print(
         f"  keluar: stop loss -{x.stop_loss_pct:g}%"

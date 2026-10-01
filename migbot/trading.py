@@ -248,6 +248,8 @@ class RiskManager:
         return self.loss_today(unrealized_open) <= -self.cfg.max_daily_loss_sol
 
     def check_buy(self, balance: float, open_count: int, unrealized_open: float, fee: float) -> str | None:
+        if not self.cfg.enabled:
+            return "pembelian dimatikan (mode riset)"
         if self.halted(unrealized_open):
             return f"batas rugi harian {self.cfg.max_daily_loss_sol:g} SOL tercapai (sampai 00:00 UTC)"
         if open_count >= self.cfg.max_open_positions:

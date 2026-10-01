@@ -76,13 +76,17 @@ def cmd_analyze(args) -> int:
 
 def cmd_backtest(args) -> int:
     from migbot.backtest import backtest, format_backtest
+    from migbot.backtest_long import backtest_long, format_backtest_long
 
     s = _settings(args)
     data_dir = args.dir or s.data_dir
     if not os.path.isdir(data_dir):
         print(f"GAGAL: folder {data_dir} tidak ada", file=sys.stderr)
         return 1
-    print(format_backtest(backtest(data_dir, s)))
+    if args.lama:
+        print(format_backtest_long(backtest_long(data_dir, s)))
+    else:
+        print(format_backtest(backtest(data_dir, s)))
     return 0
 
 
@@ -94,7 +98,7 @@ def cmd_reset(args) -> int:
     if status.get("running") and time.time() - float(status.get("updated_at") or 0) < 60:
         print("GAGAL: bot masih jalan. Hentikan dulu (sudo systemctl stop migbot), lalu ulangi.", file=sys.stderr)
         return 1
-    names = ["state.json", "status.json", "tokens.csv", "trades.csv", "paths.jsonl.gz"]
+    names = ["state.json", "status.json", "tokens.csv", "trades.csv", "paths.jsonl.gz", "long_samples.csv.gz"]
     present = [n for n in names if os.path.exists(os.path.join(s.data_dir, n))]
     if not present:
         print("Tidak ada data untuk direset.")
@@ -142,6 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_analyze)
     p = sub.add_parser("backtest", parents=[common], help="uji aturan beli pada catatan harga semua token")
     p.add_argument("--dir", default=None, help="folder data lain, mis. arsip")
+    p.add_argument("--lama", action="store_true", help="token lama: 1-3 hari setelah migrasi")
     p.set_defaults(func=cmd_backtest)
     p = sub.add_parser("reset", parents=[common], help="arsipkan data dan mulai dari nol")
     p.add_argument("--yes", action="store_true", help="tanpa konfirmasi")

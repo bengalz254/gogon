@@ -81,6 +81,8 @@ safety:
     blocked_retry_minutes: 30
 
 trading:                         # uang SIMULASI
+  enabled: false                 # MODE RISET: token tetap dipantau dan dicatat, tapi tidak ada yang dibeli.
+                                 # Backtest 1.693 migrasi: semua aturan beli rugi 18-48% per beli. true = beli lagi
   buy_sol: 0.1                   # per token
   paper_balance_sol: 10          # modal simulasi; angka baru berlaku setelah `python -m migbot reset`
   max_open_positions: 6
@@ -110,6 +112,13 @@ notify:
   notify_migrations: false       # kirim pesan untuk setiap migrasi (ramai!)
   notify_rejections: false       # kirim pesan untuk setiap token yang ditolak (ramai!)
   daily_summary: true            # ringkasan harian jam 00:00 UTC
+
+long_tracking:                   # uji meme coin LAMA: setiap migrasi asli diikuti sampai 7 hari
+  enabled: true
+  sample_minutes: 10             # harga, likuiditas, volume 1 jam: tiap 10 menit
+  max_days: 7
+  alive_liquidity_usd: 1000      # likuiditas di bawah ini = mati
+  dead_after: 3                  # 3x berturut-turut mati -> berhenti diikuti
 
 data_dir: data/migbot
 log_dir: logs

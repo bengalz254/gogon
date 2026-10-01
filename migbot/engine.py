@@ -28,7 +28,7 @@ from migbot.sources.jupiter import JupiterSource
 from migbot.sources.pumpportal import PumpPortalFeed
 from migbot.sources.rugcheck import RugcheckSource
 from migbot.sources.solana_rpc import SolanaRpc
-from migbot.storage import TRADE_FIELDS, CsvJournal, PathLog, read_json, write_json_atomic
+from migbot.storage import TRADE_FIELDS, CsvJournal, LongSampleLog, PathLog, read_csv, read_json, write_json_atomic
 from migbot.tracker import BOUGHT, NO_DATA, PASSED, REJECTED, WATCHING, TrackedToken, research_row, token_fields
 from migbot.trading import DUST_FRACTION, NoFill, PaperBroker, Position, RiskManager, evaluate_exit, utc_day
 
@@ -42,6 +42,8 @@ PATH_MAX_POINTS = 1500  # price points kept per token (2 hours of 10 s refreshes
 # A buy is cancelled when Jupiter's price (costs included, normally about +5%) is this far from
 # DexScreener's: the price is moving faster than the data, and the exits would fire on stale prices.
 QUOTE_GAP_MIN, QUOTE_GAP_MAX = -0.15, 0.25
+LONG_BATCH = 150  # tokens per tick in the multi-day tracking (5 DexScreener calls), so a tick stays short
+JUNK_SOURCE = "geckoterminal"  # seen only by GeckoTerminal: a new pool for an old token, not a migration
 
 
 @dataclass
@@ -116,6 +118,11 @@ class Engine:
         self.trades_journal = CsvJournal(os.path.join(settings.data_dir, "trades.csv"), TRADE_FIELDS)
         self.path_log = PathLog(os.path.join(settings.data_dir, "paths.jsonl.gz"))
         self.paths: dict[str, list[list]] = {}  # in memory only; written when a token's tracking ends
+        self.long_log = LongSampleLog(os.path.join(settings.data_dir, "long_samples.csv.gz"))
+        self.long: dict[str, dict] = {}  # mint -> {"migrated_at", "misses"}: followed for days after the first 2 h
+        self.long_backfilled = False
+        self._long_queue: list[str] = []
+        self._next_long_round = 0.0
         self.tokens: dict[str, TrackedToken] = {}
         self.positions: dict[str, Position] = {}
         self.done: collections.OrderedDict[str, float] = collections.OrderedDict()
@@ -153,6 +160,8 @@ class Engine:
             self.stats = DayStats(**{k: v for k, v in saved_stats.items() if k in DayStats.__dataclass_fields__})
         for item in raw.get("recent", [])[-60:]:
             self.recent.append(item)
+        self.long = {m: dict(v) for m, v in (raw.get("long") or {}).items() if isinstance(v, dict)}
+        self.long_backfilled = bool(raw.get("long_backfilled"))
         logger.info(
             "Restored state: %d tokens, %d open positions, balance %.4f SOL",
             len(self.tokens), len(self.positions), self.balance,
@@ -171,6 +180,8 @@ class Engine:
                 "risk": self.risk.to_dict(),
                 "stats": self.stats.to_dict(),
                 "recent": list(self.recent),
+                "long": self.long,
+                "long_backfilled": self.long_backfilled,
             },
         )
         self._dirty = False
@@ -306,10 +317,10 @@ class Engine:
 
     # ------------------------------------------------------------------ entries
     def _safety(
-        self, tok: TrackedToken, now: float, research: bool = False
+        self, tok: TrackedToken, now: float, research: bool = False, refresh: bool = True
     ) -> tuple[SafetyReport | None, RugcheckReport | None, GmgnInfo | None]:
         sf = self.s.safety
-        if self.src.rpc is not None and (tok.safety is None or now - tok.safety_at >= sf.refresh_seconds):
+        if refresh and self.src.rpc is not None and (tok.safety is None or now - tok.safety_at >= sf.refresh_seconds):
             creator = (tok.safety or {}).get("creator")
             count_holders = research or self.s.filters.min_holders > 0
             try:
@@ -329,14 +340,14 @@ class Engine:
                     logger.info("Safety data incomplete for %s: %s", tok.mint, "; ".join(report.errors))
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Safety check failed for %s: %s", tok.mint, exc)
-        if self.src.rugcheck is not None and (tok.rugcheck is None or now - tok.rugcheck_at >= EXTRA_CACHE_S):
+        if refresh and self.src.rugcheck is not None and (tok.rugcheck is None or now - tok.rugcheck_at >= EXTRA_CACHE_S):
             try:
                 tok.rugcheck, tok.rugcheck_at = self.src.rugcheck.fetch(tok.mint).to_dict(), now
             except Exception as exc:  # noqa: BLE001
                 tok.rugcheck_at = now - EXTRA_CACHE_S + 60  # retry in a minute
                 logger.info("RugCheck unavailable for %s: %s", tok.mint, exc)
         gm = self.src.gmgn
-        if gm is not None and gm.available and (tok.gmgn is None or now - tok.gmgn_at >= EXTRA_CACHE_S):
+        if refresh and gm is not None and gm.available and (tok.gmgn is None or now - tok.gmgn_at >= EXTRA_CACHE_S):
             try:
                 tok.gmgn, tok.gmgn_at = gm.fetch(tok.mint).to_dict(), now
             except HttpError as exc:
@@ -396,7 +407,8 @@ class Engine:
             checks.extend(market_checks(snap, tok.first_price_usd, self.s.filters))
             result = FilterResult(checks)
             if result.passed:
-                safety, rug, gmgn = self._safety(tok, now)
+                # Research mode buys nothing: judge on the data already there instead of paying for new checks.
+                safety, rug, gmgn = self._safety(tok, now, refresh=self.s.trading.enabled)
                 result.checks.extend(safety_checks(safety, rug, gmgn, self.s.filters, self.s.safety.rugcheck))
             tok.checks = [c.to_dict() for c in result.checks]
             tok.reasons = result.failures
@@ -537,9 +549,77 @@ class Engine:
                 self._reject(tok, now)
             self.tokens_journal.append(research_row(tok, self.s.tracking.checkpoints_minutes))
             self._write_path(tok)
+            self._start_long(tok)
             del self.tokens[mint]
             self._remember_done(mint, now)
             self._dirty = True
+
+    # ------------------------------------------------------------------ multi-day tracking
+    def _start_long(self, tok: TrackedToken) -> None:
+        lt = self.s.long_tracking
+        if not lt.enabled or (tok.sources or [tok.source]) == [JUNK_SOURCE]:
+            return
+        if (tok.last.get("liquidity_usd") or 0) >= lt.alive_liquidity_usd:
+            self.long[tok.mint] = {"migrated_at": tok.migrated_at, "misses": 0}
+
+    def _backfill_long(self, now: float) -> None:
+        """Once: follow the real migrations of the last days already in tokens.csv (from before this version)."""
+        self.long_backfilled = True
+        self._dirty = True
+        limit = self.s.long_tracking.max_days * 86_400
+        for row in read_csv(self.tokens_journal.path):
+            mint = row.get("mint") or ""
+            if not mint or mint in self.long or mint in self.tokens or (row.get("source") or JUNK_SOURCE) == JUNK_SOURCE:
+                continue
+            try:
+                migrated_at = datetime.strptime(row["migrated_at_utc"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
+            except (KeyError, ValueError):
+                continue
+            if 0 <= now - migrated_at < limit:
+                self.long[mint] = {"migrated_at": migrated_at, "misses": 0}
+        logger.info("Multi-day tracking: %d tokens", len(self.long))
+
+    def _long_tick(self, now: float) -> None:
+        """Every sample_minutes, sample every followed token, a batch per tick."""
+        lt = self.s.long_tracking
+        if not lt.enabled or self.src.dexscreener is None:
+            return
+        if not self.long_backfilled:
+            self._backfill_long(now)
+        if not self._long_queue:
+            if now < self._next_long_round or not self.long:
+                return
+            self._next_long_round = now + lt.sample_minutes * 60
+            self._long_queue = list(self.long)
+        batch, self._long_queue = self._long_queue[:LONG_BATCH], self._long_queue[LONG_BATCH:]
+        try:
+            snaps = self.src.dexscreener.fetch(batch)
+        except Exception as exc:  # noqa: BLE001 - try again next round
+            logger.warning("Multi-day tracking fetch failed: %s", exc)
+            return
+        rows = []
+        for mint in batch:
+            item = self.long.get(mint)
+            if item is None:
+                continue
+            age_min = round((now - item["migrated_at"]) / 60)
+            snap = snaps.get(mint)
+            if snap is not None and snap.price_usd:
+                whole = [None if v is None else int(v) for v in (snap.liquidity_usd, snap.market_cap_usd, snap.volume_h1)]
+                rows.append([int(now), mint, age_min, float(f"{snap.price_usd:.6g}"), *whole, snap.buys_h1, snap.sells_h1])
+            alive = snap is not None and snap.price_usd and (snap.liquidity_usd or 0) >= lt.alive_liquidity_usd
+            item["misses"] = 0 if alive else item["misses"] + 1
+            if item["misses"] >= lt.dead_after:
+                rows.append([int(now), mint, age_min, 0, 0, 0, 0, 0, 0])  # dropped as dead
+                del self.long[mint]
+            elif now - item["migrated_at"] >= lt.max_days * 86_400:
+                del self.long[mint]
+        if rows:
+            try:
+                self.long_log.append(rows)
+            except OSError as exc:
+                logger.warning("Could not write multi-day samples: %s", exc)
+        self._dirty = True
 
     def _remember_done(self, mint: str, now: float) -> None:
         self.done[mint] = now
@@ -628,6 +708,9 @@ class Engine:
                 "entry_window_s": self.s.entry.window_seconds,
                 "track_minutes": self.s.tracking.track_minutes,
                 "buy_sol": self.s.trading.buy_sol,
+                "trading_enabled": self.s.trading.enabled,
+                "long_tracked": len(self.long),
+                "long_max_days": self.s.long_tracking.max_days if self.s.long_tracking.enabled else 0,
                 "config_path": self.s.config_path,
             },
         }
@@ -643,6 +726,7 @@ class Engine:
         self._manage_positions(now)  # exits before entries: protecting open positions comes first
         self._evaluate_entries(now)
         self._finalize(now)
+        self._long_tick(now)
         self._check_feeds(now)
         if self._dirty and now >= self._next_save:
             self.save()

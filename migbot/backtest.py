@@ -180,8 +180,14 @@ def simulate(points: list, i: int, exits: ExitConfig, cost: float) -> float:
     """Profit or loss of one buy at points[i], as a fraction of the money put in.
 
     The buy pays `cost` on top of the price and every sale loses `cost`; the exits
-    are the bot's own evaluate_exit, run on every later point.
+    are the bot's own evaluate_exit, run on every later point. Whatever is still
+    held when the points run out is sold at the last price.
     """
+    return simulate_trade(points, i, exits, cost)[0]
+
+
+def simulate_trade(points: list, i: int, exits: ExitConfig, cost: float) -> tuple[float, bool]:
+    """(profit or loss, closed): closed is False when the points ran out before an exit."""
     entry_t, entry_price = points[i][T], points[i][PRICE]
     effective = entry_price * (1 + cost)
     pos = Position(
@@ -206,9 +212,9 @@ def simulate(points: list, i: int, exits: ExitConfig, cost: float) -> float:
         if decision.tp_index is not None:
             pos.tp_done.append(decision.tp_index)
         if pos.tokens_raw <= 0:
-            return proceeds - 1.0
+            return proceeds - 1.0, True
     last = next((p[PRICE] for p in reversed(points) if p[PRICE]), entry_price)
-    return proceeds + pos.tokens_raw / SIZE * last / effective * (1 - cost) - 1.0
+    return proceeds + pos.tokens_raw / SIZE * last / effective * (1 - cost) - 1.0, False
 
 
 # --------------------------------------------------------------------- the run

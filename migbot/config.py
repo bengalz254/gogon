@@ -149,6 +149,8 @@ class SafetyConfig:
 
 @dataclass
 class TradingConfig:
+    # False = research only: tokens are still followed, filtered and recorded, nothing is bought.
+    enabled: bool = True
     buy_sol: float = 0.1
     paper_balance_sol: float = 10.0
     max_open_positions: int = 6
@@ -194,6 +196,16 @@ class NotifyConfig:
 
 
 @dataclass
+class LongTrackingConfig:
+    """Following real migrations after their first 2 hours, for the old-token backtest."""
+    enabled: bool = True
+    sample_minutes: float = 10.0
+    max_days: float = 7.0
+    alive_liquidity_usd: float = 1_000.0  # below this a sample counts as dead
+    dead_after: int = 3  # consecutive dead samples before a token is dropped
+
+
+@dataclass
 class Settings:
     poll_seconds: float = 2.0
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
@@ -206,6 +218,7 @@ class Settings:
     exits: ExitConfig = field(default_factory=ExitConfig)
     costs: CostConfig = field(default_factory=CostConfig)
     notify: NotifyConfig = field(default_factory=NotifyConfig)
+    long_tracking: LongTrackingConfig = field(default_factory=LongTrackingConfig)
     data_dir: str = "data/migbot"
     log_dir: str = "logs"
     # Filled from .env, not from the YAML file.
@@ -324,6 +337,9 @@ def validate(s: Settings) -> None:
         errors.append("jumlah porsi exits.take_profit lebih dari 1 (100%)")
     if not e.take_profit and e.trailing_pct == 0 and e.max_hold_minutes <= 0:
         errors.append("tidak ada cara keluar untung: isi exits.take_profit, trailing_pct, atau max_hold_minutes")
+    lt = s.long_tracking
+    if lt.sample_minutes < 2 or lt.max_days <= 0 or lt.dead_after < 1:
+        errors.append("long_tracking: sample_minutes minimal 2, max_days > 0, dead_after minimal 1")
     if s.costs.extra_slippage_pct < 0 or s.costs.est_slippage_pct < 0 or s.costs.est_swap_fee_pct < 0:
         errors.append("biaya (costs.*) tidak boleh negatif")
     if errors:

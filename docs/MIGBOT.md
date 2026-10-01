@@ -361,6 +361,33 @@ Angka di tabel = rata-rata untung/rugi per beli; dalam kurung = berapa persen ya
 untung. Aturan yang rata-ratanya positif dengan 100+ beli baru layak diuji langsung (paper).
 Kalau semua negatif, aturan-aturan itu tidak bisa untung di pasar ini.
 
+**Hasil uji 1.693 migrasi (30 Sep – 2 Okt 2026): semua aturan rugi 18–48% per beli.**
+Karena itu bot sekarang dikirim dalam **mode riset** (`trading.enabled: false`): token
+tetap dipantau, difilter, dan dicatat, tapi tidak ada yang dibeli.
+
+### Meme coin lama (`migbot backtest --lama`)
+
+Setiap migrasi asli yang masih punya likuiditas setelah 2 jam pemantauan diikuti terus
+sampai 7 hari: harga, likuiditas, mcap, volume dan transaksi 1 jam, tiap 10 menit
+(`data/migbot/long_samples.csv.gz`, bagian `long_tracking` di config). Token yang 3 kali
+berturut-turut likuiditasnya di bawah $1.000 dianggap mati dan berhenti diikuti. Saat
+versi ini pertama jalan, token dari `tokens.csv` yang umurnya di bawah 7 hari ikut diikuti.
+
+```bash
+cd ~/migbot && venv/bin/python -m migbot backtest --lama
+```
+
+* **Masih bisa diperdagangkan setelah 6 jam / 1 / 2 / 3 hari**: berapa persen token yang
+  likuiditasnya masih ≥ $10k dan mcap ≥ $30k.
+* Aturan beli: `hidup hari 1/2/3` (masih hidup di umur itu), `naik di hari 1` (lebih tinggi
+  dari umur 12 jam), `ramai di hari 1` (volume 1 jam ≥ $10k), `dip hari 1-3` (≥ 30% di bawah
+  puncak lalu naik 10%).
+* Dua cara jual: `1 hari` (SL −30%, +50% jual separuh, trailing 30%, maks 24 jam) dan
+  `3 hari` (SL −50%, +100% jual separuh, trailing 40%, maks 72 jam).
+* Token yang mati saat dipegang dihitung terjual di harga nol. Pembelian yang datanya belum
+  cukup panjang tidak dihitung (ditulis sebagai "belum selesai").
+* Butuh 2–3 hari data sebelum ada hasil, dan 4–5 hari untuk aturan hari ke-3.
+
 ---
 
 ## Pengaturan penting (`config/migbot.yaml`)
@@ -411,6 +438,7 @@ tidak bergantung pada GMGN: bot menghitungnya sendiri lewat RPC Helius
 | `cd ~/migbot && venv/bin/python -m migbot report` | Laporan riset + P&L |
 | `cd ~/migbot && venv/bin/python -m migbot analyze` | Token mana yang hancur, dan apa yang membedakannya |
 | `cd ~/migbot && venv/bin/python -m migbot backtest` | Uji aturan beli pada catatan harga semua token |
+| `cd ~/migbot && venv/bin/python -m migbot backtest --lama` | Uji aturan beli untuk token umur 1–3 hari |
 | `cd ~/migbot && venv/bin/python -m migbot check` | Cek koneksi semua sumber data |
 | `cd ~/migbot && venv/bin/python -m migbot setup` | Isi/ganti token Telegram dan RPC (langsung dites), lalu `sudo systemctl restart migbot` |
 | `sudo systemctl stop migbot` / `start migbot` | Hentikan / nyalakan bot |
