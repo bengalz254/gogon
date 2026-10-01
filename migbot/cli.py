@@ -91,28 +91,44 @@ def cmd_backtest(args) -> int:
 
 
 def cmd_reset(args) -> int:
-    from migbot.storage import read_json
+    from migbot.storage import read_json, write_json_atomic
 
     s = _settings(args)
     status = read_json(os.path.join(s.data_dir, "status.json")) or {}
     if status.get("running") and time.time() - float(status.get("updated_at") or 0) < 60:
         print("GAGAL: bot masih jalan. Hentikan dulu (sudo systemctl stop migbot), lalu ulangi.", file=sys.stderr)
         return 1
-    names = ["state.json", "status.json", "tokens.csv", "trades.csv", "paths.jsonl.gz", "long_samples.csv.gz"]
+    names = ["state.json", "status.json", "tokens.csv", "trades.csv", "paths.jsonl.gz"]
+    if not args.simpan_lama:
+        names.append("long_samples.csv.gz")
     present = [n for n in names if os.path.exists(os.path.join(s.data_dir, n))]
     if not present:
         print("Tidak ada data untuk direset.")
         return 0
     if not args.yes:
-        answer = input(f"Pindahkan {', '.join(present)} ke arsip dan mulai dari nol? [y/N] ")
+        goal = "kosongkan dashboard (token lama tetap diikuti)" if args.simpan_lama else "mulai dari nol"
+        answer = input(f"Pindahkan {', '.join(present)} ke arsip dan {goal}? [y/N] ")
         if answer.strip().lower() not in ("y", "ya", "yes"):
             print("Dibatalkan.")
             return 1
+    state_path = os.path.join(s.data_dir, "state.json")
+    if args.simpan_lama:  # built before tokens.csv is archived: it may still be needed to fill the tracking list
+        from migbot.engine import dashboard_reset_state
+
+        old = read_json(state_path)
+        state = dashboard_reset_state(old, os.path.join(s.data_dir, "tokens.csv"), s, time.time())
     archive = os.path.join(s.data_dir, "archive", time.strftime("%Y%m%d-%H%M%S"))
     os.makedirs(archive, exist_ok=True)
     for name in present:
         shutil.move(os.path.join(s.data_dir, name), os.path.join(archive, name))
     print(f"Data lama dipindah ke {archive}. Saldo paper kembali ke {s.trading.paper_balance_sol:g} SOL saat bot start.")
+    if args.simpan_lama:
+        write_json_atomic(state_path, state)
+        dropped = len(old.get("positions") or []) if isinstance(old, dict) else 0
+        print(f"Dashboard mulai dari nol. Tetap jalan: {len(state['long'])} token lama (diikuti sampai "
+              f"{s.long_tracking.max_days} hari) dan {len(state['tokens'])} token baru yang sedang dipantau.")
+        if dropped:
+            print(f"{dropped} posisi terbuka dihapus (paper, tanpa dijual).")
     return 0
 
 
@@ -150,6 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_backtest)
     p = sub.add_parser("reset", parents=[common], help="arsipkan data dan mulai dari nol")
     p.add_argument("--yes", action="store_true", help="tanpa konfirmasi")
+    p.add_argument("--simpan-lama", action="store_true", help="kosongkan dashboard saja, token lama tetap diikuti")
     p.set_defaults(func=cmd_reset)
     args = parser.parse_args(argv)
     return args.func(args)

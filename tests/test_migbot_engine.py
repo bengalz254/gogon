@@ -6,8 +6,9 @@ import pytest
 
 from datetime import datetime, timezone
 
+from migbot.cli import main
 from migbot.engine import Engine, Sources
-from migbot.storage import CsvJournal, iter_long_samples, read_csv, read_paths
+from migbot.storage import CsvJournal, iter_long_samples, read_csv, read_paths, write_json_atomic
 from migbot.tracker import token_fields
 from migbot_fakes import (
     MINT_A, MINT_B, MINT_C, T0, Clock, FakeDex, FakeFeed, FakeGmgn, FakeJupiter, FakeRpc, FakeRug, settings,
@@ -422,6 +423,52 @@ def test_restart_restores_open_position(tmp_path):
     assert not engine2.positions
     trades = read_csv(os.path.join(engine2.s.data_dir, "trades.csv"))
     assert [t["side"] for t in trades] == ["BUY", "SELL", "SELL"]
+
+
+def test_reset_keeping_old_tokens_zeroes_the_dashboard_only(tmp_path):
+    clock = Clock()
+    engine, feed, _ = build(tmp_path, clock, {MINT_A: winner_path}, {MINT_A: T0})
+    feed.push(MINT_A, T0)
+    run_for(engine, clock, 200)
+    assert MINT_A in engine.positions and engine.risk.buys_today == 1
+    engine.long[MINT_C] = {"migrated_at": T0 - 2 * 86_400, "misses": 0}
+    engine.long_backfilled = True
+    engine.save()
+    data = tmp_path / "data"
+    (data / "long_samples.csv.gz").write_bytes(b"old samples")
+    write_json_atomic(str(data / "status.json"), {"running": False, "updated_at": 0})
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(f"data_dir: {data}\n", encoding="utf-8")
+
+    assert main(["--config", str(cfg), "reset", "--yes", "--simpan-lama"]) == 0
+    assert sorted(os.listdir(data)) == ["archive", "long_samples.csv.gz", "state.json"]
+    (archive,) = (data / "archive").iterdir()
+    assert sorted(os.listdir(archive)) == ["state.json", "status.json", "trades.csv"]
+
+    engine2, _, _ = build(tmp_path, clock, {MINT_A: winner_path}, {MINT_A: T0})
+    status = engine2.status(clock())
+    assert status["equity_sol"] == status["start_balance_sol"] == engine2.s.trading.paper_balance_sol
+    assert not engine2.positions and not engine2.recent
+    assert engine2.risk.buys_today == 0 and engine2.stats.migrations == 0
+    assert set(engine2.long) == {MINT_C} and engine2.long_backfilled  # the multi-day test carries on
+    assert engine2.tokens[MINT_A].status == "lolos, tak dibeli"  # still watched; its trade is in the archive
+    run_for(engine2, clock, 7300)
+    (row,) = read_csv(os.path.join(engine2.s.data_dir, "tokens.csv"))
+    assert row["mint"] == MINT_A and row["trade_pnl_sol"] == ""
+    assert not os.path.exists(os.path.join(engine2.s.data_dir, "trades.csv"))
+
+
+def test_reset_keeping_old_tokens_fills_the_tracking_list_first(tmp_path):
+    s = settings(tmp_path)
+    journal = CsvJournal(os.path.join(s.data_dir, "tokens.csv"), token_fields(s.tracking.checkpoints_minutes))
+    now = datetime.now(timezone.utc)
+    journal.append({"mint": MINT_A, "source": "pumpportal", "migrated_at_utc": now.strftime("%Y-%m-%d %H:%M:%S")})
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(f"data_dir: {s.data_dir}\n", encoding="utf-8")
+    assert main(["--config", str(cfg), "reset", "--yes", "--simpan-lama"]) == 0  # no state.json yet
+    engine, _, _ = build(tmp_path, Clock(now.timestamp()), {}, {})
+    assert set(engine.long) == {MINT_A} and engine.long_backfilled
+    assert not os.path.exists(os.path.join(s.data_dir, "tokens.csv"))
 
 
 def test_stop_loss_and_estimated_fills_without_jupiter(tmp_path):

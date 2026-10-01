@@ -302,6 +302,10 @@ setelah migrasi) untuk tiga kelompok:
   naik tertinggi setelah dibeli (`puncak`), hasil akhir, dan cara keluarnya.
 * Data lama setelah `reset` tetap bisa dilihat:
   `venv/bin/python -m migbot report --dir data/migbot/archive/<tanggal-jam>`.
+* `reset --simpan-lama` hanya mengosongkan dashboard: P&L, grafik, hitungan hari ini
+  dan daftar transaksi mulai dari nol, saldo kembali ke modal awal. Token lama yang
+  sedang diikuti (dan `long_samples.csv.gz`) tidak disentuh, jadi `backtest --lama`
+  tetap memakai semua datanya. `reset` biasa juga mengarsipkan uji token lama.
 * **Alasan ditolak terbanyak** memberi tahu filter mana yang paling sering menolak.
   Kalau satu risiko RugCheck menolak hampir semua token, lihat daftarnya di laporan
   dan pertimbangkan `safety.rugcheck.ignore_risks`.
@@ -408,7 +412,7 @@ Semua pengaturan ada penjelasannya di file itu. Yang paling sering diubah:
 | `filters.min_holders` | 200 | Jumlah wallet pemegang minimal, dihitung lewat RPC (butuh Helius; pool tidak dihitung). 0 = mati |
 | `filters.min_smart_buys`, `max_sniper_count` | 0 | Filter GMGN (0 = mati; hanya berlaku kalau GMGN bisa diakses) |
 | `trading.buy_sol` | 0.1 | Ukuran beli simulasi per token |
-| `trading.paper_balance_sol` | 10 | Modal simulasi. Perubahan baru berlaku setelah `python -m migbot reset` |
+| `trading.paper_balance_sol` | 10 | Modal simulasi. Perubahan baru berlaku setelah `python -m migbot reset` (atau `reset --simpan-lama`) |
 | `trading.max_open_positions` | 6 | Posisi terbuka bersamaan |
 | `trading.max_buys_per_day` | 100 | Beli maksimal per hari (UTC) |
 | `trading.max_daily_loss_sol` | 2 | Rugi hari ini sampai segini → berhenti beli sampai 00:00 UTC (08:00 WITA) |
@@ -443,7 +447,8 @@ tidak bergantung pada GMGN: bot menghitungnya sendiri lewat RPC Helius
 | `cd ~/migbot && venv/bin/python -m migbot setup` | Isi/ganti token Telegram dan RPC (langsung dites), lalu `sudo systemctl restart migbot` |
 | `sudo systemctl stop migbot` / `start migbot` | Hentikan / nyalakan bot |
 | `sudo systemctl disable --now migbot migbot-dashboard` | Matikan total (tidak hidup lagi saat reboot) |
-| `sudo systemctl stop migbot && cd ~/migbot && venv/bin/python -m migbot reset && sudo systemctl start migbot` | Mulai dari nol: data lama dipindah ke `data/migbot/archive/`, tidak dihapus |
+| `sudo systemctl stop migbot && cd ~/migbot && venv/bin/python -m migbot reset && sudo systemctl start migbot` | Mulai dari nol, termasuk uji token lama: data lama dipindah ke `data/migbot/archive/`, tidak dihapus |
+| `sudo systemctl stop migbot && cd ~/migbot && venv/bin/python -m migbot reset --simpan-lama && sudo systemctl start migbot` | Kosongkan dashboard saja (P&L, grafik, hitungan, saldo kembali ke modal awal); token lama tetap diikuti sampai 7 hari |
 | `cd ~/migbot && git pull && bash deploy/setup_migbot.sh` | Update bot |
 
 File data (`data/migbot/`): `tokens.csv` (riset, satu baris per token migrasi),

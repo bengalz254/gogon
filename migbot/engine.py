@@ -46,6 +46,54 @@ LONG_BATCH = 150  # tokens per tick in the multi-day tracking (5 DexScreener cal
 JUNK_SOURCE = "geckoterminal"  # seen only by GeckoTerminal: a new pool for an old token, not a migration
 
 
+def long_candidates(tokens_csv: str, now: float, max_age_s: float) -> dict[str, dict]:
+    """The real migrations in tokens.csv younger than max_age_s, as multi-day tracking entries."""
+    found: dict[str, dict] = {}
+    for row in read_csv(tokens_csv):
+        mint = row.get("mint") or ""
+        if not mint or mint in found or (row.get("source") or JUNK_SOURCE) == JUNK_SOURCE:
+            continue
+        try:
+            migrated_at = datetime.strptime(row["migrated_at_utc"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
+        except (KeyError, ValueError):
+            continue
+        if 0 <= now - migrated_at < max_age_s:
+            found[mint] = {"migrated_at": migrated_at, "misses": 0}
+    return found
+
+
+def dashboard_reset_state(raw, tokens_csv: str, s: Settings, now: float) -> dict:
+    """state.json for `migbot reset --simpan-lama`: the paper balance, positions, counters and events
+    start over, but the tokens being watched and the multi-day tracking list carry on."""
+    raw = raw if isinstance(raw, dict) and raw.get("version") == STATE_VERSION else {}
+    tokens = []
+    for item in raw.get("tokens", []):
+        tok = TrackedToken.from_dict(item)
+        tok.trade_pnl_sol = tok.trade_pnl_pct = None
+        if tok.status == BOUGHT:  # its trade stays in the archived trades.csv
+            tok.status = PASSED
+        tokens.append(tok.to_dict())
+    long = {m: dict(v) for m, v in (raw.get("long") or {}).items() if isinstance(v, dict)}
+    backfilled = bool(raw.get("long_backfilled"))
+    if s.long_tracking.enabled and not backfilled:  # fill it now: tokens.csv is about to be archived
+        watching = {t["mint"] for t in tokens}
+        for mint, item in long_candidates(tokens_csv, now, s.long_tracking.max_days * 86_400).items():
+            if mint not in long and mint not in watching:
+                long[mint] = item
+        backfilled = True
+    return {
+        "version": STATE_VERSION,
+        "saved_at": now,
+        "balance_sol": s.trading.paper_balance_sol,
+        "tokens": tokens,
+        "positions": [],
+        "done": raw.get("done", []),
+        "recent": [],
+        "long": long,
+        "long_backfilled": backfilled,
+    }
+
+
 @dataclass
 class Sources:
     pumpportal: PumpPortalFeed | None = None
@@ -566,17 +614,10 @@ class Engine:
         """Once: follow the real migrations of the last days already in tokens.csv (from before this version)."""
         self.long_backfilled = True
         self._dirty = True
-        limit = self.s.long_tracking.max_days * 86_400
-        for row in read_csv(self.tokens_journal.path):
-            mint = row.get("mint") or ""
-            if not mint or mint in self.long or mint in self.tokens or (row.get("source") or JUNK_SOURCE) == JUNK_SOURCE:
-                continue
-            try:
-                migrated_at = datetime.strptime(row["migrated_at_utc"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
-            except (KeyError, ValueError):
-                continue
-            if 0 <= now - migrated_at < limit:
-                self.long[mint] = {"migrated_at": migrated_at, "misses": 0}
+        found = long_candidates(self.tokens_journal.path, now, self.s.long_tracking.max_days * 86_400)
+        for mint, item in found.items():
+            if mint not in self.long and mint not in self.tokens:
+                self.long[mint] = item
         logger.info("Multi-day tracking: %d tokens", len(self.long))
 
     def _long_tick(self, now: float) -> None:
