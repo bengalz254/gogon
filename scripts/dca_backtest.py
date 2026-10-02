@@ -107,7 +107,7 @@ def main() -> None:
         sys.exit("not enough candles")
     r = run_backtest(s, candles, args.journal)
 
-    print(f"\nBacktest {s.symbol} {s.timeframe} | {r['from']} → {r['to']} ({r['candles']} candles) "
+    print(f"\nBacktest {s.symbol} {s.timeframe} | {r['from']} -> {r['to']} ({r['candles']} candles) "
           f"| price {r['price_change_pct']:+.1f}%")
     print(f"closed deals     : {r['closed_deals']}  {r['by_reason']}  per side {r['by_side']}")
     print(f"realized PnL     : ${r['realized_pnl']:.2f}  ({r['realized_pnl'] / s.capital_usdt:+.1%} of capital)")

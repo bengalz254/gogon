@@ -38,7 +38,7 @@ def main() -> None:
                   f"{r.cum_notional_usdt:>9.2f} {r.avg_price:>10.4f} {r.tp_price:>10.4f} {r.liq_price:>10.4f}")
         loss = abs(plan.rows[-1].avg_price - plan.sl_price) * sum(r.qty for r in plan.rows)
         print(f"stop loss {plan.sl_price:.4f} ({s.ladder.stop_loss_pct}% from entry) | "
-              f"max loss ≈ ${loss:.2f} | margin ${plan.margin_usdt:.2f} | "
+              f"max loss ~ ${loss:.2f} | margin ${plan.margin_usdt:.2f} | "
               f"min liquidation buffer {plan.min_liq_buffer_pct:.2f}%")
     print(f"\nWorst-case margin (all sides fully filled): ${total_margin:.2f} of "
           f"${s.capital_usdt:.0f} capital ({total_margin / s.capital_usdt:.0%})")
