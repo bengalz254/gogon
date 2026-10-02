@@ -11,17 +11,20 @@ trade:
   leverage: 10
   margin_mode: isolated   # isolated (rugi maksimal = margin posisi) | cross
   margin_usd: 20          # margin per posisi -> nilai posisi = 20 x 10 = $200
-  take_profit_pct: 0.02   # 2% gerak harga (= ~20% ROE di 10x)
-  trailing_pct: 0.005     # 0.5% dari harga terbaik
+  take_profit_pct: 0.02   # 2% dari margin (ROE) -> di 10x = gerak harga 0.2%
+  trailing_pct: 0.005     # 0.5% dari margin (ROE) -> di 10x = gerak harga 0.05%
+  # margin : persen TP/trailing/SL dihitung dari margin (ROE) (default)
+  # price  : persen dihitung dari gerak harga (2% harga = 20% ROE di 10x)
+  pct_basis: margin
   # trailing : setelah profit 2%, trailing stop 0.5% di belakang harga terbaik (default)
   # fixed    : TP pas di 2%, plus trailing stop 0.5% sejak entry (berfungsi juga sbg stop-loss)
   exit_mode: trailing
-  # Stop-loss opsional (gerak harga). null = tidak ada SL, posisi hanya ditutup oleh
-  # TP/trailing atau silang EMA berlawanan -- sesuai aturan strategi. Di 10x, gerak ~9%
-  # melawan posisi = LIKUIDASI.
+  # Stop-loss opsional (basis sama dgn pct_basis). null = tidak ada SL, posisi hanya ditutup
+  # oleh TP/trailing atau silang EMA berlawanan -- sesuai aturan strategi. Di 10x, gerak
+  # harga ~9% melawan posisi (~90% margin) = LIKUIDASI.
   stop_loss_pct: null
   max_slippage: 0.01             # batas slippage order market (IOC)
-  poll_seconds: 5                # seberapa sering harga dicek untuk TP/trailing
+  poll_seconds: 2                # seberapa sering harga dicek untuk TP/trailing
   candle_close_delay_seconds: 5  # tunggu sebentar setelah candle tutup agar data API lengkap
   exchange_stop_order: true      # (live) pasang stop-market reduce-only di exchange saat trailing aktif
 
@@ -31,4 +34,9 @@ backtest:
   taker_fee: 0.00045         # fee taker Hyperliquid (tier dasar)
   slippage: 0.0002           # slippage per eksekusi
   maintenance_margin_rate: 0.0125   # untuk estimasi harga likuidasi (BTC); ETH ~0.02
+  # Candle 30m hanya punya OHLC, jadi pergerakan di dalam candle tidak diketahui.
+  # conservative : begitu trailing aktif, anggap harga langsung berbalik -> exit di profit
+  #                minimum yang terkunci (TP - trailing = 1.5% margin). Realistis utk trailing ketat.
+  # ohlc         : ikuti jalur open->low->high->close; terlalu optimis utk trailing 0.05% harga.
+  intrabar: conservative
   block_live_if_unprofitable: true  # tolak mode LIVE bila hasil backtest rugi

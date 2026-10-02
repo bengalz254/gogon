@@ -122,10 +122,10 @@ class LiveBot:
         return ExitTracker(
             side=side,
             entry_price=entry_price,
-            tp_pct=t.take_profit_pct,
-            trailing_pct=t.trailing_pct,
+            tp_pct=t.tp_price_pct,
+            trailing_pct=t.trailing_price_pct,
             mode=t.exit_mode,
-            stop_loss_pct=t.stop_loss_pct,
+            stop_loss_pct=t.stop_loss_price_pct,
         )
 
     # -- lifecycle ---------------------------------------------------------
@@ -221,9 +221,9 @@ class LiveBot:
         self.position_size = fill.size
         t = self.tracker
         logger.info(
-            "[%s] OPEN %s %s size=%s @ %.6g | TP %.6g, then trailing %.2f%%",
+            "[%s] OPEN %s %s size=%s @ %.6g | TP at %.6g, then trailing %.3f%% of price",
             self.mode.upper(), side, self.s.strategy.coin, fill.size, fill.price, t.tp_price,
-            self.s.trade.trailing_pct * 100,
+            t.trailing_pct * 100,
         )
         self.journal.record(self.mode, self.s.strategy.coin, "OPEN", side, fill.price, fill.size,
                             f"EMA{self.s.strategy.ema_fast}/{self.s.strategy.ema_slow} cross")
@@ -324,7 +324,9 @@ def run() -> int:
 
         logger.warning("*** LIVE TRADING ENABLED *** Real orders with real funds on %s.", conn.network)
         broker = HyperliquidBroker(
-            st.coin, conn.secret_key, conn.account_address, conn.base_url, settings.trade.max_slippage
+            st.coin, conn.secret_key, conn.account_address, conn.base_url, settings.trade.max_slippage,
+            # move the exchange stop in steps well below the trailing distance
+            stop_order_min_move=min(0.001, settings.trade.trailing_price_pct / 5),
         )
     else:
         from hlbot.broker import PaperBroker
@@ -339,11 +341,13 @@ def run() -> int:
 
     signal_module.signal(signal_module.SIGINT, _request_stop)
     signal_module.signal(signal_module.SIGTERM, _request_stop)
+    tr = settings.trade
     logger.info(
-        "Running: %s %s EMA%d/%d, %dx %s, margin $%.2f (notional $%.2f), TP %.2f%% trailing %.2f%% (%s mode)",
-        st.coin, st.interval, st.ema_fast, st.ema_slow, settings.trade.leverage, settings.trade.margin_mode,
-        settings.trade.margin_usd, settings.trade.notional_usd, settings.trade.take_profit_pct * 100,
-        settings.trade.trailing_pct * 100, settings.trade.exit_mode,
+        "Running: %s %s EMA%d/%d, %dx %s, margin $%.2f (notional $%.2f), TP %.2f%% trailing %.2f%% of %s "
+        "(= %.3f%% / %.3f%% price move, %s mode)",
+        st.coin, st.interval, st.ema_fast, st.ema_slow, tr.leverage, tr.margin_mode, tr.margin_usd,
+        tr.notional_usd, tr.take_profit_pct * 100, tr.trailing_pct * 100, tr.pct_basis,
+        tr.tp_price_pct * 100, tr.trailing_price_pct * 100, tr.exit_mode,
     )
 
     while not _stop:

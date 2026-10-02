@@ -96,3 +96,42 @@ def test_summary_and_drawdown_fields():
 def test_requires_enough_candles():
     with pytest.raises(ValueError):
         run_backtest(candles_from_closes([100.0] * 10), strategy_cfg(), trade_cfg(), frictionless())
+
+
+def test_margin_basis_divides_by_leverage():
+    t = trade_cfg(pct_basis="margin", leverage=10, stop_loss_pct=0.3)
+    assert t.tp_price_pct == pytest.approx(0.002)
+    assert t.trailing_price_pct == pytest.approx(0.0005)
+    assert t.stop_loss_price_pct == pytest.approx(0.03)
+    p = trade_cfg(pct_basis="price")
+    assert p.tp_price_pct == 0.02 and p.trailing_price_pct == 0.005
+
+
+def test_margin_basis_backtest_roe_matches_config():
+    closes = down_then_up() + [100.0 - 0.5 * i for i in range(1, 41)]
+    candles = candles_from_closes(closes)
+    res = run_backtest(candles, strategy_cfg(), trade_cfg(pct_basis="margin"), frictionless("conservative"))
+    first = res.trades[0]
+    assert first.side == LONG and first.exit_reason == "TRAILING_STOP"
+    # TP 2% of margin, trailing 0.5% of margin -> at least ~1.5% ROE locked in
+    assert first.roe_pct == pytest.approx(1.5, abs=0.01)
+    assert first.exit_price == pytest.approx(first.entry_price * 1.002 * (1 - 0.0005))
+
+
+def test_conservative_intrabar_takes_minimum_locked_profit():
+    closes = down_then_up() + [100.0 - 0.5 * i for i in range(1, 41)]
+    candles = candles_from_closes(closes)
+    ohlc = run_backtest(candles, strategy_cfg(), trade_cfg(), frictionless("ohlc"))
+    cons = run_backtest(candles, strategy_cfg(), trade_cfg(), frictionless("conservative"))
+    entry = cons.trades[0].entry_price
+    assert cons.trades[0].exit_price == pytest.approx(entry * 1.02 * 0.995)
+    assert cons.trades[0].pnl_usd < ohlc.trades[0].pnl_usd  # ohlc rides the trend to the peak
+
+
+def test_conservative_does_not_change_reverse_or_liquidation_exits():
+    closes = down_then_up() + [100.0 - 0.5 * i for i in range(1, 41)]
+    candles = candles_from_closes(closes)
+    cfg = trade_cfg(take_profit_pct=0.9, trailing_pct=0.1)
+    a = run_backtest(candles, strategy_cfg(), cfg, frictionless("ohlc"))
+    b = run_backtest(candles, strategy_cfg(), cfg, frictionless("conservative"))
+    assert [(t.exit_reason, t.pnl_usd) for t in a.trades] == [(t.exit_reason, t.pnl_usd) for t in b.trades]

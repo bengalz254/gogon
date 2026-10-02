@@ -11,7 +11,7 @@ aturan sederhana:
 | EMA 9 menyilang **ke bawah** EMA 21 | Tutup LONG (kalau ada), lalu buka **SHORT**. |
 | Tidak ada silang | Bot **diam**. |
 | Leverage | **10x** (isolated) |
-| TP 2%, trailing 0,5% | Setelah harga bergerak **+2%** searah posisi, trailing stop aktif **0,5%** di belakang harga terbaik. Posisi ditutup saat harga balik 0,5% dari puncak. |
+| TP 2%, trailing 0,5% **dari margin** | Setelah profit mencapai **2% dari margin** (di 10x = gerak harga 0,2%), trailing stop aktif **0,5% dari margin** (gerak harga 0,05%) di belakang harga terbaik. |
 
 > ⚠️ **Ini software trading dengan leverage. Bisa rugi uang sungguhan.**
 > Di 10x, gerak harga ~9% melawan posisi = **likuidasi** (seluruh margin
@@ -21,22 +21,41 @@ aturan sederhana:
 
 ## Cara kerja TP + trailing (mode `trailing`, default)
 
-Contoh LONG, entry $100:
+Persentase dihitung **dari margin (ROE)** (`pct_basis: margin`). Di 10x,
+persen margin ÷ 10 = persen gerak harga:
 
-1. Harga naik ke $101,9 → belum apa-apa (belum +2%).
-2. Harga sentuh **$102** (+2%) → trailing aktif, stop di $102 × 0,995 = **$101,49**.
-3. Harga naik ke $105 → stop ikut naik ke $105 × 0,995 = **$104,475**.
-4. Harga turun ke $104,4 → **posisi ditutup** di ±$104,475.
+| | dari margin | gerak harga (10x) |
+|---|---|---|
+| Take profit | 2% | 0,2% |
+| Trailing | 0,5% | 0,05% |
 
-Jadi profit minimal ±1,5% harga (≈ 15% ROE di 10x) begitu TP tersentuh, dan
-bisa lebih besar kalau tren berlanjut. Setelah keluar, bot **diam** sampai ada
+Contoh LONG, entry $100, margin $20 (posisi $200):
+
+1. Harga $100,19 → belum apa-apa (profit < 2% margin).
+2. Harga sentuh **$100,20** (+2% margin = +$0,40) → trailing aktif, stop di
+   $100,20 × 0,9995 = **$100,15**.
+3. Harga naik ke $100,50 → stop ikut naik ke **$100,45**.
+4. Harga turun ke $100,44 → **posisi ditutup** di ±$100,45.
+
+Begitu TP tersentuh, profit minimal ±1,5% dari margin (sebelum fee), dan bisa
+lebih besar kalau tren berlanjut. Setelah keluar, bot **diam** sampai ada
 silang EMA berikutnya.
 
-Persentase adalah **gerak harga**, bukan ROE. Di 10x: 2% harga ≈ 20% ROE.
+Kalau ingin persen dihitung dari gerak harga (2% harga = 20% margin di 10x),
+ubah ke `pct_basis: price`.
 
 Alternatif `exit_mode: fixed`: TP pasti di +2%, plus trailing stop 0,5% dari
 harga terbaik sejak entry (jadi juga berfungsi sebagai stop-loss ketat).
-Bandingkan keduanya dengan backtest: `python -m hlbot.backtest --exit-mode fixed`.
+Bandingkan dengan backtest: `python -m hlbot.backtest --exit-mode fixed`.
+
+### ⚠️ Fee vs TP dari margin
+
+Fee taker Hyperliquid 0,045% per eksekusi dihitung dari **nilai posisi**,
+bukan dari margin. Di 10x, buka + tutup = 0,09% × 10 = **0,9% dari margin**,
+ditambah slippage. Jadi trade yang menang dengan profit minimal 1,5% margin
+hanya bersih sekitar **+0,2–0,6% margin**. Sementara itu trade yang rugi tidak
+dibatasi (tanpa stop-loss, hanya ditutup oleh silang EMA berlawanan) dan bisa
+-20% margin atau lebih. Pastikan hasil backtest memang positif sebelum live.
 
 ## Instalasi
 
@@ -57,9 +76,12 @@ python -m hlbot.backtest
 python -m hlbot.backtest --coin ETH --days 60
 python -m hlbot.backtest --coin SOL --save-candles data/sol_30m.csv
 
-# Bandingkan mode exit / tambah stop-loss opsional 3%:
+# Bandingkan mode exit / tambah stop-loss opsional 30% margin (= 3% harga di 10x):
 python -m hlbot.backtest --exit-mode fixed
-python -m hlbot.backtest --stop-loss 0.03
+python -m hlbot.backtest --stop-loss 0.3
+
+# Hitung persen dari gerak harga, bukan margin:
+python -m hlbot.backtest --pct-basis price
 ```
 
 Hyperliquid hanya menyediakan **5000 candle terakhir** (±104 hari untuk 30m).
@@ -77,8 +99,13 @@ Output: ringkasan di terminal + `data/hl_backtest_<COIN>_30m_trades.csv`
 Yang disimulasikan backtest:
 - Sinyal dibaca saat candle **tutup**, eksekusi di **open candle berikutnya**
   (sama seperti bot live).
-- TP/trailing dicek di dalam setiap candle dengan asumsi urutan harga
-  open→low→high→close (candle hijau) atau open→high→low→close (candle merah).
+- TP/trailing dicek di dalam setiap candle. Candle 30m hanya punya
+  open/high/low/close, padahal trailing 0,05% harga bisa kena oleh gerakan
+  kecil dalam hitungan detik. Karena itu default `intrabar: conservative`:
+  begitu trailing aktif, backtest menganggap harga langsung berbalik dan exit
+  di profit minimum yang terkunci (TP − trailing). Mode `--intrabar ohlc`
+  mengikuti jalur open→low→high→close / open→high→low→close dan **terlalu
+  optimis** untuk trailing seketat ini; pakai hanya untuk perbandingan.
 - Fee taker 0,045% + slippage tiap entry/exit.
 - Likuidasi isolated margin (kehilangan seluruh margin posisi).
 - **Tidak** termasuk funding rate.
@@ -139,9 +166,12 @@ Di mode live:
 | `trade.margin_usd` | `20` | Margin per posisi (USD) |
 | `trade.take_profit_pct` | `0.02` | 2% |
 | `trade.trailing_pct` | `0.005` | 0,5% |
+| `trade.pct_basis` | `margin` | Persen dihitung dari `margin` (ROE) atau `price` |
 | `trade.exit_mode` | `trailing` | `trailing` atau `fixed` |
-| `trade.stop_loss_pct` | `null` | Stop-loss opsional (mis. `0.03`) |
+| `trade.stop_loss_pct` | `null` | Stop-loss opsional, basis sama (mis. `0.3` = 30% margin) |
+| `trade.poll_seconds` | `2` | Interval cek harga untuk TP/trailing |
 | `backtest.days` | `100` | Panjang data backtest |
+| `backtest.intrabar` | `conservative` | `conservative` atau `ohlc` |
 | `backtest.block_live_if_unprofitable` | `true` | Tolak live bila backtest rugi |
 
 ## Tes

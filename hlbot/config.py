@@ -26,6 +26,10 @@ class StrategyConfig:
     ema_slow: int = 21
 
 
+PCT_BASES = ("margin", "price")
+INTRABAR_MODES = ("conservative", "ohlc")
+
+
 @dataclass
 class TradeConfig:
     leverage: int = 10
@@ -33,16 +37,38 @@ class TradeConfig:
     margin_usd: float = 20.0  # margin per position; notional = margin_usd * leverage
     take_profit_pct: float = 0.02
     trailing_pct: float = 0.005
+    # What take_profit_pct / trailing_pct / stop_loss_pct are measured against:
+    #   margin -> % of margin (ROE); at 10x, 2% of margin = 0.2% price move
+    #   price  -> % price move
+    pct_basis: str = "margin"
     exit_mode: str = "trailing"  # trailing | fixed  (see hlbot/position.py)
     stop_loss_pct: Optional[float] = None
     max_slippage: float = 0.01
-    poll_seconds: float = 5.0
+    poll_seconds: float = 2.0
     candle_close_delay_seconds: float = 5.0
     exchange_stop_order: bool = True
 
     @property
     def notional_usd(self) -> float:
         return self.margin_usd * self.leverage
+
+    def to_price_pct(self, pct: Optional[float]) -> Optional[float]:
+        """Convert a configured percentage into a price-move fraction."""
+        if pct is None:
+            return None
+        return pct / self.leverage if self.pct_basis == "margin" else pct
+
+    @property
+    def tp_price_pct(self) -> float:
+        return self.to_price_pct(self.take_profit_pct)
+
+    @property
+    def trailing_price_pct(self) -> float:
+        return self.to_price_pct(self.trailing_pct)
+
+    @property
+    def stop_loss_price_pct(self) -> Optional[float]:
+        return self.to_price_pct(self.stop_loss_pct)
 
 
 @dataclass
@@ -52,6 +78,12 @@ class BacktestConfig:
     taker_fee: float = 0.00045
     slippage: float = 0.0002
     maintenance_margin_rate: float = 0.0125
+    # How TP/trailing are resolved inside a candle (only OHLC is known):
+    #   conservative -> once the trailing stop arms, assume price turns right
+    #                   away: exit at the minimum locked-in profit (TP - trailing)
+    #   ohlc         -> assume open->low->high->close (green) / open->high->low->close
+    #                   (red); optimistic for tight trailing stops
+    intrabar: str = "conservative"
     block_live_if_unprofitable: bool = True
 
 
@@ -112,10 +144,11 @@ def load_hl_settings(config_path: Optional[str] = None, env_path: Optional[str] 
         margin_usd=float(t_raw.get("margin_usd", 20.0)),
         take_profit_pct=float(t_raw.get("take_profit_pct", 0.02)),
         trailing_pct=float(t_raw.get("trailing_pct", 0.005)),
+        pct_basis=str(t_raw.get("pct_basis", "margin")).lower(),
         exit_mode=str(t_raw.get("exit_mode", "trailing")).lower(),
         stop_loss_pct=_opt_float(t_raw.get("stop_loss_pct")),
         max_slippage=float(t_raw.get("max_slippage", 0.01)),
-        poll_seconds=float(t_raw.get("poll_seconds", 5.0)),
+        poll_seconds=float(t_raw.get("poll_seconds", 2.0)),
         candle_close_delay_seconds=float(t_raw.get("candle_close_delay_seconds", 5.0)),
         exchange_stop_order=bool(t_raw.get("exchange_stop_order", True)),
     )
@@ -125,6 +158,7 @@ def load_hl_settings(config_path: Optional[str] = None, env_path: Optional[str] 
         taker_fee=float(b_raw.get("taker_fee", 0.00045)),
         slippage=float(b_raw.get("slippage", 0.0002)),
         maintenance_margin_rate=float(b_raw.get("maintenance_margin_rate", 0.0125)),
+        intrabar=str(b_raw.get("intrabar", "conservative")).lower(),
         block_live_if_unprofitable=bool(b_raw.get("block_live_if_unprofitable", True)),
     )
     connection = ConnectionConfig(
@@ -150,8 +184,14 @@ def validate(settings: HLSettings) -> None:
         raise ValueError("trade.margin_mode must be 'isolated' or 'cross'")
     if t.exit_mode not in EXIT_MODES:
         raise ValueError(f"trade.exit_mode must be one of {EXIT_MODES}")
+    if t.pct_basis not in PCT_BASES:
+        raise ValueError(f"trade.pct_basis must be one of {PCT_BASES}")
     if t.take_profit_pct <= 0 or t.trailing_pct <= 0:
         raise ValueError("trade.take_profit_pct and trade.trailing_pct must be > 0")
+    if t.trailing_pct >= t.take_profit_pct and t.exit_mode == "trailing":
+        raise ValueError("trade.trailing_pct must be smaller than trade.take_profit_pct")
+    if settings.backtest.intrabar not in INTRABAR_MODES:
+        raise ValueError(f"backtest.intrabar must be one of {INTRABAR_MODES}")
     if t.notional_usd < MIN_ORDER_NOTIONAL_USD:
         raise ValueError(
             f"margin_usd x leverage = ${t.notional_usd:.2f} is below Hyperliquid's "

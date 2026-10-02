@@ -179,3 +179,29 @@ def test_state_survives_restart(tmp_path, scenario):
     assert bot2.tracker.trailing_active
     assert bot2.tracker.best_price == pytest.approx(103.0)
     assert bot2.last_candle_t == candles[k].t
+
+
+def test_margin_basis_live_tp_and_trailing(tmp_path, scenario):
+    candles, k = scenario
+    info = FakeInfo(candles, price=100.0)
+    clock = Clock(candles[k].t + 60_000)
+    bot = make_bot(tmp_path, info, clock)
+    bot.s.trade.pct_basis = "margin"  # TP 2% / trailing 0.5% of margin at 10x
+    bot.start()
+    clock.t_ms = candles[k].t + SPAN_30M + 6_000
+    bot.tick()
+    assert bot.tracker.tp_price == pytest.approx(100.2)
+
+    info.price = 100.19
+    bot.tick()
+    assert not bot.tracker.trailing_active
+    info.price = 100.30
+    bot.tick()
+    assert bot.tracker.trailing_active
+    info.price = 100.26  # stop = 100.30 * 0.9995 = 100.24985
+    bot.tick()
+    assert bot.tracker is not None
+    info.price = 100.24
+    bot.tick()
+    assert bot.tracker is None
+    assert journal_rows(tmp_path)[-1]["reason"] == "TRAILING_STOP"

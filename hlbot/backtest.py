@@ -7,7 +7,11 @@ Simulation rules (mirror the live bot):
     close a LONG if one is open, then open SHORT. Already on the signalled
     side -> keep the position. No cross -> do nothing.
   * TP / trailing / optional stop-loss are checked inside every candle using
-    `ExitTracker.on_candle` (assumed OHLC path; see hlbot/position.py).
+    `ExitTracker.on_candle`. Only OHLC is known, so with
+    backtest.intrabar = "conservative" (default) a trailing stop that arms
+    inside a candle is assumed to be hit straight away at the minimum
+    locked-in profit (TP - trailing); "ohlc" follows the assumed
+    open->low->high->close / open->high->low->close path instead.
   * Isolated-margin liquidation is modelled; a liquidation loses the whole
     margin of that position.
   * Taker fees and slippage are charged on every entry and exit. Funding
@@ -36,7 +40,7 @@ if __package__ in (None, ""):
 
 from hlbot.config import BacktestConfig, StrategyConfig, TradeConfig
 from hlbot.indicators import ema
-from hlbot.position import ExitTracker
+from hlbot.position import ExitEvent, ExitTracker
 from hlbot.strategy import LONG, Candle, closed_candles, cross_at, interval_ms
 
 
@@ -162,8 +166,12 @@ def run_backtest(
             "margin_usd": trade.margin_usd,
             "take_profit_pct": trade.take_profit_pct,
             "trailing_pct": trade.trailing_pct,
+            "pct_basis": trade.pct_basis,
+            "tp_price_pct": trade.tp_price_pct,
+            "trailing_price_pct": trade.trailing_price_pct,
             "exit_mode": trade.exit_mode,
             "stop_loss_pct": trade.stop_loss_pct,
+            "intrabar": bt.intrabar,
             "taker_fee": bt.taker_fee,
             "slippage": bt.slippage,
         },
@@ -182,10 +190,10 @@ def run_backtest(
         tracker = ExitTracker(
             side=side,
             entry_price=fill,
-            tp_pct=trade.take_profit_pct,
-            trailing_pct=trade.trailing_pct,
+            tp_pct=trade.tp_price_pct,
+            trailing_pct=trade.trailing_price_pct,
             mode=trade.exit_mode,
-            stop_loss_pct=trade.stop_loss_pct,
+            stop_loss_pct=trade.stop_loss_price_pct,
             liquidation_price=liquidation_price(side, fill, trade.leverage, bt.maintenance_margin_rate),
         )
         return _OpenPosition(tracker, size, fill, ts, trade.notional_usd * bt.taker_fee)
@@ -231,7 +239,16 @@ def run_backtest(
 
         # 2) TP / trailing / stops inside this candle
         if pos is not None:
-            event = pos.tracker.on_candle(candle.o, candle.h, candle.l, candle.c)
+            tr = pos.tracker
+            event = tr.on_candle(candle.o, candle.h, candle.l, candle.c)
+            if (
+                bt.intrabar == "conservative"
+                and tr.mode == "trailing"
+                and tr.trailing_active
+                and (event is None or event.reason == "TRAILING_STOP")
+            ):
+                lock = tr.tp_price * (1 - tr.direction * tr.trailing_pct)
+                event = ExitEvent(lock, "TRAILING_STOP")
             if event is not None:
                 realized += close_position(pos, event.price, candle.t + span, event.reason)
                 pos = None
@@ -270,7 +287,10 @@ def print_summary(summary: dict, file=sys.stdout) -> None:
         f"margin ${p['margin_usd']}/posisi",
         f" Exit          : mode={p['exit_mode']} TP={p['take_profit_pct'] * 100:.2f}% "
         f"trailing={p['trailing_pct'] * 100:.2f}% SL="
-        + (f"{p['stop_loss_pct'] * 100:.2f}%" if p["stop_loss_pct"] else "off"),
+        + (f"{p['stop_loss_pct'] * 100:.2f}%" if p["stop_loss_pct"] else "off")
+        + f" (dari {p['pct_basis']})",
+        f" = gerak harga : TP {p['tp_price_pct'] * 100:.3f}% | trailing {p['trailing_price_pct'] * 100:.3f}% "
+        f"| intrabar={p['intrabar']}",
         f" Candle        : {summary['candles']}",
         f" Jumlah trade  : {summary['trades']} (long {summary['long_trades']}, short {summary['short_trades']})",
         f" Win rate      : {summary['win_rate_pct']}%",
@@ -324,7 +344,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--csv", help="backtest on candles from a CSV file instead of the Hyperliquid API")
     ap.add_argument("--save-candles", help="also save the downloaded candles to this CSV path")
     ap.add_argument("--exit-mode", choices=["trailing", "fixed"], help="override trade.exit_mode")
-    ap.add_argument("--stop-loss", type=float, help="override trade.stop_loss_pct, e.g. 0.03 (0 = off)")
+    ap.add_argument("--stop-loss", type=float, help="override trade.stop_loss_pct, e.g. 0.3 (0 = off)")
+    ap.add_argument("--pct-basis", choices=["margin", "price"], help="override trade.pct_basis")
+    ap.add_argument("--intrabar", choices=["conservative", "ohlc"], help="override backtest.intrabar")
     ap.add_argument("--out-dir", default="data", help="where to write the report (default: data/)")
     args = ap.parse_args(argv)
 
@@ -337,6 +359,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         settings.trade.exit_mode = args.exit_mode
     if args.stop_loss is not None:
         settings.trade.stop_loss_pct = args.stop_loss or None
+    if args.pct_basis:
+        settings.trade.pct_basis = args.pct_basis
+    if args.intrabar:
+        settings.backtest.intrabar = args.intrabar
 
     if args.csv:
         candles = load_csv(args.csv)
