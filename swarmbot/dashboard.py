@@ -166,8 +166,8 @@ async function tick(){
   $("eq").textContent=usd(s.equity);$("eqd").innerHTML=start?`awal ${usd(start)} · ${sgn((s.equity/start-1)*100)}`:"";
   $("cash").textContent=usd(s.cash);$("np").textContent=`${s.positions.length} / ${st.max_open_positions??"?"}`;
   $("rules").textContent=`TP +${st.take_profit_pct}% · SL -${st.stop_loss_pct}% · ${usd(st.position_usd,0)}/posisi`;
-  $("pos").innerHTML=table(["Token","Mood","Harga beli","Harga kini","Gerak","Nilai","Sejak"],
-   s.positions.sort((a,b)=>b.move_pct-a.move_pct).map(p=>[tok(p.symbol,p.mint),mood(p.mood),px(p.entry_price),px(p.price),sgn(p.move_pct),usd(p.value_usd),ago(Date.now()/1000-p.opened_at)]),"Tidak ada posisi terbuka.");
+  $("pos").innerHTML=table(["Token","Mood","Harga beli","Harga kini","Gerak","Nilai","Harga dicek","Sejak"],
+   s.positions.sort((a,b)=>b.move_pct-a.move_pct).map(p=>[tok(p.symbol,p.mint),mood(p.mood),px(p.entry_price),px(p.price),sgn(p.move_pct),usd(p.value_usd),p.price_age_s==null?"–":(p.price_age_s>30?`<span class="warn">${ago(p.price_age_s)} lalu</span>`:ago(p.price_age_s)+" lalu"),ago(Date.now()/1000-p.opened_at)]),"Tidak ada posisi terbuka.");
   const c=Object.entries(s.mood_counts||{}).sort((a,b)=>b[1]-a[1]);
   $("counts").innerHTML=c.length?c.map(([m,n])=>`<span>${mood(m)} ${n}</span>`).join(""):'<span class="empty">–</span>';
   $("cand").innerHTML=table(["Token","Mood","5m","1j","Likuiditas","Mcap","Status"],
@@ -179,6 +179,6 @@ async function tick(){
  $("trades").innerHTML=table(["Waktu (UTC)","Token","Aksi","Mood","Harga","USD","Hasil","Alasan"],
   t.recent.map(r=>[esc(r.time.replace("T"," ").replace("Z","")),tok(r.symbol,r.mint),r.action==="BUY"?'<span class="ok">BELI</span>':'<span class="bad">JUAL</span>',mood(r.mood),px(+r.price),usd(r.usd),r.pnl_usd?sgnu(+r.pnl_usd)+" ("+sgn(+r.pnl_pct)+")":"",esc(r.reason)]),"Belum ada transaksi.");
 }
-tick();setInterval(tick,5000);
+tick();setInterval(tick,2000);
 </script></body></html>
 """

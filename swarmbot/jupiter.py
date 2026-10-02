@@ -25,11 +25,11 @@ class Jupiter:
         self.min_interval = min_interval
         self._last = 0.0
 
-    def _get(self, path: str, params: dict | None = None):
+    def _get(self, path: str, params: dict | None = None, api: str = "tokens/v2"):
         wait = self.min_interval - (time.monotonic() - self._last)
         if wait > 0:
             time.sleep(wait)
-        url = f"{self.base_url}/tokens/v2/{path.lstrip('/')}"
+        url = f"{self.base_url}/{api}" + (f"/{path.lstrip('/')}" if path else "")
         error = ""
         for attempt in range(3):
             self._last = time.monotonic()
@@ -54,6 +54,21 @@ class Jupiter:
         """name like 'toptrending/1h' or 'recent'."""
         data = self._get(name, {"limit": str(limit)} if name != "recent" else None)
         return data if isinstance(data, list) else []
+
+    def prices(self, mints: list[str]) -> dict[str, float]:
+        """Live USD prices from the Jupiter Price API v3 (fresher than the token lists)."""
+        out: dict[str, float] = {}
+        for i in range(0, len(mints), 50):
+            data = self._get("", {"ids": ",".join(mints[i:i + 50])}, api="price/v3")
+            if isinstance(data, dict):
+                for mint, row in data.items():
+                    try:
+                        price = float((row or {}).get("usdPrice") or 0)
+                    except (TypeError, ValueError, AttributeError):
+                        continue
+                    if price > 0:
+                        out[mint] = price
+        return out
 
     def tokens(self, mints: list[str]) -> list[dict]:
         out: list[dict] = []

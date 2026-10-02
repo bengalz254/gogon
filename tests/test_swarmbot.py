@@ -51,13 +51,16 @@ def test_shocked_wins_over_suspicious():
 class FakeJup:
     def __init__(self, lists, prices=None):
         self.lists = lists
-        self.prices = prices or {}
+        self.live = prices or {}
 
     def token_list(self, name, limit=100):
         return self.lists.get(name, [])
 
     def tokens(self, mints):
-        return [raw(mint=m, price=self.prices[m]) for m in mints if m in self.prices]
+        return [raw(mint=m, price=self.live[m]) for m in mints if m in self.live]
+
+    def prices(self, mints):
+        return {m: self.live[m] for m in mints if m in self.live}
 
 
 class Clock:
@@ -90,10 +93,10 @@ def test_buys_only_wanted_moods_and_filters(tmp_path):
 def test_take_profit_and_stop_loss(tmp_path):
     eng, jup, clock = make(tmp_path, [raw("A", p5=40, price=1.0), raw("B", p1=25, price=2.0)])
     eng.try_buys(eng.scan())
-    jup.prices = {"A": 1.14, "B": 1.81}
+    jup.live = {"A": 1.14, "B": 1.81}
     eng.refresh_positions()
     assert set(eng.paper.positions) == {"A", "B"}  # +14% and -9.5%: hold
-    jup.prices = {"A": 1.15, "B": 1.79}
+    jup.live = {"A": 1.15, "B": 1.79}
     eng.refresh_positions()
     assert eng.paper.positions == {}
     lines = (tmp_path / "trades.csv").read_text().splitlines()
@@ -107,7 +110,7 @@ def test_cooldown_and_limits(tmp_path):
     eng, jup, clock = make(tmp_path, rows, max_open_positions=3)
     eng.try_buys(eng.scan())
     assert len(eng.paper.positions) == 3
-    jup.prices = {"T0": 2.0}
+    jup.live = {"T0": 2.0}
     eng.refresh_positions()
     assert "T0" not in eng.paper.positions
     eng.try_buys(eng.scan())
@@ -162,7 +165,7 @@ def test_status_file_and_dashboard_api(tmp_path):
     labelled = eng.scan()
     eng.try_buys(labelled)
     eng.remember_candidates(labelled)
-    jup.prices = {"A": 1.2}
+    jup.live = {"A": 1.2}
     eng.refresh_positions()
     eng.write_status()
     status = json.loads((tmp_path / "status.json").read_text())
@@ -193,7 +196,7 @@ def test_raising_starting_cash_tops_up(tmp_path):
 def test_max_hold_sells_after_time(tmp_path):
     eng, jup, clock = make(tmp_path, [raw("A", p5=1)], max_hold_hours=6)
     eng.try_buys(eng.scan())
-    jup.prices = {"A": 1.02}
+    jup.live = {"A": 1.02}
     clock.t += 5 * 3600
     eng.refresh_positions()
     assert "A" in eng.paper.positions
@@ -207,3 +210,35 @@ def test_fresh_pump_token_is_bought(tmp_path):
     eng, _, _ = make(tmp_path, [raw("CASSIE", p5=881, p1=881, mcap=35_700, liq=9_000, pool_age_h=0.07)])
     eng.try_buys(eng.scan())
     assert eng.paper.positions["CASSIE"].mood == "shocked"
+
+
+def test_price_api_parsing_and_use(tmp_path):
+    from swarmbot.jupiter import Jupiter
+
+    class Resp:
+        status_code = 200
+
+        def __init__(self, data):
+            self.data = data
+
+        def json(self):
+            return self.data
+
+    class Session:
+        headers = {}
+        urls = []
+
+        def get(self, url, params=None, timeout=None):
+            self.urls.append((url, params))
+            return Resp({"A": {"usdPrice": 1.5, "blockId": 1}, "B": None, "C": {"usdPrice": "x"}})
+
+    jup = Jupiter("https://lite-api.jup.ag", session=Session(), min_interval=0)
+    assert jup.prices(["A", "B", "C"]) == {"A": 1.5}
+    assert Session.urls[0][0] == "https://lite-api.jup.ag/price/v3"
+
+    eng, fake, clock = make(tmp_path, [raw("A", p5=40, price=1.0)])
+    eng.try_buys(eng.scan())
+    fake.live = {"A": 1.16}
+    fake.tokens = lambda mints: []  # only the Price API answers
+    eng.refresh_positions()
+    assert "A" not in eng.paper.positions  # TP from the live price

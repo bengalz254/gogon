@@ -75,7 +75,7 @@ VPS yang sama.
 Skrip pasang juga menyalakan dashboard (service `swarmbot-dashboard`, biasanya port
 8790). Isinya: nilai total, kas, hasil untung/rugi, grafik hasil, posisi terbuka dengan
 harga terkini, hasil per mood, mood semua token, kandidat yang akan dibeli, dan
-transaksi terakhir. Halaman memperbarui sendiri tiap 5 detik. Dashboard hanya
+transaksi terakhir. Halaman memperbarui sendiri tiap 2 detik. Dashboard hanya
 membaca data; tidak bisa membeli atau menjual.
 
 Dashboard hanya terbuka di dalam VPS (aman). Cara membukanya dari PC:

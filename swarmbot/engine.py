@@ -117,6 +117,7 @@ class Engine:
                 "move_pct": (price / p.entry_price - 1) * 100,
                 "cost_usd": p.cost_usd, "value_usd": p.qty * price * (1 - self.paper.fee),
                 "opened_at": p.opened_at, "price_at": p.last_price_at,
+                "price_age_s": now - p.last_price_at if p.last_price_at else None,
             })
         data = {
             "updated_at": now, "last_scan_at": self.last_scan_at, "last_scan_ok": self.last_scan_ok,
@@ -137,9 +138,12 @@ class Engine:
             log.warning("status.json gagal ditulis: %s", exc)
 
     # -- exits --------------------------------------------------------------
-    def update_prices(self, prices: dict[str, float]) -> None:
+    def update_prices(self, prices: dict[str, float], fresher_than: float = 0) -> None:
+        """fresher_than: skip positions whose price was updated less than this many seconds ago."""
         now = self.clock()
         for mint, pos in self.paper.positions.items():
+            if fresher_than and now - pos.last_price_at < fresher_than:
+                continue
             if prices.get(mint, 0) > 0:
                 pos.last_price = prices[mint]
                 pos.last_price_at = now
@@ -169,16 +173,21 @@ class Engine:
     def refresh_positions(self) -> None:
         if not self.paper.positions:
             return
+        mints = list(self.paper.positions)
+        prices: dict[str, float] = {}
         try:
-            rows = self.jup.tokens(list(self.paper.positions))
-        except JupiterError as exc:
-            log.warning("harga posisi gagal dibaca: %s", exc)
-            return
-        prices = {}
-        for raw in rows:
-            t = parse_token(raw)
-            if t:
-                prices[t.mint] = t.price
+            prices = self.jup.prices(mints)
+        except (JupiterError, AttributeError) as exc:
+            log.warning("Price API gagal (%s); pakai data token", exc)
+        missing = [m for m in mints if m not in prices]
+        if missing:
+            try:
+                for raw in self.jup.tokens(missing):
+                    t = parse_token(raw)
+                    if t and t.price > 0:
+                        prices[t.mint] = t.price
+            except JupiterError as exc:
+                log.warning("harga posisi gagal dibaca: %s", exc)
         self.update_prices(prices)
         self.check_exits()
 
@@ -200,7 +209,7 @@ class Engine:
                     log.warning("scan gagal: %s (coba lagi nanti)", exc)
                 else:
                     self.last_scan_ok = True
-                    self.update_prices({t.mint: t.price for t, _ in labelled})
+                    self.update_prices({t.mint: t.price for t, _ in labelled}, fresher_than=30)
                     self.check_exits()
                     self.try_buys(labelled)
                     self.remember_candidates(labelled)

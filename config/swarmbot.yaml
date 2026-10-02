@@ -15,7 +15,7 @@ cooldown_minutes: 60        # setelah jual, token yang sama tidak dibeli lagi se
 max_hold_hours: 6           # jual otomatis setelah 6 jam kalau belum kena TP/SL; 0 = tanpa batas
 
 poll_seconds: 20            # cek mood semua token tiap 20 detik
-price_check_seconds: 5      # cek harga token yang dipegang tiap 5 detik
+price_check_seconds: 3      # cek harga token yang dipegang tiap 3 detik (Jupiter Price API)
 
 filters:
   min_liquidity_usd: 5000   # lewati token dengan likuiditas sangat kecil (susah dijual)

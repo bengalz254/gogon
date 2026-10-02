@@ -20,7 +20,7 @@ class ConfigError(ValueError):
 class Config:
     mode: str = "paper"
     poll_seconds: float = 20
-    price_check_seconds: float = 5
+    price_check_seconds: float = 3
     jupiter_base_url: str = "https://lite-api.jup.ag"
     jupiter_api_key: str = ""
     jupiter_lists: list[str] = field(default_factory=lambda: [
