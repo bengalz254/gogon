@@ -420,9 +420,9 @@ def print_sweep(rows: list[dict], trade: TradeConfig, file=sys.stdout) -> None:
     print(" tetangganya juga bagus, bukan satu angka terbaik saja.", file=file)
 
 
-def save_sweep(rows: list[dict], coin: str, interval: str, out_dir: str = "data") -> str:
+def save_sweep(rows: list[dict], coin: str, interval: str, leverage: int, out_dir: str = "data") -> str:
     os.makedirs(out_dir, exist_ok=True)
-    path = os.path.join(out_dir, f"hl_sweep_{coin}_{interval}.csv")
+    path = os.path.join(out_dir, f"hl_sweep_{coin}_{interval}_{leverage}x.csv")
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0]) if rows else ["tp_pct"])
         w.writeheader()
@@ -508,7 +508,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.sweep:
         rows = sweep(candles, settings.strategy, settings.trade, settings.backtest)
         print_sweep(rows, settings.trade)
-        print(f"Saved : {save_sweep(rows, settings.strategy.coin, settings.strategy.interval, args.out_dir)}")
+        path = save_sweep(rows, settings.strategy.coin, settings.strategy.interval, settings.trade.leverage,
+                          args.out_dir)
+        print(f"Saved : {path}")
         return 0
 
     result = run_backtest(candles, settings.strategy, settings.trade, settings.backtest)
