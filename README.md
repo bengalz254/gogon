@@ -1,7 +1,7 @@
 # gogon — Polymarket Auto-Trading Bot
 
 > **Also in this repo:** a Hyperliquid perpetuals bot (EMA 9/21 cross on
-> closed 30m candles, 10x, TP 2% + trailing 0.5%, mandatory backtest) —
+> closed 30m candles, 10x, TP 5% + trailing 0.5% of margin, mandatory backtest) —
 > see [HYPERLIQUID.md](HYPERLIQUID.md) (Bahasa Indonesia).
 
 An automated trading bot for [Polymarket](https://polymarket.com) built on

@@ -13,7 +13,7 @@ def test_shipped_config_uses_margin_basis(monkeypatch):
     t = s.trade
     assert (s.strategy.interval, s.strategy.ema_fast, s.strategy.ema_slow) == ("30m", 9, 21)
     assert t.leverage == 10 and t.pct_basis == "margin"
-    assert t.tp_price_pct == pytest.approx(0.002)  # 2% of margin at 10x
+    assert t.tp_price_pct == pytest.approx(0.005)  # 5% of margin at 10x
     assert t.trailing_price_pct == pytest.approx(0.0005)  # 0.5% of margin at 10x
     assert s.backtest.intrabar == "conservative"
 

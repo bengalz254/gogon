@@ -11,7 +11,7 @@ aturan sederhana:
 | EMA 9 menyilang **ke bawah** EMA 21 | Tutup LONG (kalau ada), lalu buka **SHORT**. |
 | Tidak ada silang | Bot **diam**. |
 | Leverage | **10x** (isolated) |
-| TP 2%, trailing 0,5% **dari margin** | Setelah profit mencapai **2% dari margin** (di 10x = gerak harga 0,2%), trailing stop aktif **0,5% dari margin** (gerak harga 0,05%) di belakang harga terbaik. |
+| TP 5%, trailing 0,5% **dari margin** | Setelah profit mencapai **5% dari margin** (di 10x = gerak harga 0,5%), trailing stop aktif **0,5% dari margin** (gerak harga 0,05%) di belakang harga terbaik. |
 
 > ⚠️ **Ini software trading dengan leverage. Bisa rugi uang sungguhan.**
 > Di 10x, gerak harga ~9% melawan posisi = **likuidasi** (seluruh margin
@@ -26,25 +26,25 @@ persen margin ÷ 10 = persen gerak harga:
 
 | | dari margin | gerak harga (10x) |
 |---|---|---|
-| Take profit | 2% | 0,2% |
+| Take profit | 5% | 0,5% |
 | Trailing | 0,5% | 0,05% |
 
 Contoh LONG, entry $100, margin $20 (posisi $200):
 
-1. Harga $100,19 → belum apa-apa (profit < 2% margin).
-2. Harga sentuh **$100,20** (+2% margin = +$0,40) → trailing aktif, stop di
-   $100,20 × 0,9995 = **$100,15**.
-3. Harga naik ke $100,50 → stop ikut naik ke **$100,45**.
-4. Harga turun ke $100,44 → **posisi ditutup** di ±$100,45.
+1. Harga $100,49 → belum apa-apa (profit < 5% margin).
+2. Harga sentuh **$100,50** (+5% margin = +$1,00) → trailing aktif, stop di
+   $100,50 × 0,9995 ≈ **$100,45**.
+3. Harga naik ke $101,00 → stop ikut naik ke ≈ **$100,95**.
+4. Harga turun ke $100,94 → **posisi ditutup** di ±$100,95.
 
-Begitu TP tersentuh, profit minimal ±1,5% dari margin (sebelum fee), dan bisa
+Begitu TP tersentuh, profit minimal ±4,5% dari margin (sebelum fee), dan bisa
 lebih besar kalau tren berlanjut. Setelah keluar, bot **diam** sampai ada
 silang EMA berikutnya.
 
-Kalau ingin persen dihitung dari gerak harga (2% harga = 20% margin di 10x),
+Kalau ingin persen dihitung dari gerak harga (5% harga = 50% margin di 10x),
 ubah ke `pct_basis: price`.
 
-Alternatif `exit_mode: fixed`: TP pasti di +2%, plus trailing stop 0,5% dari
+Alternatif `exit_mode: fixed`: TP pasti di +5%, plus trailing stop 0,5% dari
 harga terbaik sejak entry (jadi juga berfungsi sebagai stop-loss ketat).
 Bandingkan dengan backtest: `python -m hlbot.backtest --exit-mode fixed`.
 
@@ -52,8 +52,8 @@ Bandingkan dengan backtest: `python -m hlbot.backtest --exit-mode fixed`.
 
 Fee taker Hyperliquid 0,045% per eksekusi dihitung dari **nilai posisi**,
 bukan dari margin. Di 10x, buka + tutup = 0,09% × 10 = **0,9% dari margin**,
-ditambah slippage. Jadi trade yang menang dengan profit minimal 1,5% margin
-hanya bersih sekitar **+0,2–0,6% margin**. Sementara itu trade yang rugi tidak
+ditambah slippage (±0,4% margin). Jadi trade yang menang dengan profit
+minimal 4,5% margin bersih sekitar **+3,2% margin**. Sementara itu trade yang rugi tidak
 dibatasi (tanpa stop-loss, hanya ditutup oleh silang EMA berlawanan) dan bisa
 -20% margin atau lebih. Pastikan hasil backtest memang positif sebelum live.
 
@@ -148,7 +148,7 @@ Di mode live:
 - Entry/exit memakai order market (IOC, slippage maks `max_slippage`).
 - Begitu trailing aktif, bot memasang **stop-market reduce-only di
   exchange** dan menggesernya mengikuti harga, jadi posisi tetap terlindungi
-  kalau bot mati. (Sebelum +2%, tidak ada stop di exchange karena memang tidak
+  kalau bot mati. (Sebelum profit 5% margin, tidak ada stop di exchange karena memang tidak
   ada stop-loss.)
 - State disimpan di `data/hl_state_<COIN>_live.json`; kalau bot restart,
   posisi yang terbuka dilanjutkan.
@@ -164,7 +164,7 @@ Di mode live:
 | `trade.leverage` | `10` | Leverage |
 | `trade.margin_mode` | `isolated` | `isolated` atau `cross` |
 | `trade.margin_usd` | `20` | Margin per posisi (USD) |
-| `trade.take_profit_pct` | `0.02` | 2% |
+| `trade.take_profit_pct` | `0.05` | 5% |
 | `trade.trailing_pct` | `0.005` | 0,5% |
 | `trade.pct_basis` | `margin` | Persen dihitung dari `margin` (ROE) atau `price` |
 | `trade.exit_mode` | `trailing` | `trailing` atau `fixed` |

@@ -17,7 +17,7 @@ Loop (every trade.poll_seconds):
       cross down -> close LONG if open, open SHORT
       no cross   -> do nothing
   * While a position is open, feed the current price to the ExitTracker
-    (TP 2% -> trailing 0.5%) and close the position when it fires.
+    (TP 5% -> trailing 0.5% of margin) and close the position when it fires.
 """
 from __future__ import annotations
 

@@ -3,13 +3,14 @@
 The same `ExitTracker` drives both the backtester (fed OHLC candles) and the
 live bot (fed real-time prices), so both apply identical exit rules.
 
-Exit modes (percentages are PRICE moves, not ROE — at 10x leverage a 2% price
-move is ~20% on margin):
+Exit modes (`tp_pct` / `trailing_pct` here are PRICE-move fractions; the
+config converts percentages of margin into price moves by dividing by the
+leverage, see TradeConfig.pct_basis):
 
-* ``trailing`` (default) — "TP 2% lalu trailing 0,5%". Nothing happens until
+* ``trailing`` (default) — "TP lalu trailing". Nothing happens until
   price has moved `tp_pct` in our favour. From then on a trailing stop sits
   `trailing_pct` behind the best price seen and the position closes when
-  price pulls back that far. Profit is therefore at least ~1.5% (2% - 0.5%)
+  price pulls back that far. Profit is therefore at least ~(tp - trailing)
   and can run further while the trend continues.
 * ``fixed`` — hard take-profit exactly at `tp_pct`, plus a trailing stop
   `trailing_pct` behind the best price seen since entry (which also works as

@@ -35,7 +35,7 @@ class TradeConfig:
     leverage: int = 10
     margin_mode: str = "isolated"  # isolated | cross
     margin_usd: float = 20.0  # margin per position; notional = margin_usd * leverage
-    take_profit_pct: float = 0.02
+    take_profit_pct: float = 0.05
     trailing_pct: float = 0.005
     # What take_profit_pct / trailing_pct / stop_loss_pct are measured against:
     #   margin -> % of margin (ROE); at 10x, 2% of margin = 0.2% price move
@@ -142,7 +142,7 @@ def load_hl_settings(config_path: Optional[str] = None, env_path: Optional[str] 
         leverage=int(t_raw.get("leverage", 10)),
         margin_mode=str(t_raw.get("margin_mode", "isolated")).lower(),
         margin_usd=float(t_raw.get("margin_usd", 20.0)),
-        take_profit_pct=float(t_raw.get("take_profit_pct", 0.02)),
+        take_profit_pct=float(t_raw.get("take_profit_pct", 0.05)),
         trailing_pct=float(t_raw.get("trailing_pct", 0.005)),
         pct_basis=str(t_raw.get("pct_basis", "margin")).lower(),
         exit_mode=str(t_raw.get("exit_mode", "trailing")).lower(),
