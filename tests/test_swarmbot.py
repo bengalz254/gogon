@@ -149,3 +149,33 @@ def test_real_jupiter_answer_shape(tmp_path):
     assert classify(t, now=NOW) == "calm"
     eng = Engine(Config(data_dir=tmp_path), jupiter=FakeJup({}))
     assert "besar" in eng.eligible(t, "calm")
+
+
+def test_status_file_and_dashboard_api(tmp_path):
+    import json
+    import threading
+    import urllib.request
+
+    from swarmbot.dashboard import make_server
+
+    eng, jup, _ = make(tmp_path, [raw("A", p5=40), raw("B", p1=25, price=2.0), raw("C", p5=1)])
+    labelled = eng.scan()
+    eng.try_buys(labelled)
+    eng.remember_candidates(labelled)
+    jup.prices = {"A": 1.2}
+    eng.refresh_positions()
+    eng.write_status()
+    status = json.loads((tmp_path / "status.json").read_text())
+    assert {p["symbol"] for p in status["positions"]} == {"B", "C"}
+    assert status["mood_counts"]["shocked"] == 1
+
+    server = make_server(tmp_path, port=0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        assert b"swarmbot" in urllib.request.urlopen(base + "/").read()
+        data = json.loads(urllib.request.urlopen(base + "/api/data").read())
+        assert data["trades"]["closed"] == 1 and data["trades"]["tp"] == 1
+        assert data["trades"]["by_mood"]["shocked"]["wins"] == 1
+    finally:
+        server.shutdown()

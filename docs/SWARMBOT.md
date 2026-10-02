@@ -70,6 +70,25 @@ bash deploy/setup_swarmbot.sh
 Bot ini terpisah dari migbot (folder, service, dan data sendiri), jadi aman jalan di
 VPS yang sama.
 
+## Dashboard pantau
+
+Skrip pasang juga menyalakan dashboard (service `swarmbot-dashboard`, biasanya port
+8790). Isinya: nilai total, kas, hasil untung/rugi, grafik hasil, posisi terbuka dengan
+harga terkini, hasil per mood, mood semua token, kandidat yang akan dibeli, dan
+transaksi terakhir. Halaman memperbarui sendiri tiap 5 detik. Dashboard hanya
+membaca data; tidak bisa membeli atau menjual.
+
+Dashboard hanya terbuka di dalam VPS (aman). Cara membukanya dari PC:
+
+1. Buka **PowerShell baru** di PC, lalu ketik (ganti IP-VPS):
+   ```powershell
+   ssh -N -L 8790:127.0.0.1:8790 root@IP-VPS
+   ```
+   Masukkan password. Kalau terlihat diam saja, itu normal. **Biarkan jendela itu terbuka.**
+2. Buka browser di PC: http://127.0.0.1:8790
+
+Kalau skrip pasang menulis port lain (misalnya 8791), pakai angka itu di kedua tempat.
+
 ## Sehari-hari
 
 ```bash

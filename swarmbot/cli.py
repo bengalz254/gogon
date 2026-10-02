@@ -1,4 +1,4 @@
-"""python -m swarmbot run | check | moods | report"""
+"""python -m swarmbot run | check | moods | report | dashboard"""
 from __future__ import annotations
 
 import argparse
@@ -109,14 +109,19 @@ def cmd_report(cfg) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="swarmbot", description="Bot paper jual beli mood dotswarm.fun")
-    ap.add_argument("command", choices=["run", "check", "moods", "report"])
+    ap.add_argument("command", choices=["run", "check", "moods", "report", "dashboard"])
     ap.add_argument("--config", default=str(config_mod.DEFAULT_PATH))
+    ap.add_argument("--port", type=int, default=8790, help="port dashboard (default 8790)")
+    ap.add_argument("--host", default="127.0.0.1", help="alamat dashboard (default hanya lokal)")
     args = ap.parse_args(argv)
     try:
         cfg = config_mod.load(args.config)
     except config_mod.ConfigError as exc:
         print(f"Konfigurasi salah: {exc}", file=sys.stderr)
         return 2
+    if args.command == "dashboard":
+        from swarmbot.dashboard import serve
+        return serve(cfg.data_dir, args.host, args.port)
     if args.command == "run":
         _logging()
         return cmd_run(cfg)

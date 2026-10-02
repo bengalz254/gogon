@@ -1,7 +1,9 @@
 """Main loop: scan tokens, label their mood, buy shocked/happy/calm, sell at TP or SL."""
 from __future__ import annotations
 
+import json
 import logging
+import os
 import time
 from collections import Counter
 
@@ -20,6 +22,10 @@ class Engine:
         self.paper = paper or Paper(cfg.data_dir, cfg.starting_cash_usd, cfg.fee_pct)
         self.clock = clock
         self.stopping = False
+        self.last_scan_at = 0.0
+        self.last_scan_ok = False
+        self.mood_counts: dict[str, int] = {}
+        self.candidates: list[dict] = []
 
     # -- scanning -----------------------------------------------------------
     def scan(self) -> list[tuple[Token, str]]:
@@ -40,6 +46,8 @@ class Engine:
             raise JupiterError("semua daftar token Jupiter gagal dibaca")
         labelled = [(t, classify(t, self.cfg.rules)) for t in seen.values()]
         counts = Counter(m for _, m in labelled)
+        self.last_scan_at = self.clock()
+        self.mood_counts = dict(counts)
         log.info("scan: %d token | %s", len(labelled), " ".join(f"{m}={n}" for m, n in counts.most_common()))
         return labelled
 
@@ -84,6 +92,49 @@ class Engine:
             log.info("BELI (paper) %s mood=%s harga=%.10g liq=%.0f 5m=%+.1f%% 1h=%+.1f%% %s",
                      t.symbol, mood, t.price, t.liquidity, t.change_5m, t.change_1h, t.mint)
         return bought
+
+    def remember_candidates(self, labelled: list[tuple[Token, str]], limit: int = 30) -> None:
+        order = {m: i for i, m in enumerate(self.cfg.buy_moods)}
+        rows = [(t, m) for t, m in labelled if m in order]
+        rows.sort(key=lambda tm: (order[tm[1]], -tm[0].liquidity))
+        self.candidates = [{
+            "mint": t.mint, "symbol": t.symbol, "mood": m, "price": t.price,
+            "change_5m": t.change_5m, "change_1h": t.change_1h,
+            "liquidity": t.liquidity, "mcap": t.mcap,
+            "skip": self.eligible(t, m),
+        } for t, m in rows[:limit]]
+
+    def write_status(self) -> None:
+        """data_dir/status.json, read by the dashboard."""
+        c = self.cfg
+        now = self.clock()
+        positions = []
+        for p in self.paper.positions.values():
+            price = p.last_price or p.entry_price
+            positions.append({
+                "mint": p.mint, "symbol": p.symbol, "mood": p.mood,
+                "entry_price": p.entry_price, "price": price,
+                "move_pct": (price / p.entry_price - 1) * 100,
+                "cost_usd": p.cost_usd, "value_usd": p.qty * price * (1 - self.paper.fee),
+                "opened_at": p.opened_at, "price_at": p.last_price_at,
+            })
+        data = {
+            "updated_at": now, "last_scan_at": self.last_scan_at, "last_scan_ok": self.last_scan_ok,
+            "settings": {
+                "buy_moods": c.buy_moods, "take_profit_pct": c.take_profit_pct,
+                "stop_loss_pct": c.stop_loss_pct, "position_usd": c.position_usd,
+                "starting_cash_usd": c.starting_cash_usd, "max_open_positions": c.max_open_positions,
+            },
+            "cash": self.paper.cash, "equity": self.paper.equity(),
+            "mood_counts": self.mood_counts, "candidates": self.candidates, "positions": positions,
+        }
+        path = self.paper.dir / "status.json"
+        tmp = path.with_suffix(".tmp")
+        try:
+            tmp.write_text(json.dumps(data), encoding="utf-8")
+            os.replace(tmp, path)
+        except OSError as exc:
+            log.warning("status.json gagal ditulis: %s", exc)
 
     # -- exits --------------------------------------------------------------
     def update_prices(self, prices: dict[str, float]) -> None:
@@ -145,12 +196,16 @@ class Engine:
                 try:
                     labelled = self.scan()
                 except JupiterError as exc:
+                    self.last_scan_ok = False
                     log.warning("scan gagal: %s (coba lagi nanti)", exc)
                 else:
+                    self.last_scan_ok = True
                     self.update_prices({t.mint: t.price for t, _ in labelled})
                     self.check_exits()
                     self.try_buys(labelled)
+                    self.remember_candidates(labelled)
             self.refresh_positions()
+            self.write_status()
             end = time.monotonic() + c.price_check_seconds
             while not self.stopping and time.monotonic() < end:
                 time.sleep(0.5)
