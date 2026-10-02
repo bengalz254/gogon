@@ -9,6 +9,8 @@ manager with hard position/exposure/loss caps.
 > README, run in paper mode first, and never risk more than you can afford
 > to lose. Nothing here is financial advice.
 
+> 🇮🇩 **DCA futures bot (Binance SOL/USDT, long + short):** see [DCA.md](DCA.md) — `python -m dca.main`.
+
 ## How it works
 
 ```
