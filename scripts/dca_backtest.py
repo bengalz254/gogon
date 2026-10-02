@@ -40,22 +40,42 @@ def load_csv(path: str) -> list[list[float]]:
     return rows
 
 
-def download(symbol: str, timeframe: str, days: int) -> list[list[float]]:
-    import ccxt
+def download(symbol: str, timeframe: str, days: int, ex=None) -> list[list[float]]:
+    """Page through Binance klines from `days` ago until now.
 
-    ex = ccxt.binanceusdm({"enableRateLimit": True})
-    since = ex.milliseconds() - days * 86_400_000
-    rows: list[list[float]] = []
-    while True:
-        batch = ex.fetch_ohlcv(symbol, timeframe, since=since, limit=1500)
+    Binance caps how many candles one request returns (currently 1000), so keep
+    requesting from the last timestamp until the present is reached.
+    """
+    if ex is None:
+        import ccxt
+
+        ex = ccxt.binanceusdm({"enableRateLimit": True})
+    now = ex.milliseconds()
+    since = now - days * 86_400_000
+    by_ts: dict[float, list[float]] = {}
+    while since < now:
+        batch = ex.fetch_ohlcv(symbol, timeframe, since=since, limit=1000)
         if not batch:
             break
-        rows.extend(batch)
-        since = batch[-1][0] + 1
-        if len(batch) < 1500:
-            break
-        time.sleep(ex.rateLimit / 1000)
+        for row in batch:
+            by_ts[row[0]] = row
+        next_since = batch[-1][0] + 1
+        if next_since <= since:
+            break  # no progress; avoid looping forever
+        since = next_since
+        print(f"\rdownloaded {len(by_ts)} candles...", end="", flush=True)
+        time.sleep(getattr(ex, "rateLimit", 0) / 1000)
+    print()
+    rows = [by_ts[t] for t in sorted(by_ts)]
     return rows[:-1]  # drop the still-forming candle
+
+
+def save_csv(path: str, candles: list[list[float]]) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["timestamp_ms", "open", "high", "low", "close", "volume"])
+        w.writerows(candles)
 
 
 def run_backtest(settings: DcaSettings, candles: list[list[float]], journal_path: str | None = None) -> dict:
@@ -102,7 +122,13 @@ def main() -> None:
 
     logging.getLogger("dcabot").setLevel(logging.WARNING)
     s = load_dca_settings(args.config)
-    candles = load_csv(args.csv) if args.csv else download(s.symbol, s.timeframe, args.days)
+    if args.csv:
+        candles = load_csv(args.csv)
+    else:
+        candles = download(s.symbol, s.timeframe, args.days)
+        cache = os.path.join(_ROOT, "data", f"candles_{s.symbol.split(':')[0].replace('/', '')}_{s.timeframe}_{args.days}d.csv")
+        save_csv(cache, candles)
+        print(f"saved candles to {cache} (re-run with --csv to skip downloading)")
     if len(candles) < 50:
         sys.exit("not enough candles")
     r = run_backtest(s, candles, args.journal)
