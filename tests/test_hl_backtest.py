@@ -135,3 +135,17 @@ def test_conservative_does_not_change_reverse_or_liquidation_exits():
     a = run_backtest(candles, strategy_cfg(), cfg, frictionless("ohlc"))
     b = run_backtest(candles, strategy_cfg(), cfg, frictionless("conservative"))
     assert [(t.exit_reason, t.pnl_usd) for t in a.trades] == [(t.exit_reason, t.pnl_usd) for t in b.trades]
+
+
+def test_sweep_covers_grid_and_sorts_by_conservative_pnl():
+    from hlbot.backtest import sweep
+
+    closes = down_then_up() + [100.0 - 0.5 * i for i in range(1, 41)]
+    candles = candles_from_closes(closes, wick=0.002)
+    rows = sweep(candles, strategy_cfg(), trade_cfg(), frictionless(), tps=(0.05, 0.2), trails=(0.005, 0.1),
+                 stop_losses=(None, 0.3))
+    # (0.05, 0.1) is skipped because trailing must be below TP
+    assert len(rows) == 3 * 2
+    pnls = [r["net_pnl_conservative"] for r in rows]
+    assert pnls == sorted(pnls, reverse=True)
+    assert all(r["net_pnl_ohlc"] >= r["net_pnl_conservative"] - 1e-9 for r in rows)

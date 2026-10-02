@@ -84,6 +84,13 @@ python -m hlbot.backtest --stop-loss 0.3
 
 # Hitung persen dari gerak harga, bukan margin:
 python -m hlbot.backtest --pct-basis price
+
+# Coba setelan lain tanpa mengubah config (TP 20% margin, trailing 5%, leverage 5x):
+python -m hlbot.backtest --tp 0.2 --trailing 0.05 --leverage 5
+
+# Bandingkan banyak kombinasi TP / trailing / SL (persen dari margin) sekaligus:
+python -m hlbot.backtest --sweep
+python -m hlbot.backtest --sweep --leverage 5
 ```
 
 Hyperliquid hanya menyediakan **5000 candle terakhir** (±104 hari untuk 30m).

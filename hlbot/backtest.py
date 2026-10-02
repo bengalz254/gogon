@@ -31,7 +31,7 @@ import json
 import os
 import sys
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Optional, Sequence
 
@@ -359,6 +359,77 @@ def save_report(result: BacktestResult, out_dir: str = "data") -> tuple[str, str
     return trades_path, report_path
 
 
+# Grid for --sweep, in % of margin (divided by leverage for the price move).
+SWEEP_TP = (0.05, 0.10, 0.20, 0.30, 0.50)
+SWEEP_TRAILING = (0.005, 0.02, 0.05, 0.10)
+SWEEP_STOP_LOSS = (None, 0.3)
+
+
+def sweep(
+    candles: Sequence[Candle],
+    strategy: StrategyConfig,
+    trade: TradeConfig,
+    bt: BacktestConfig,
+    tps: Sequence[float] = SWEEP_TP,
+    trails: Sequence[float] = SWEEP_TRAILING,
+    stop_losses: Sequence[Optional[float]] = SWEEP_STOP_LOSS,
+) -> list[dict]:
+    """Backtest every TP / trailing / stop-loss combination (as % of margin,
+    trailing exit mode) under both intrabar models. Sorted by the
+    conservative net PnL, best first."""
+    rows = []
+    for tp in tps:
+        for trail in trails:
+            if trail >= tp:
+                continue
+            for sl in stop_losses:
+                t = replace(trade, take_profit_pct=tp, trailing_pct=trail, stop_loss_pct=sl,
+                            pct_basis="margin", exit_mode="trailing")
+                cons = run_backtest(candles, strategy, t, replace(bt, intrabar="conservative")).summary()
+                ohlc = run_backtest(candles, strategy, t, replace(bt, intrabar="ohlc")).summary()
+                rows.append({
+                    "tp_pct": tp, "trailing_pct": trail, "stop_loss_pct": sl,
+                    "trades": cons["trades"], "win_rate_pct": cons["win_rate_pct"],
+                    "net_pnl_conservative": cons["net_pnl_usd"], "net_pnl_ohlc": ohlc["net_pnl_usd"],
+                    "profit_factor": cons["profit_factor"], "max_drawdown_pct": cons["max_drawdown_pct"],
+                    "liquidations": cons["liquidations"],
+                })
+    rows.sort(key=lambda r: r["net_pnl_conservative"], reverse=True)
+    return rows
+
+
+def print_sweep(rows: list[dict], trade: TradeConfig, file=sys.stdout) -> None:
+    def pct(v):
+        return "off" if v is None else f"{v * 100:g}%"
+
+    print("=" * 92, file=file)
+    print(f" SWEEP | leverage {trade.leverage}x, margin ${trade.margin_usd:g} | persen = dari margin | "
+          f"urut dari Net konservatif", file=file)
+    print("=" * 92, file=file)
+    print(f" {'TP':>5} {'Trail':>6} {'SL':>5} {'Trades':>7} {'Win%':>6} {'Net kons.':>11} {'Net ohlc':>11} "
+          f"{'PF':>5} {'MaxDD%':>7} {'Likuid':>6}", file=file)
+    for r in rows:
+        pf = "-" if r["profit_factor"] is None else f"{r['profit_factor']:.2f}"
+        print(f" {pct(r['tp_pct']):>5} {pct(r['trailing_pct']):>6} {pct(r['stop_loss_pct']):>5} "
+              f"{r['trades']:>7} {r['win_rate_pct']:>6.1f} {r['net_pnl_conservative']:>11.2f} "
+              f"{r['net_pnl_ohlc']:>11.2f} {pf:>5} {r['max_drawdown_pct']:>7.1f} {r['liquidations']:>6}", file=file)
+    print("=" * 92, file=file)
+    print(" Net kons. = trailing dianggap langsung kena setelah aktif (pesimis);"
+          " Net ohlc = ikut jalur OHLC (optimis).", file=file)
+    print(" Hasil nyata biasanya di antara keduanya. Hati-hati overfitting: pilih setelan yang", file=file)
+    print(" tetangganya juga bagus, bukan satu angka terbaik saja.", file=file)
+
+
+def save_sweep(rows: list[dict], coin: str, interval: str, out_dir: str = "data") -> str:
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"hl_sweep_{coin}_{interval}.csv")
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0]) if rows else ["tp_pct"])
+        w.writeheader()
+        w.writerows(rows)
+    return path
+
+
 def fetch_history(info, coin: str, interval: str, days: int, now_ms: Optional[int] = None) -> list[Candle]:
     now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
     start = now_ms - days * 86_400_000
@@ -379,6 +450,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--stop-loss", type=float, help="override trade.stop_loss_pct, e.g. 0.3 (0 = off)")
     ap.add_argument("--pct-basis", choices=["margin", "price"], help="override trade.pct_basis")
     ap.add_argument("--intrabar", choices=["conservative", "ohlc"], help="override backtest.intrabar")
+    ap.add_argument("--tp", type=float, help="override trade.take_profit_pct, e.g. 0.1")
+    ap.add_argument("--trailing", type=float, help="override trade.trailing_pct, e.g. 0.02")
+    ap.add_argument("--leverage", type=int, help="override trade.leverage, e.g. 5")
+    ap.add_argument("--sweep", action="store_true",
+                    help="compare many TP / trailing / stop-loss combinations (%% of margin) in one run")
     ap.add_argument("--out-dir", default="data", help="where to write the report (default: data/)")
     args = ap.parse_args(argv)
 
@@ -395,6 +471,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         settings.trade.pct_basis = args.pct_basis
     if args.intrabar:
         settings.backtest.intrabar = args.intrabar
+    if args.tp:
+        settings.trade.take_profit_pct = args.tp
+    if args.trailing:
+        settings.trade.trailing_pct = args.trailing
+    if args.leverage:
+        settings.trade.leverage = args.leverage
 
     info = HyperliquidInfo(settings.connection.base_url)
     try:
@@ -422,6 +504,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"Got {len(candles)} closed candles")
         if args.save_candles:
             save_csv(candles, args.save_candles)
+
+    if args.sweep:
+        rows = sweep(candles, settings.strategy, settings.trade, settings.backtest)
+        print_sweep(rows, settings.trade)
+        print(f"Saved : {save_sweep(rows, settings.strategy.coin, settings.strategy.interval, args.out_dir)}")
+        return 0
 
     result = run_backtest(candles, settings.strategy, settings.trade, settings.backtest)
     print_summary(result.summary())
