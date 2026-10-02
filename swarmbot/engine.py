@@ -147,6 +147,10 @@ class Engine:
             if prices.get(mint, 0) > 0:
                 pos.last_price = prices[mint]
                 pos.last_price_at = now
+                if pos.anchor_price <= 0:
+                    pos.anchor_price, pos.anchor_at = pos.entry_price, pos.opened_at
+                if abs(pos.last_price / pos.anchor_price - 1) * 100 >= self.cfg.stale_move_pct:
+                    pos.anchor_price, pos.anchor_at = pos.last_price, now
 
     def check_exits(self) -> int:
         c = self.cfg
@@ -161,6 +165,8 @@ class Engine:
                 reason = "TP"
             elif move <= -c.stop_loss_pct + 1e-9:
                 reason = "SL"
+            elif c.stale_minutes > 0 and now - (pos.anchor_at or pos.opened_at) >= c.stale_minutes * 60:
+                reason = "diam"
             elif c.max_hold_hours > 0 and now - pos.opened_at >= c.max_hold_hours * 3600:
                 reason = "waktu habis"
             if reason:

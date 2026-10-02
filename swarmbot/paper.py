@@ -25,6 +25,9 @@ class Position:
     opened_at: float
     last_price: float = 0.0
     last_price_at: float = 0.0
+    # Price and time of the last move of at least stale_move_pct; used to sell coins that stand still.
+    anchor_price: float = 0.0
+    anchor_at: float = 0.0
 
 
 class Paper:
@@ -83,7 +86,7 @@ class Paper:
         now = now or time.time()
         usd = min(usd, self.cash)
         qty = usd * (1 - self.fee) / price
-        pos = Position(mint, symbol, mood, price, qty, usd, now, price, now)
+        pos = Position(mint, symbol, mood, price, qty, usd, now, price, now, price, now)
         self.cash -= usd
         self.positions[mint] = pos
         self.buy_times.append(now)

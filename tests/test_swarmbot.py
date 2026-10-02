@@ -71,7 +71,9 @@ class Clock:
 
 
 def make(tmp_path, rows, **cfg_kw):
-    cfg = Config(data_dir=tmp_path, jupiter_lists=["a"], **cfg_kw)
+    base = {"take_profit_pct": 15, "stop_loss_pct": 10, "stale_minutes": 0,
+            "starting_cash_usd": 100, "max_open_positions": 5, "max_buys_per_hour": 6}
+    cfg = Config(data_dir=tmp_path, jupiter_lists=["a"], **{**base, **cfg_kw})
     jup = FakeJup({"a": rows})
     clock = Clock()
     eng = Engine(cfg, jupiter=jup, paper=Paper(tmp_path, cfg.starting_cash_usd, cfg.fee_pct), clock=clock)
@@ -129,7 +131,8 @@ def test_config_file_loads_and_refuses_live(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     cfg = config_mod.load(config_mod.Path(__file__).resolve().parents[1] / "config/swarmbot.yaml")
     assert cfg.buy_moods == ["shocked", "happy", "calm"]
-    assert (cfg.take_profit_pct, cfg.stop_loss_pct) == (15, 10)
+    assert (cfg.take_profit_pct, cfg.stop_loss_pct) == (50, 50)
+    assert cfg.max_open_positions == 25 and cfg.stale_minutes == 5
     bad = tmp_path / "live.yaml"
     bad.write_text("mode: live\n")
     with pytest.raises(config_mod.ConfigError):
@@ -242,3 +245,15 @@ def test_price_api_parsing_and_use(tmp_path):
     fake.tokens = lambda mints: []  # only the Price API answers
     eng.refresh_positions()
     assert "A" not in eng.paper.positions  # TP from the live price
+
+
+def test_coin_that_stands_still_for_5_minutes_is_sold(tmp_path):
+    eng, jup, clock = make(tmp_path, [raw("A", p5=40), raw("B", p5=40)], stale_minutes=5, stale_move_pct=2)
+    eng.try_buys(eng.scan())
+    for minute in range(1, 6):
+        clock.t += 60
+        jup.live = {"A": 1.0 + 0.003 * minute, "B": 1.0 + (0.03 if minute % 2 else 0.0)}
+        eng.refresh_positions()
+    # A crept up 1.5% in 5 minutes: sold as "diam". B kept moving 3%: still held.
+    assert "A" not in eng.paper.positions and "B" in eng.paper.positions
+    assert ",diam" in (tmp_path / "trades.csv").read_text()

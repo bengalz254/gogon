@@ -4,14 +4,16 @@
 mode: paper                 # hanya simulasi. Uang sungguhan belum dibuat.
 
 buy_moods: [shocked, happy, calm]   # urutan = prioritas kalau slot terbatas
-take_profit_pct: 15         # jual kalau harga naik 15% dari harga beli
-stop_loss_pct: 10           # jual kalau harga turun 10% dari harga beli
+take_profit_pct: 50         # jual kalau harga naik 50% dari harga beli
+stop_loss_pct: 50           # jual kalau harga turun 50% dari harga beli
 
 position_usd: 10            # besar tiap pembelian (USD simulasi)
-starting_cash_usd: 200      # saldo simulasi awal; kalau dinaikkan, selisihnya ditambahkan ke saldo
-max_open_positions: 15      # paling banyak 15 token dipegang sekaligus
-max_buys_per_hour: 12
+starting_cash_usd: 300      # saldo simulasi awal; kalau dinaikkan, selisihnya ditambahkan ke saldo
+max_open_positions: 25      # paling banyak 25 token dipegang sekaligus
+max_buys_per_hour: 30
 cooldown_minutes: 60        # setelah jual, token yang sama tidak dibeli lagi selama ini
+stale_minutes: 5            # jual kalau harga tidak bergerak (lebih dari stale_move_pct) selama 5 menit; 0 = mati
+stale_move_pct: 2           # gerak di bawah 2% dianggap diam
 max_hold_hours: 6           # jual otomatis setelah 6 jam kalau belum kena TP/SL; 0 = tanpa batas
 
 poll_seconds: 20            # cek mood semua token tiap 20 detik
