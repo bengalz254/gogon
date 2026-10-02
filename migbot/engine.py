@@ -21,7 +21,7 @@ from migbot.filters import FilterResult, dip_check, market_checks, safety_checks
 from migbot.http import HttpError
 from migbot.models import GmgnInfo, MarketSnapshot, MigrationEvent, RugcheckReport, SafetyReport
 from migbot.notifier import Notifier
-from migbot.sources.dexscreener import DexScreenerSource
+from migbot.sources.dexscreener import BATCH as DEX_BATCH, DexScreenerSource
 from migbot.sources.geckoterminal import GeckoTerminalSource
 from migbot.sources.gmgn import GmgnSource
 from migbot.sources.jupiter import JupiterSource
@@ -633,34 +633,44 @@ class Engine:
             self._next_long_round = now + lt.sample_minutes * 60
             self._long_queue = list(self.long)
         batch, self._long_queue = self._long_queue[:LONG_BATCH], self._long_queue[LONG_BATCH:]
-        try:
-            snaps = self.src.dexscreener.fetch(batch)
-        except Exception as exc:  # noqa: BLE001 - try again next round
-            logger.warning("Multi-day tracking fetch failed: %s", exc)
-            return
-        rows = []
-        for mint in batch:
-            item = self.long.get(mint)
-            if item is None:
+        rows: list[list] = []
+        failed, error = 0, None
+        # One DexScreener request per fetch, so a failed request's tokens are skipped this round. In one
+        # fetch, the other requests' results would come back without them, as if gone (dead after 3).
+        for k in range(0, len(batch), DEX_BATCH):
+            chunk = batch[k : k + DEX_BATCH]
+            try:
+                snaps = self.src.dexscreener.fetch(chunk)
+            except Exception as exc:  # noqa: BLE001 - sampled again next round
+                failed, error = failed + 1, exc
                 continue
-            age_min = round((now - item["migrated_at"]) / 60)
-            snap = snaps.get(mint)
-            if snap is not None and snap.price_usd:
-                whole = [None if v is None else int(v) for v in (snap.liquidity_usd, snap.market_cap_usd, snap.volume_h1)]
-                rows.append([int(now), mint, age_min, float(f"{snap.price_usd:.6g}"), *whole, snap.buys_h1, snap.sells_h1])
-            alive = snap is not None and snap.price_usd and (snap.liquidity_usd or 0) >= lt.alive_liquidity_usd
-            item["misses"] = 0 if alive else item["misses"] + 1
-            if item["misses"] >= lt.dead_after:
-                rows.append([int(now), mint, age_min, 0, 0, 0, 0, 0, 0])  # dropped as dead
-                del self.long[mint]
-            elif now - item["migrated_at"] >= lt.max_days * 86_400:
-                del self.long[mint]
+            for mint in chunk:
+                self._long_sample(mint, snaps.get(mint), now, rows)
+        if failed:
+            logger.warning("Multi-day tracking: %d DexScreener requests failed: %s", failed, error)
         if rows:
             try:
                 self.long_log.append(rows)
             except OSError as exc:
                 logger.warning("Could not write multi-day samples: %s", exc)
         self._dirty = True
+
+    def _long_sample(self, mint: str, snap: MarketSnapshot | None, now: float, rows: list[list]) -> None:
+        lt = self.s.long_tracking
+        item = self.long.get(mint)
+        if item is None:
+            return
+        age_min = round((now - item["migrated_at"]) / 60)
+        if snap is not None and snap.price_usd:
+            whole = [None if v is None else int(v) for v in (snap.liquidity_usd, snap.market_cap_usd, snap.volume_h1)]
+            rows.append([int(now), mint, age_min, float(f"{snap.price_usd:.6g}"), *whole, snap.buys_h1, snap.sells_h1])
+        alive = snap is not None and snap.price_usd and (snap.liquidity_usd or 0) >= lt.alive_liquidity_usd
+        item["misses"] = 0 if alive else item["misses"] + 1
+        if item["misses"] >= lt.dead_after:
+            rows.append([int(now), mint, age_min, 0, 0, 0, 0, 0, 0])  # dropped as dead
+            del self.long[mint]
+        elif now - item["migrated_at"] >= lt.max_days * 86_400:
+            del self.long[mint]
 
     def _remember_done(self, mint: str, now: float) -> None:
         self.done[mint] = now

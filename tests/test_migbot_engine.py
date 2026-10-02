@@ -7,7 +7,10 @@ import pytest
 from datetime import datetime, timezone
 
 from migbot.cli import main
+from migbot.config import SOL_MINT
 from migbot.engine import Engine, Sources
+from migbot.http import Health, HttpError
+from migbot.sources.dexscreener import DexScreenerSource
 from migbot.storage import CsvJournal, iter_long_samples, read_csv, read_paths, write_json_atomic
 from migbot.tracker import token_fields
 from migbot_fakes import (
@@ -263,6 +266,37 @@ def test_survivors_are_followed_for_days_and_dead_tokens_dropped(tmp_path):
     assert a[0][3:9] == ["0.0002", "40000", "80000", "108000", "840", "480"]
     b = long_rows(engine, MINT_B)
     assert b[-1][3] == "0" and [r[3] for r in b[-4:-1]] == ["1e-07"] * 3  # dead marker after 3 dead samples
+
+
+class OneRequestFails:
+    """DexScreener's HTTP: every token alive, but any request that includes `broken` fails."""
+
+    def __init__(self, broken):
+        self.broken = broken
+        self.health = Health("DexScreener")
+
+    def get_json(self, url, params=None, headers=None):
+        mints = url.rsplit("/", 1)[1].split(",")
+        if self.broken in mints:
+            raise HttpError("HTTP 502", 502)
+        return [
+            {"pairAddress": "P" + m, "baseToken": {"address": m}, "quoteToken": {"address": SOL_MINT},
+             "priceUsd": "0.001", "liquidity": {"usd": 50_000}, "marketCap": 200_000}
+            for m in mints
+        ]
+
+
+def test_failed_request_does_not_count_its_tokens_as_dead(tmp_path):
+    clock = Clock(T0 + 86_400)
+    engine, _, _ = build(tmp_path, clock, {}, {})
+    engine.src.dexscreener = DexScreenerSource("https://x", http=OneRequestFails(MINT_B))
+    first = [MINT_A] + [f"OK{i:02d}" for i in range(29)]  # one request
+    second = [MINT_B] + [f"BAD{i:02d}" for i in range(29)]  # the next request, which keeps failing
+    engine.long = {m: {"migrated_at": T0, "misses": 0} for m in first + second}
+    engine.long_backfilled = True
+    run_for(engine, clock, 45 * 60, step=60)  # 5 rounds: dead after 3 misses
+    assert set(engine.long) == set(first + second)  # nobody dropped: the failed request's tokens were skipped
+    assert len(long_rows(engine, MINT_A)) >= 4 and not long_rows(engine, MINT_B)
 
 
 def test_backfill_follows_recent_real_migrations_once(tmp_path):
