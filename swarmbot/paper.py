@@ -31,12 +31,13 @@ class Position:
 
 
 class Paper:
-    def __init__(self, data_dir: Path, starting_cash: float, fee_pct: float):
+    def __init__(self, data_dir: Path, starting_cash: float, fee_pct: float, currency: str = "SOL"):
         self.dir = Path(data_dir)
         self.dir.mkdir(parents=True, exist_ok=True)
         self.state_path = self.dir / "state.json"
         self.journal_path = self.dir / "trades.csv"
         self.fee = fee_pct / 100
+        self.currency = currency
         self.cash = starting_cash
         self.starting_cash = starting_cash
         self.positions: dict[str, Position] = {}
@@ -48,6 +49,13 @@ class Paper:
         if not self.state_path.exists():
             return
         raw = json.loads(self.state_path.read_text(encoding="utf-8"))
+        if raw.get("currency", "USD") != self.currency:
+            # The wallet changed currency (e.g. USD -> SOL): keep the old run as history, start fresh.
+            tag = f"{raw.get('currency', 'USD')}-{time.strftime('%Y%m%d-%H%M%S')}"
+            os.replace(self.state_path, self.dir / f"state-{tag}.json")
+            if self.journal_path.exists():
+                os.replace(self.journal_path, self.dir / f"trades-{tag}.csv")
+            return
         self.cash = float(raw.get("cash", self.cash))
         self.positions = {m: Position(**p) for m, p in (raw.get("positions") or {}).items()}
         self.cooldowns = {m: float(t) for m, t in (raw.get("cooldowns") or {}).items()}
@@ -66,6 +74,7 @@ class Paper:
         data = {
             "cash": self.cash,
             "starting_cash": self.starting_cash,
+            "currency": self.currency,
             "positions": {m: asdict(p) for m, p in self.positions.items()},
             "cooldowns": self.cooldowns,
             "buy_times": self.buy_times,
@@ -92,7 +101,7 @@ class Paper:
         self.buy_times.append(now)
         self._journal({
             "time": _iso(now), "action": "BUY", "mint": mint, "symbol": symbol, "mood": mood,
-            "price": f"{price:.12g}", "usd": f"{usd:.2f}", "pnl_usd": "", "pnl_pct": "", "reason": "mood",
+            "price": f"{price:.12g}", "usd": f"{usd:.6g}", "pnl_usd": "", "pnl_pct": "", "reason": "mood",
         })
         self.save(now)
         return pos
@@ -107,7 +116,7 @@ class Paper:
         self.cooldowns[mint] = now + cooldown_s
         self._journal({
             "time": _iso(now), "action": "SELL", "mint": mint, "symbol": pos.symbol, "mood": pos.mood,
-            "price": f"{price:.12g}", "usd": f"{value:.2f}", "pnl_usd": f"{pnl:.2f}",
+            "price": f"{price:.12g}", "usd": f"{value:.6g}", "pnl_usd": f"{pnl:.6g}",
             "pnl_pct": f"{pct:.2f}", "reason": reason,
         })
         self.save(now)

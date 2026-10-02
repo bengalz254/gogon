@@ -132,17 +132,19 @@ svg{width:100%;height:120px;display:block}
  <div class="card"><div class="k">Menang</div><div class="v" id="wr">–</div><div class="k" id="cl"></div></div>
  <div class="card"><div class="k">Posisi terbuka</div><div class="v" id="np">–</div><div class="k" id="rules"></div></div>
 </div>
-<div class="card"><h2>Hasil kumulatif (USD)</h2><div id="curve" class="empty">Belum ada posisi yang ditutup.</div></div>
+<div class="card"><h2>Hasil kumulatif</h2><div id="curve" class="empty">Belum ada posisi yang ditutup.</div></div>
 <div class="card"><h2>Posisi terbuka</h2><div id="pos"></div></div>
 <div class="card"><h2>Hasil per mood</h2><div id="moods"></div></div>
 <div class="card"><h2>Mood semua token (scan terakhir)</h2><div id="counts" class="bars"></div></div>
-<div class="card"><h2>Kandidat shocked / happy / calm</h2><div id="cand"></div></div>
+<div class="card"><h2>Kandidat yang akan dibeli</h2><div id="cand"></div></div>
 <div class="card"><h2>Transaksi terakhir</h2><div id="trades"></div></div>
 </main>
 <script>
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const usd=(x,d=2)=>(x<0?"-$":"$")+Math.abs(+x||0).toFixed(d);
+let CUR="SOL";
+const usd=(x,d)=>CUR==="USD"?(x<0?"-$":"$")+Math.abs(+x||0).toFixed(d??2):(x<0?"-":"")+Math.abs(+x||0).toFixed(d??4)+" "+CUR;
+const dollars=(x)=>"$"+Math.round(+x||0).toLocaleString("en-US");
 const sgn=x=>`<span class="${x>0?"ok":x<0?"bad":""}">${x>0?"+":""}${(+x).toFixed(1)}%</span>`;
 const sgnu=x=>`<span class="${x>0?"ok":x<0?"bad":""}">${x>0?"+":""}${usd(x)}</span>`;
 const px=p=>p>=1?(+p).toFixed(4):(+p).toPrecision(4);
@@ -162,21 +164,21 @@ async function tick(){
  if(s.missing){$("hb").innerHTML='<span class="warn">bot belum menulis data (baru start?)</span>'}
  else{$("hb").innerHTML=s.stale?`<span class="bad">bot tidak update ${ago(s.age_s)}; cek: systemctl status swarmbot</span>`
    :`<span class="ok">● bot jalan</span> · update ${ago(s.age_s)} lalu${s.last_scan_ok?"":' · <span class="warn">scan terakhir gagal</span>'}${s.buy_block?` · <span class="warn">tidak beli: ${esc(s.buy_block)}</span>`:""}`;
-  const st=s.settings||{},start=st.starting_cash_usd||0;
+  const st=s.settings||{},start=st.starting_cash_usd||0;CUR=st.currency||"USD";
   $("eq").textContent=usd(s.equity);$("eqd").innerHTML=start?`awal ${usd(start)} · ${sgn((s.equity/start-1)*100)}`:"";
   $("cash").textContent=usd(s.cash);$("np").textContent=`${s.positions.length} / ${st.max_open_positions??"?"}`;
-  $("rules").textContent=`TP +${st.take_profit_pct}% · SL -${st.stop_loss_pct}% · ${usd(st.position_usd,0)}/posisi`;
-  $("pos").innerHTML=table(["Token","Mood","Harga beli","Harga kini","Gerak","Nilai","Harga dicek","Sejak"],
+  $("rules").textContent=`TP +${st.take_profit_pct}% · SL -${st.stop_loss_pct}% · ${usd(st.position_usd,CUR==="USD"?0:2)}/posisi`;
+  $("pos").innerHTML=table(["Token","Mood","Harga beli ($)","Harga kini ($)","Gerak","Nilai","Harga dicek","Sejak"],
    s.positions.sort((a,b)=>b.move_pct-a.move_pct).map(p=>[tok(p.symbol,p.mint),mood(p.mood),px(p.entry_price),px(p.price),sgn(p.move_pct),usd(p.value_usd),p.price_age_s==null?"–":(p.price_age_s>30?`<span class="warn">${ago(p.price_age_s)} lalu</span>`:ago(p.price_age_s)+" lalu"),ago(Date.now()/1000-p.opened_at)]),"Tidak ada posisi terbuka.");
   const c=Object.entries(s.mood_counts||{}).sort((a,b)=>b[1]-a[1]);
   $("counts").innerHTML=c.length?c.map(([m,n])=>`<span>${mood(m)} ${n}</span>`).join(""):'<span class="empty">–</span>';
   $("cand").innerHTML=table(["Token","Mood","5m","1j","Likuiditas","Mcap","Status"],
-   (s.candidates||[]).map(x=>[tok(x.symbol,x.mint),mood(x.mood),sgn(x.change_5m),sgn(x.change_1h),usd(x.liquidity,0),usd(x.mcap,0),x.skip?`<span class="k">${esc(x.skip)}</span>`:(s.buy_block?`<span class="warn">menunggu: ${esc(s.buy_block)}</span>`:'<span class="ok">boleh dibeli</span>')]),"Tidak ada token dengan mood ini sekarang.");}
+   (s.candidates||[]).map(x=>[tok(x.symbol,x.mint),mood(x.mood),sgn(x.change_5m),sgn(x.change_1h),dollars(x.liquidity),dollars(x.mcap),x.skip?`<span class="k">${esc(x.skip)}</span>`:(s.buy_block?`<span class="warn">menunggu: ${esc(s.buy_block)}</span>`:'<span class="ok">boleh dibeli</span>')]),"Tidak ada token dengan mood ini sekarang.");}
  $("pnl").innerHTML=sgnu(t.pnl_usd);$("tpsl").textContent=`TP ${t.tp} · SL ${t.sl}`;
  $("wr").textContent=t.closed?Math.round(t.wins/t.closed*100)+"%":"–";$("cl").textContent=`${t.wins} dari ${t.closed} posisi`;
  $("curve").innerHTML=curve(t.curve);
  $("moods").innerHTML=table(["Mood","","Posisi","Menang","Hasil"],Object.entries(t.by_mood).map(([m,v])=>[mood(m),"",v.trades,Math.round(v.wins/v.trades*100)+"%",sgnu(v.pnl_usd)]),"Belum ada.");
- $("trades").innerHTML=table(["Waktu (UTC)","Token","Aksi","Mood","Harga","USD","Hasil","Alasan"],
+ $("trades").innerHTML=table(["Waktu (UTC)","Token","Aksi","Mood","Harga ($)","Jumlah","Hasil","Alasan"],
   t.recent.map(r=>[esc(r.time.replace("T"," ").replace("Z","")),tok(r.symbol,r.mint),r.action==="BUY"?'<span class="ok">BELI</span>':'<span class="bad">JUAL</span>',mood(r.mood),px(+r.price),usd(r.usd),r.pnl_usd?sgnu(+r.pnl_usd)+" ("+sgn(+r.pnl_pct)+")":"",esc(r.reason)]),"Belum ada transaksi.");
 }
 tick();setInterval(tick,2000);

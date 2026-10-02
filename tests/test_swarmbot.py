@@ -74,7 +74,7 @@ def make(tmp_path, rows, **cfg_kw):
     base = {"take_profit_pct": 15, "stop_loss_pct": 10, "stale_minutes": 0, "max_hold_minutes": 0,
             "buy_moods": ["shocked", "happy", "calm"], "min_liquidity_usd": 1000, "min_mcap_usd": 10_000,
             "max_mcap_usd": 20_000_000, "skip_suspicious": True,
-            "starting_cash_usd": 100, "max_open_positions": 5, "max_buys_per_hour": 6}
+            "starting_cash_usd": 100, "max_open_positions": 5, "max_buys_per_hour": 6, "position_usd": 10}
     cfg = Config(data_dir=tmp_path, jupiter_lists=["a"], **{**base, **cfg_kw})
     jup = FakeJup({"a": rows})
     clock = Clock()
@@ -133,7 +133,8 @@ def test_config_file_loads_and_refuses_live(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     cfg = config_mod.load(config_mod.Path(__file__).resolve().parents[1] / "config/swarmbot.yaml")
     assert cfg.buy_moods == ["shocked", "happy"]
-    assert (cfg.take_profit_pct, cfg.stop_loss_pct) == (50, 50)
+    assert (cfg.take_profit_pct, cfg.stop_loss_pct) == (12, 7)
+    assert (cfg.currency, cfg.starting_cash_usd, cfg.position_usd) == ("SOL", 10, 0.1)
     assert cfg.max_open_positions == 25 and cfg.stale_minutes == 5
     bad = tmp_path / "live.yaml"
     bad.write_text("mode: live\n")
@@ -295,3 +296,16 @@ def test_default_config_buys_every_shocked_and_happy_but_not_calm(tmp_path):
     eng = Engine(cfg, jupiter=FakeJup({"a": rows}), paper=Paper(tmp_path, 300, 1.0), clock=Clock())
     eng.try_buys(eng.scan())
     assert set(eng.paper.positions) == {"S", "H"}
+
+
+def test_switching_wallet_to_sol_starts_fresh_and_keeps_history(tmp_path):
+    old = Paper(tmp_path, 300, 1.0, currency="USD")
+    old.buy("A", "A", "happy", 1.0, 10)
+    (tmp_path / "state.json").write_text(
+        (tmp_path / "state.json").read_text().replace('"currency": "USD"', '"currency": "USD"'))
+    new = Paper(tmp_path, 10, 1.0, currency="SOL")
+    assert new.cash == 10 and new.positions == {}
+    assert list(tmp_path.glob("state-USD-*.json")) and list(tmp_path.glob("trades-USD-*.csv"))
+    new.buy("B", "B", "shocked", 2.0, 0.1)
+    pnl, pct = new.sell("B", 2.24, "TP", 0)
+    assert pnl == pytest.approx(0.1 * 0.99 * 1.12 * 0.99 - 0.1)

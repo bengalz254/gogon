@@ -2,13 +2,14 @@
 # Ubah angka di sini lalu restart:  sudo systemctl restart swarmbot
 
 mode: paper                 # hanya simulasi. Uang sungguhan belum dibuat.
+currency: SOL               # saldo dan ukuran posisi dalam SOL
 
 buy_moods: [shocked, happy]   # urutan = prioritas kalau slot terbatas
-take_profit_pct: 50         # jual kalau harga naik 50% dari harga beli
-stop_loss_pct: 50           # jual kalau harga turun 50% dari harga beli
+take_profit_pct: 12         # jual kalau harga naik 12% dari harga beli
+stop_loss_pct: 7            # jual kalau harga turun 7% dari harga beli
 
-position_usd: 10            # besar tiap pembelian (USD simulasi)
-starting_cash_usd: 300      # saldo simulasi awal; kalau dinaikkan, selisihnya ditambahkan ke saldo
+position_size: 0.1          # besar tiap pembelian (SOL simulasi)
+starting_balance: 10        # saldo simulasi awal (SOL)
 max_open_positions: 25      # paling banyak 25 token dipegang sekaligus
 max_buys_per_hour: 0        # 0 = tanpa batas; hanya max_open_positions yang membatasi
 cooldown_minutes: 15        # setelah jual, token yang sama tidak dibeli lagi selama ini

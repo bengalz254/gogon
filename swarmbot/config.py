@@ -19,6 +19,7 @@ class ConfigError(ValueError):
 @dataclass
 class Config:
     mode: str = "paper"
+    currency: str = "SOL"
     poll_seconds: float = 20
     price_check_seconds: float = 3
     jupiter_base_url: str = "https://lite-api.jup.ag"
@@ -29,10 +30,10 @@ class Config:
     ])
     jupiter_limit: int = 100
     buy_moods: list[str] = field(default_factory=lambda: ["shocked", "happy"])
-    take_profit_pct: float = 50.0
-    stop_loss_pct: float = 50.0
-    position_usd: float = 10.0
-    starting_cash_usd: float = 300.0
+    take_profit_pct: float = 12.0
+    stop_loss_pct: float = 7.0
+    position_usd: float = 0.1  # in `currency`
+    starting_cash_usd: float = 10.0  # in `currency`
     max_open_positions: int = 25
     max_buys_per_hour: int = 0
     cooldown_minutes: float = 15
@@ -82,8 +83,9 @@ def load(path: Path | str = DEFAULT_PATH) -> Config:
         c.buy_moods = [str(m).lower() for m in raw.get("buy_moods", c.buy_moods)]
         c.take_profit_pct = float(raw.get("take_profit_pct", c.take_profit_pct))
         c.stop_loss_pct = float(raw.get("stop_loss_pct", c.stop_loss_pct))
-        c.position_usd = float(raw.get("position_usd", c.position_usd))
-        c.starting_cash_usd = float(raw.get("starting_cash_usd", c.starting_cash_usd))
+        c.currency = str(raw.get("currency", c.currency)).upper()
+        c.position_usd = float(raw.get("position_size", raw.get("position_usd", c.position_usd)))
+        c.starting_cash_usd = float(raw.get("starting_balance", raw.get("starting_cash_usd", c.starting_cash_usd)))
         c.max_open_positions = int(raw.get("max_open_positions", c.max_open_positions))
         c.max_buys_per_hour = int(raw.get("max_buys_per_hour", c.max_buys_per_hour))
         c.cooldown_minutes = float(raw.get("cooldown_minutes", c.cooldown_minutes))

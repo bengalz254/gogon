@@ -19,7 +19,7 @@ class Engine:
     def __init__(self, cfg: Config, jupiter: Jupiter | None = None, paper: Paper | None = None, clock=time.time):
         self.cfg = cfg
         self.jup = jupiter or Jupiter(cfg.jupiter_base_url, cfg.jupiter_api_key)
-        self.paper = paper or Paper(cfg.data_dir, cfg.starting_cash_usd, cfg.fee_pct)
+        self.paper = paper or Paper(cfg.data_dir, cfg.starting_cash_usd, cfg.fee_pct, cfg.currency)
         self.clock = clock
         self.stopping = False
         self.last_scan_at = 0.0
@@ -89,7 +89,7 @@ class Engine:
             elif c.max_buys_per_hour > 0 and len(recent) >= c.max_buys_per_hour:
                 self.buy_block = f"batas {c.max_buys_per_hour} beli per jam tercapai"
             elif self.paper.cash < c.position_usd * 0.999:
-                self.buy_block = f"saldo simulasi habis ({self.paper.cash:.2f} USD)"
+                self.buy_block = f"saldo simulasi habis ({self.paper.cash:.4g} {c.currency})"
             if self.buy_block:
                 log.info("tidak beli %d kandidat: %s", len(picks) - bought, self.buy_block)
                 break
@@ -131,6 +131,7 @@ class Engine:
                 "buy_moods": c.buy_moods, "take_profit_pct": c.take_profit_pct,
                 "stop_loss_pct": c.stop_loss_pct, "position_usd": c.position_usd,
                 "starting_cash_usd": c.starting_cash_usd, "max_open_positions": c.max_open_positions,
+                "currency": c.currency,
             },
             "cash": self.paper.cash, "equity": self.paper.equity(),
             "buy_block": self.buy_block,
@@ -181,8 +182,8 @@ class Engine:
             if reason:
                 pnl, pct = self.paper.sell(mint, pos.last_price, reason, c.cooldown_minutes * 60, now)
                 sold += 1
-                log.info("JUAL (paper) %s %s harga %+.1f%% | hasil %+.2f USD (%+.1f%% setelah fee) | saldo %.2f",
-                         pos.symbol, reason, move, pnl, pct, self.paper.cash)
+                log.info("JUAL (paper) %s %s harga %+.1f%% | hasil %+.4f %s (%+.1f%% setelah fee) | saldo %.4f",
+                         pos.symbol, reason, move, pnl, c.currency, pct, self.paper.cash)
         return sold
 
     def refresh_positions(self) -> None:
@@ -209,9 +210,9 @@ class Engine:
     # -- loop ---------------------------------------------------------------
     def run(self) -> None:
         c = self.cfg
-        log.info("swarmbot started | mode PAPER | beli mood %s | TP +%g%% SL -%g%% | %g USD per posisi | saldo %.2f USD | %d posisi terbuka",
-                 ",".join(c.buy_moods), c.take_profit_pct, c.stop_loss_pct, c.position_usd,
-                 self.paper.cash, len(self.paper.positions))
+        log.info("swarmbot started | mode PAPER | beli mood %s | TP +%g%% SL -%g%% | %g %s per posisi | saldo %.4f %s | %d posisi terbuka",
+                 ",".join(c.buy_moods), c.take_profit_pct, c.stop_loss_pct, c.position_usd, c.currency,
+                 self.paper.cash, c.currency, len(self.paper.positions))
         next_scan = 0.0
         while not self.stopping:
             now = time.monotonic()

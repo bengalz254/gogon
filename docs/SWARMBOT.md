@@ -2,7 +2,7 @@
 
 Bot ini memantau mood token Solana seperti di https://dotswarm.fun/moods, dan
 **membeli secara simulasi** semua token yang mood-nya **shocked** atau **happy**.
-Setiap posisi dijual saat harga **naik 50% (take profit)**, **turun 50% (stop loss)**, atau
+Setiap posisi dijual saat harga **naik 12% (take profit)**, **turun 7% (stop loss)**, atau
 **tidak bergerak (kurang dari 2%) selama 5 menit**. Paling lama sebuah posisi dipegang
 **10 menit**; setelah itu dijual, untung atau rugi.
 
@@ -35,10 +35,10 @@ diubah di `config/swarmbot.yaml`). Karena itu hasil bot bisa sedikit beda dari l
 dotswarm.
 
 Tidak ada filter likuiditas, market cap, atau "mencurigakan": semua token shocked dan happy
-dibeli (bisa dinyalakan lagi di config). Batasnya: paling banyak 25 posisi sekaligus, $10 per posisi dari saldo
-simulasi $300, dan token yang baru dijual tidak dibeli lagi selama 15 menit.
-Simulasi memotong perkiraan fee + selip 1% saat beli dan 1% saat jual, jadi TP 50%
-menghasilkan sekitar +47% bersih dan SL 50% sekitar −51%.
+dibeli (bisa dinyalakan lagi di config). Batasnya: paling banyak 25 posisi sekaligus, 0,1 SOL per posisi dari saldo
+simulasi 10 SOL, dan token yang baru dijual tidak dibeli lagi selama 15 menit.
+Simulasi memotong perkiraan fee + selip 1% saat beli dan 1% saat jual, jadi TP 12%
+menghasilkan sekitar +9,8% bersih dan SL 7% sekitar −9%.
 
 ## Pasang di VPS (copy-paste)
 

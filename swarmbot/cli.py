@@ -41,7 +41,7 @@ def cmd_run(cfg) -> int:
 
 
 def cmd_moods(cfg, show: int = 15) -> int:
-    engine = Engine(cfg, paper=Paper(cfg.data_dir / "_preview", cfg.starting_cash_usd, cfg.fee_pct))
+    engine = Engine(cfg, paper=Paper(cfg.data_dir / "_preview", cfg.starting_cash_usd, cfg.fee_pct, cfg.currency))
     try:
         labelled = engine.scan()
     except JupiterError as exc:
@@ -77,14 +77,15 @@ def cmd_check(cfg) -> int:
 
 
 def cmd_report(cfg) -> int:
-    paper = Paper(cfg.data_dir, cfg.starting_cash_usd, cfg.fee_pct)
+    paper = Paper(cfg.data_dir, cfg.starting_cash_usd, cfg.fee_pct, cfg.currency)
     sells = []
     if paper.journal_path.exists():
         with paper.journal_path.open(encoding="utf-8") as f:
             sells = [r for r in csv.DictReader(f) if r["action"] == "SELL"]
-    print(f"Saldo awal       : {cfg.starting_cash_usd:.2f} USD")
-    print(f"Saldo kas        : {paper.cash:.2f} USD")
-    print(f"Nilai total kira2: {paper.equity():.2f} USD")
+    cur = cfg.currency
+    print(f"Saldo awal       : {cfg.starting_cash_usd:.4f} {cur}")
+    print(f"Saldo kas        : {paper.cash:.4f} {cur}")
+    print(f"Nilai total kira2: {paper.equity():.4f} {cur}")
     print(f"Posisi terbuka   : {len(paper.positions)}")
     for p in paper.positions.values():
         move = (p.last_price / p.entry_price - 1) * 100 if p.last_price else 0.0
@@ -96,14 +97,14 @@ def cmd_report(cfg) -> int:
     wins = sum(1 for r in sells if float(r["pnl_usd"]) > 0)
     print(f"Posisi ditutup   : {len(sells)} (untung {wins}, rugi {len(sells) - wins}, "
           f"menang {wins / len(sells) * 100:.0f}%)")
-    print(f"Total hasil      : {total:+.2f} USD")
+    print(f"Total hasil      : {total:+.4f} {cur}")
     by = defaultdict(list)
     for r in sells:
         by[r["mood"]].append(float(r["pnl_usd"]))
     print("Per mood:")
     for mood, pnls in sorted(by.items()):
         w = sum(1 for x in pnls if x > 0)
-        print(f"   {mood:8} {len(pnls):4} trade  menang {w / len(pnls) * 100:3.0f}%  hasil {sum(pnls):+.2f} USD")
+        print(f"   {mood:8} {len(pnls):4} trade  menang {w / len(pnls) * 100:3.0f}%  hasil {sum(pnls):+.4f} {cur}")
     return 0
 
 
