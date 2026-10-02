@@ -309,3 +309,15 @@ def test_switching_wallet_to_sol_starts_fresh_and_keeps_history(tmp_path):
     new.buy("B", "B", "shocked", 2.0, 0.1)
     pnl, pct = new.sell("B", 2.24, "TP", 0)
     assert pnl == pytest.approx(0.1 * 0.99 * 1.12 * 0.99 - 0.1)
+
+
+def test_status_carries_sol_price_for_the_dashboard(tmp_path):
+    import json
+
+    from swarmbot.engine import SOL_MINT
+
+    eng, jup, _ = make(tmp_path, [raw("A", p5=40)])
+    jup.live = {SOL_MINT: 150.0}
+    eng.refresh_sol_price()
+    eng.write_status()
+    assert json.loads((tmp_path / "status.json").read_text())["sol_usd"] == 150.0

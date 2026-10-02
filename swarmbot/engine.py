@@ -14,6 +14,8 @@ from swarmbot.paper import Paper
 
 log = logging.getLogger("swarmbot")
 
+SOL_MINT = "So11111111111111111111111111111111111111112"
+
 
 class Engine:
     def __init__(self, cfg: Config, jupiter: Jupiter | None = None, paper: Paper | None = None, clock=time.time):
@@ -27,6 +29,7 @@ class Engine:
         self.mood_counts: dict[str, int] = {}
         self.candidates: list[dict] = []
         self.buy_block = ""
+        self.sol_usd = 0.0
 
     # -- scanning -----------------------------------------------------------
     def scan(self) -> list[tuple[Token, str]]:
@@ -81,6 +84,7 @@ class Engine:
         picks.sort(key=lambda tm: (order[tm[1]], -tm[0].liquidity))
         bought = 0
         self.buy_block = ""
+        self.sol_usd = 0.0
         for t, mood in picks:
             now = self.clock()
             recent = [x for x in self.paper.buy_times if x > now - 3600]
@@ -98,6 +102,16 @@ class Engine:
             log.info("BELI (paper) %s mood=%s harga=%.10g liq=%.0f 5m=%+.1f%% 1h=%+.1f%% %s",
                      t.symbol, mood, t.price, t.liquidity, t.change_5m, t.change_1h, t.mint)
         return bought
+
+    def refresh_sol_price(self) -> None:
+        """SOL/USD, so the dashboard can show token prices, liquidity and market cap in SOL."""
+        try:
+            price = self.jup.prices([SOL_MINT]).get(SOL_MINT, 0)
+        except (JupiterError, AttributeError) as exc:
+            log.warning("harga SOL gagal dibaca: %s", exc)
+            return
+        if price > 0:
+            self.sol_usd = price
 
     def remember_candidates(self, labelled: list[tuple[Token, str]], limit: int = 30) -> None:
         order = {m: i for i, m in enumerate(self.cfg.buy_moods)}
@@ -135,6 +149,7 @@ class Engine:
             },
             "cash": self.paper.cash, "equity": self.paper.equity(),
             "buy_block": self.buy_block,
+            "sol_usd": self.sol_usd,
             "mood_counts": self.mood_counts, "candidates": self.candidates, "positions": positions,
         }
         path = self.paper.dir / "status.json"
@@ -229,6 +244,7 @@ class Engine:
                     self.check_exits()
                     self.try_buys(labelled)
                     self.remember_candidates(labelled)
+                    self.refresh_sol_price()
             self.refresh_positions()
             self.write_status()
             end = time.monotonic() + c.price_check_seconds

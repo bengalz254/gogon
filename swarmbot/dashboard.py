@@ -144,10 +144,14 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 let CUR="SOL";
 const usd=(x,d)=>CUR==="USD"?(x<0?"-$":"$")+Math.abs(+x||0).toFixed(d??2):(x<0?"-":"")+Math.abs(+x||0).toFixed(d??4)+" "+CUR;
-const dollars=(x)=>"$"+Math.round(+x||0).toLocaleString("en-US");
+let SOLP=0;
+const inSol=()=>CUR==="SOL"&&SOLP>0;
+// token prices, liquidity and market cap come in USD; show them in SOL when the wallet is in SOL
+const tpx=p=>inSol()?px(p/SOLP)+" SOL":"$"+px(p);
+const dollars=x=>inSol()?Math.round((+x||0)/SOLP).toLocaleString("en-US")+" SOL":"$"+Math.round(+x||0).toLocaleString("en-US");
 const sgn=x=>`<span class="${x>0?"ok":x<0?"bad":""}">${x>0?"+":""}${(+x).toFixed(1)}%</span>`;
 const sgnu=x=>`<span class="${x>0?"ok":x<0?"bad":""}">${x>0?"+":""}${usd(x)}</span>`;
-const px=p=>p>=1?(+p).toFixed(4):(+p).toPrecision(4);
+const px=p=>p>=1?(+p).toFixed(4):(+p).toPrecision(4).replace(/e-(\d+)/,"e-$1");
 const mood=m=>`<span class="mood m-${esc(m)}">${esc(m)}</span>`;
 const tok=(s,m)=>`<a href="https://gmgn.ai/sol/token/${encodeURIComponent(m)}" target="_blank" rel="noopener">${esc(s)}</a>`;
 const ago=s=>s<90?Math.round(s)+" dtk":s<5400?Math.round(s/60)+" mnt":(s/3600).toFixed(1)+" jam";
@@ -164,12 +168,12 @@ async function tick(){
  if(s.missing){$("hb").innerHTML='<span class="warn">bot belum menulis data (baru start?)</span>'}
  else{$("hb").innerHTML=s.stale?`<span class="bad">bot tidak update ${ago(s.age_s)}; cek: systemctl status swarmbot</span>`
    :`<span class="ok">● bot jalan</span> · update ${ago(s.age_s)} lalu${s.last_scan_ok?"":' · <span class="warn">scan terakhir gagal</span>'}${s.buy_block?` · <span class="warn">tidak beli: ${esc(s.buy_block)}</span>`:""}`;
-  const st=s.settings||{},start=st.starting_cash_usd||0;CUR=st.currency||"USD";
+  const st=s.settings||{},start=st.starting_cash_usd||0;CUR=st.currency||"USD";SOLP=+s.sol_usd||0;
   $("eq").textContent=usd(s.equity);$("eqd").innerHTML=start?`awal ${usd(start)} · ${sgn((s.equity/start-1)*100)}`:"";
   $("cash").textContent=usd(s.cash);$("np").textContent=`${s.positions.length} / ${st.max_open_positions??"?"}`;
   $("rules").textContent=`TP +${st.take_profit_pct}% · SL -${st.stop_loss_pct}% · ${usd(st.position_usd,CUR==="USD"?0:2)}/posisi`;
-  $("pos").innerHTML=table(["Token","Mood","Harga beli ($)","Harga kini ($)","Gerak","Nilai","Harga dicek","Sejak"],
-   s.positions.sort((a,b)=>b.move_pct-a.move_pct).map(p=>[tok(p.symbol,p.mint),mood(p.mood),px(p.entry_price),px(p.price),sgn(p.move_pct),usd(p.value_usd),p.price_age_s==null?"–":(p.price_age_s>30?`<span class="warn">${ago(p.price_age_s)} lalu</span>`:ago(p.price_age_s)+" lalu"),ago(Date.now()/1000-p.opened_at)]),"Tidak ada posisi terbuka.");
+  $("pos").innerHTML=table(["Token","Mood","Harga beli","Harga kini","Gerak","Nilai","Harga dicek","Sejak"],
+   s.positions.sort((a,b)=>b.move_pct-a.move_pct).map(p=>[tok(p.symbol,p.mint),mood(p.mood),tpx(p.entry_price),tpx(p.price),sgn(p.move_pct),usd(p.value_usd),p.price_age_s==null?"–":(p.price_age_s>30?`<span class="warn">${ago(p.price_age_s)} lalu</span>`:ago(p.price_age_s)+" lalu"),ago(Date.now()/1000-p.opened_at)]),"Tidak ada posisi terbuka.");
   const c=Object.entries(s.mood_counts||{}).sort((a,b)=>b[1]-a[1]);
   $("counts").innerHTML=c.length?c.map(([m,n])=>`<span>${mood(m)} ${n}</span>`).join(""):'<span class="empty">–</span>';
   $("cand").innerHTML=table(["Token","Mood","5m","1j","Likuiditas","Mcap","Status"],
@@ -178,8 +182,8 @@ async function tick(){
  $("wr").textContent=t.closed?Math.round(t.wins/t.closed*100)+"%":"–";$("cl").textContent=`${t.wins} dari ${t.closed} posisi`;
  $("curve").innerHTML=curve(t.curve);
  $("moods").innerHTML=table(["Mood","","Posisi","Menang","Hasil"],Object.entries(t.by_mood).map(([m,v])=>[mood(m),"",v.trades,Math.round(v.wins/v.trades*100)+"%",sgnu(v.pnl_usd)]),"Belum ada.");
- $("trades").innerHTML=table(["Waktu (UTC)","Token","Aksi","Mood","Harga ($)","Jumlah","Hasil","Alasan"],
-  t.recent.map(r=>[esc(r.time.replace("T"," ").replace("Z","")),tok(r.symbol,r.mint),r.action==="BUY"?'<span class="ok">BELI</span>':'<span class="bad">JUAL</span>',mood(r.mood),px(+r.price),usd(r.usd),r.pnl_usd?sgnu(+r.pnl_usd)+" ("+sgn(+r.pnl_pct)+")":"",esc(r.reason)]),"Belum ada transaksi.");
+ $("trades").innerHTML=table(["Waktu (UTC)","Token","Aksi","Mood","Harga","Jumlah","Hasil","Alasan"],
+  t.recent.map(r=>[esc(r.time.replace("T"," ").replace("Z","")),tok(r.symbol,r.mint),r.action==="BUY"?'<span class="ok">BELI</span>':'<span class="bad">JUAL</span>',mood(r.mood),tpx(+r.price),usd(r.usd),r.pnl_usd?sgnu(+r.pnl_usd)+" ("+sgn(+r.pnl_pct)+")":"",esc(r.reason)]),"Belum ada transaksi.");
 }
 tick();setInterval(tick,2000);
 </script></body></html>
