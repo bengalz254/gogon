@@ -179,3 +179,24 @@ def test_status_file_and_dashboard_api(tmp_path):
         assert data["trades"]["by_mood"]["shocked"]["wins"] == 1
     finally:
         server.shutdown()
+
+
+def test_raising_starting_cash_tops_up(tmp_path):
+    p = Paper(tmp_path, 100, 1.0)
+    p.buy("A", "A", "calm", 1.0, 10)
+    p2 = Paper(tmp_path, 200, 1.0)
+    assert p2.cash == pytest.approx(190) and p2.starting_cash == 200
+    p2.save()
+    assert Paper(tmp_path, 200, 1.0).cash == pytest.approx(190)
+
+
+def test_max_hold_sells_after_time(tmp_path):
+    eng, jup, clock = make(tmp_path, [raw("A", p5=1)], max_hold_hours=6)
+    eng.try_buys(eng.scan())
+    jup.prices = {"A": 1.02}
+    clock.t += 5 * 3600
+    eng.refresh_positions()
+    assert "A" in eng.paper.positions
+    clock.t += 3600
+    eng.refresh_positions()
+    assert "A" not in eng.paper.positions

@@ -34,8 +34,8 @@ dotswarm.
 
 Filter keamanan tambahan (bisa diubah): likuiditas minimal $20.000, market cap antara
 $50.000 dan $20 juta (koin besar seperti SOL/BTC dilewati), token yang ditandai
-mencurigakan dilewati, paling banyak 5 posisi sekaligus, $10 per posisi dari saldo
-simulasi $100, dan token yang baru dijual tidak dibeli lagi selama 60 menit.
+mencurigakan dilewati, paling banyak 15 posisi sekaligus (12 beli per jam), $10 per posisi dari saldo
+simulasi $200, posisi dijual otomatis setelah 6 jam kalau belum kena TP/SL, dan token yang baru dijual tidak dibeli lagi selama 60 menit.
 Simulasi memotong perkiraan fee + selip 1% saat beli dan 1% saat jual, jadi TP 15%
 menghasilkan sekitar +13,9% bersih dan SL 10% sekitar −10,9%.
 

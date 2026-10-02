@@ -35,6 +35,7 @@ class Paper:
         self.journal_path = self.dir / "trades.csv"
         self.fee = fee_pct / 100
         self.cash = starting_cash
+        self.starting_cash = starting_cash
         self.positions: dict[str, Position] = {}
         self.cooldowns: dict[str, float] = {}
         self.buy_times: list[float] = []
@@ -48,6 +49,12 @@ class Paper:
         self.positions = {m: Position(**p) for m, p in (raw.get("positions") or {}).items()}
         self.cooldowns = {m: float(t) for m, t in (raw.get("cooldowns") or {}).items()}
         self.buy_times = [float(t) for t in raw.get("buy_times") or []]
+        # Raising starting_cash_usd in the config tops the simulated wallet up by the difference.
+        recorded = float(raw.get("starting_cash", 100.0))
+        if self.starting_cash > recorded:
+            self.cash += self.starting_cash - recorded
+        else:
+            self.starting_cash = recorded
 
     def save(self, now: float | None = None) -> None:
         now = now or time.time()
@@ -55,6 +62,7 @@ class Paper:
         self.buy_times = [t for t in self.buy_times if t > now - 3600]
         data = {
             "cash": self.cash,
+            "starting_cash": self.starting_cash,
             "positions": {m: asdict(p) for m, p in self.positions.items()},
             "cooldowns": self.cooldowns,
             "buy_times": self.buy_times,
