@@ -28,7 +28,7 @@ class Config:
         "toptrending/1h", "toptraded/1h", "toporganicscore/1h", "recent",
     ])
     jupiter_limit: int = 100
-    buy_moods: list[str] = field(default_factory=lambda: ["shocked", "happy", "calm"])
+    buy_moods: list[str] = field(default_factory=lambda: ["shocked", "happy"])
     take_profit_pct: float = 50.0
     stop_loss_pct: float = 50.0
     position_usd: float = 10.0
@@ -40,10 +40,10 @@ class Config:
     max_hold_minutes: float = 10
     stale_minutes: float = 5
     stale_move_pct: float = 2.0
-    min_liquidity_usd: float = 5_000
-    min_mcap_usd: float = 10_000
-    max_mcap_usd: float = 20_000_000
-    skip_suspicious: bool = True
+    min_liquidity_usd: float = 0
+    min_mcap_usd: float = 0
+    max_mcap_usd: float = 0
+    skip_suspicious: bool = False
     fee_pct: float = 1.0
     data_dir: Path = Path("data/swarmbot")
     rules: MoodRules = field(default_factory=MoodRules)

@@ -72,6 +72,8 @@ class Clock:
 
 def make(tmp_path, rows, **cfg_kw):
     base = {"take_profit_pct": 15, "stop_loss_pct": 10, "stale_minutes": 0, "max_hold_minutes": 0,
+            "buy_moods": ["shocked", "happy", "calm"], "min_liquidity_usd": 1000, "min_mcap_usd": 10_000,
+            "max_mcap_usd": 20_000_000, "skip_suspicious": True,
             "starting_cash_usd": 100, "max_open_positions": 5, "max_buys_per_hour": 6}
     cfg = Config(data_dir=tmp_path, jupiter_lists=["a"], **{**base, **cfg_kw})
     jup = FakeJup({"a": rows})
@@ -130,7 +132,7 @@ def test_state_survives_restart(tmp_path):
 def test_config_file_loads_and_refuses_live(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     cfg = config_mod.load(config_mod.Path(__file__).resolve().parents[1] / "config/swarmbot.yaml")
-    assert cfg.buy_moods == ["shocked", "happy", "calm"]
+    assert cfg.buy_moods == ["shocked", "happy"]
     assert (cfg.take_profit_pct, cfg.stop_loss_pct) == (50, 50)
     assert cfg.max_open_positions == 25 and cfg.stale_minutes == 5
     bad = tmp_path / "live.yaml"
@@ -153,7 +155,7 @@ def test_real_jupiter_answer_shape(tmp_path):
     t = parse_token(sample)
     assert t.trades_1h == 4865 and t.traders_1h == 258
     assert classify(t, now=NOW) == "calm"
-    eng = Engine(Config(data_dir=tmp_path), jupiter=FakeJup({}))
+    eng = Engine(Config(data_dir=tmp_path, buy_moods=["calm"], max_mcap_usd=20_000_000), jupiter=FakeJup({}))
     assert "besar" in eng.eligible(t, "calm")
 
 
@@ -284,3 +286,12 @@ def test_every_position_is_sold_after_10_minutes(tmp_path):
     eng.refresh_positions()
     assert "A" not in eng.paper.positions
     assert ",10 menit" in (tmp_path / "trades.csv").read_text()
+
+
+def test_default_config_buys_every_shocked_and_happy_but_not_calm(tmp_path):
+    rows = [raw("S", p5=40, liq=300, mcap=2_000), raw("H", p1=25, sus=True, mcap=900_000_000),
+            raw("C", p5=1, p1=2)]
+    cfg = Config(data_dir=tmp_path, jupiter_lists=["a"])
+    eng = Engine(cfg, jupiter=FakeJup({"a": rows}), paper=Paper(tmp_path, 300, 1.0), clock=Clock())
+    eng.try_buys(eng.scan())
+    assert set(eng.paper.positions) == {"S", "H"}

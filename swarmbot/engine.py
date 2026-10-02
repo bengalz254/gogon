@@ -66,9 +66,9 @@ class Engine:
             return "ditandai mencurigakan oleh Jupiter"
         if t.price <= 0:
             return "tanpa harga"
-        if t.liquidity < c.min_liquidity_usd:
+        if c.min_liquidity_usd > 0 and t.liquidity < c.min_liquidity_usd:
             return "likuiditas kecil"
-        if t.mcap < c.min_mcap_usd:
+        if c.min_mcap_usd > 0 and t.mcap < c.min_mcap_usd:
             return "market cap kecil"
         if c.max_mcap_usd > 0 and t.mcap > c.max_mcap_usd:
             return "market cap besar (bukan token launch)"

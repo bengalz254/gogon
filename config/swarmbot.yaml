@@ -3,7 +3,7 @@
 
 mode: paper                 # hanya simulasi. Uang sungguhan belum dibuat.
 
-buy_moods: [shocked, happy, calm]   # urutan = prioritas kalau slot terbatas
+buy_moods: [shocked, happy]   # urutan = prioritas kalau slot terbatas
 take_profit_pct: 50         # jual kalau harga naik 50% dari harga beli
 stop_loss_pct: 50           # jual kalau harga turun 50% dari harga beli
 
@@ -21,10 +21,10 @@ poll_seconds: 20            # cek mood semua token tiap 20 detik
 price_check_seconds: 3      # cek harga token yang dipegang tiap 3 detik (Jupiter Price API)
 
 filters:
-  min_liquidity_usd: 5000   # lewati token dengan likuiditas sangat kecil (susah dijual)
-  min_mcap_usd: 10000       # token baru pump.fun ($10 ribu ke atas) ikut dibeli
-  max_mcap_usd: 20000000    # lewati koin besar (SOL, BTC, stablecoin); 0 = tanpa batas
-  skip_suspicious: true     # lewati token yang ditandai mencurigakan oleh Jupiter
+  min_liquidity_usd: 0       # 0 = semua token dibeli, berapa pun likuiditasnya
+  min_mcap_usd: 0           # 0 = tanpa batas bawah
+  max_mcap_usd: 0           # 0 = tanpa batas atas
+  skip_suspicious: false    # true = lewati token yang ditandai mencurigakan oleh Jupiter
 
 paper:
   fee_pct: 1.0              # perkiraan fee + selip tiap beli dan tiap jual

@@ -1,7 +1,7 @@
 # swarmbot — bot jual beli mood dotswarm.fun (mode PAPER)
 
 Bot ini memantau mood token Solana seperti di https://dotswarm.fun/moods, dan
-**membeli secara simulasi** token yang mood-nya **shocked**, **happy**, atau **calm**.
+**membeli secara simulasi** semua token yang mood-nya **shocked** atau **happy**.
 Setiap posisi dijual saat harga **naik 50% (take profit)**, **turun 50% (stop loss)**, atau
 **tidak bergerak (kurang dari 2%) selama 5 menit**. Paling lama sebuah posisi dipegang
 **10 menit**; setelah itu dijual, untung atau rugi.
@@ -24,7 +24,7 @@ aturan pertama yang cocok menang:
 | focused | sebagian besar trader 1 jam terakhir net pembeli | — |
 | graduated | pindah dari bonding curve ke pool dalam 24 jam | — |
 | newborn | pool pertama dibuka < 1 jam lalu | — |
-| calm | trading stabil: minimal 2 trader/jam, gerak 5m ≤ 5%, gerak 1j ≤ 10% | ✅ |
+| calm | trading stabil: minimal 2 trader/jam, gerak 5m ≤ 5%, gerak 1j ≤ 10% | — |
 | suspicious | ditandai mencurigakan oleh Jupiter | — |
 | stressed | turun 20%+ dalam 1 jam | — |
 | asleep | tidak ada transaksi 1 jam | — |
@@ -34,9 +34,8 @@ Situs tidak memberi angka untuk "calm", jadi batasnya kita tentukan sendiri (bis
 diubah di `config/swarmbot.yaml`). Karena itu hasil bot bisa sedikit beda dari layar
 dotswarm.
 
-Filter keamanan tambahan (bisa diubah): likuiditas minimal $5.000, market cap antara
-$10.000 dan $20 juta (koin besar seperti SOL/BTC dilewati), token yang ditandai
-mencurigakan dilewati, paling banyak 25 posisi sekaligus, $10 per posisi dari saldo
+Tidak ada filter likuiditas, market cap, atau "mencurigakan": semua token shocked dan happy
+dibeli (bisa dinyalakan lagi di config). Batasnya: paling banyak 25 posisi sekaligus, $10 per posisi dari saldo
 simulasi $300, dan token yang baru dijual tidak dibeli lagi selama 15 menit.
 Simulasi memotong perkiraan fee + selip 1% saat beli dan 1% saat jual, jadi TP 50%
 menghasilkan sekitar +47% bersih dan SL 50% sekitar −51%.
