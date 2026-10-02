@@ -3,7 +3,8 @@
 Bot ini memantau mood token Solana seperti di https://dotswarm.fun/moods, dan
 **membeli secara simulasi** token yang mood-nya **shocked**, **happy**, atau **calm**.
 Setiap posisi dijual saat harga **naik 50% (take profit)**, **turun 50% (stop loss)**, atau
-**tidak bergerak (kurang dari 2%) selama 5 menit**.
+**tidak bergerak (kurang dari 2%) selama 5 menit**. Paling lama sebuah posisi dipegang
+**10 menit**; setelah itu dijual, untung atau rugi.
 
 > ⚠️ **Mode paper saja.** Tidak ada wallet, private key, atau uang sungguhan. Tujuannya
 > membuktikan dulu dengan data apakah aturan ini untung. Token launch Solana sangat
@@ -36,7 +37,7 @@ dotswarm.
 Filter keamanan tambahan (bisa diubah): likuiditas minimal $5.000, market cap antara
 $10.000 dan $20 juta (koin besar seperti SOL/BTC dilewati), token yang ditandai
 mencurigakan dilewati, paling banyak 25 posisi sekaligus, $10 per posisi dari saldo
-simulasi $300, posisi dijual otomatis setelah 6 jam kalau belum kena TP/SL, dan token yang baru dijual tidak dibeli lagi selama 15 menit.
+simulasi $300, dan token yang baru dijual tidak dibeli lagi selama 15 menit.
 Simulasi memotong perkiraan fee + selip 1% saat beli dan 1% saat jual, jadi TP 50%
 menghasilkan sekitar +47% bersih dan SL 50% sekitar −51%.
 

@@ -37,6 +37,7 @@ class Config:
     max_buys_per_hour: int = 0
     cooldown_minutes: float = 15
     max_hold_hours: float = 0
+    max_hold_minutes: float = 10
     stale_minutes: float = 5
     stale_move_pct: float = 2.0
     min_liquidity_usd: float = 5_000
@@ -87,6 +88,7 @@ def load(path: Path | str = DEFAULT_PATH) -> Config:
         c.max_buys_per_hour = int(raw.get("max_buys_per_hour", c.max_buys_per_hour))
         c.cooldown_minutes = float(raw.get("cooldown_minutes", c.cooldown_minutes))
         c.max_hold_hours = float(raw.get("max_hold_hours", c.max_hold_hours))
+        c.max_hold_minutes = float(raw.get("max_hold_minutes", c.max_hold_minutes))
         c.stale_minutes = float(raw.get("stale_minutes", c.stale_minutes))
         c.stale_move_pct = float(raw.get("stale_move_pct", c.stale_move_pct))
         c.min_liquidity_usd = float(filters.get("min_liquidity_usd", c.min_liquidity_usd))

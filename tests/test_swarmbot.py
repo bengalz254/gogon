@@ -71,7 +71,7 @@ class Clock:
 
 
 def make(tmp_path, rows, **cfg_kw):
-    base = {"take_profit_pct": 15, "stop_loss_pct": 10, "stale_minutes": 0,
+    base = {"take_profit_pct": 15, "stop_loss_pct": 10, "stale_minutes": 0, "max_hold_minutes": 0,
             "starting_cash_usd": 100, "max_open_positions": 5, "max_buys_per_hour": 6}
     cfg = Config(data_dir=tmp_path, jupiter_lists=["a"], **{**base, **cfg_kw})
     jup = FakeJup({"a": rows})
@@ -271,3 +271,16 @@ def test_hourly_cap_is_reported(tmp_path):
     eng, _, _ = make(tmp_path, [raw(f"T{i}", p5=40) for i in range(10)], max_buys_per_hour=3)
     eng.try_buys(eng.scan())
     assert len(eng.paper.positions) == 3 and "per jam" in eng.buy_block
+
+
+def test_every_position_is_sold_after_10_minutes(tmp_path):
+    eng, jup, clock = make(tmp_path, [raw("A", p5=40)], max_hold_minutes=10)
+    eng.try_buys(eng.scan())
+    jup.live = {"A": 1.05}
+    clock.t += 9 * 60
+    eng.refresh_positions()
+    assert "A" in eng.paper.positions
+    clock.t += 60
+    eng.refresh_positions()
+    assert "A" not in eng.paper.positions
+    assert ",10 menit" in (tmp_path / "trades.csv").read_text()

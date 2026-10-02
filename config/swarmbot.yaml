@@ -14,7 +14,8 @@ max_buys_per_hour: 0        # 0 = tanpa batas; hanya max_open_positions yang mem
 cooldown_minutes: 15        # setelah jual, token yang sama tidak dibeli lagi selama ini
 stale_minutes: 5            # jual kalau harga tidak bergerak (lebih dari stale_move_pct) selama 5 menit; 0 = mati
 stale_move_pct: 2           # gerak di bawah 2% dianggap diam
-max_hold_hours: 6           # jual otomatis setelah 6 jam kalau belum kena TP/SL; 0 = tanpa batas
+max_hold_minutes: 10        # jual paling lama 10 menit setelah beli, untung atau rugi; 0 = mati
+max_hold_hours: 0           # batas lama dalam jam (tidak dipakai kalau max_hold_minutes aktif)
 
 poll_seconds: 20            # cek mood semua token tiap 20 detik
 price_check_seconds: 3      # cek harga token yang dipegang tiap 3 detik (Jupiter Price API)

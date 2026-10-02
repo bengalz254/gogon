@@ -174,6 +174,8 @@ class Engine:
                 reason = "SL"
             elif c.stale_minutes > 0 and now - (pos.anchor_at or pos.opened_at) >= c.stale_minutes * 60:
                 reason = "diam"
+            elif c.max_hold_minutes > 0 and now - pos.opened_at >= c.max_hold_minutes * 60:
+                reason = f"{c.max_hold_minutes:g} menit"
             elif c.max_hold_hours > 0 and now - pos.opened_at >= c.max_hold_hours * 3600:
                 reason = "waktu habis"
             if reason:
