@@ -1,0 +1,34 @@
+# Konfigurasi bot EMA-cross Hyperliquid (python -m hlbot.main).
+# Rahasia (private key, alamat wallet, saklar live) ada di .env, BUKAN di sini.
+
+strategy:
+  coin: BTC            # nama perp di Hyperliquid: BTC, ETH, SOL, ...
+  interval: 30m        # candle 30 menit; sinyal hanya dari candle yang SUDAH ditutup
+  ema_fast: 9
+  ema_slow: 21
+
+trade:
+  leverage: 10
+  margin_mode: isolated   # isolated (rugi maksimal = margin posisi) | cross
+  margin_usd: 20          # margin per posisi -> nilai posisi = 20 x 10 = $200
+  take_profit_pct: 0.02   # 2% gerak harga (= ~20% ROE di 10x)
+  trailing_pct: 0.005     # 0.5% dari harga terbaik
+  # trailing : setelah profit 2%, trailing stop 0.5% di belakang harga terbaik (default)
+  # fixed    : TP pas di 2%, plus trailing stop 0.5% sejak entry (berfungsi juga sbg stop-loss)
+  exit_mode: trailing
+  # Stop-loss opsional (gerak harga). null = tidak ada SL, posisi hanya ditutup oleh
+  # TP/trailing atau silang EMA berlawanan -- sesuai aturan strategi. Di 10x, gerak ~9%
+  # melawan posisi = LIKUIDASI.
+  stop_loss_pct: null
+  max_slippage: 0.01             # batas slippage order market (IOC)
+  poll_seconds: 5                # seberapa sering harga dicek untuk TP/trailing
+  candle_close_delay_seconds: 5  # tunggu sebentar setelah candle tutup agar data API lengkap
+  exchange_stop_order: true      # (live) pasang stop-market reduce-only di exchange saat trailing aktif
+
+backtest:
+  days: 100                  # Hyperliquid hanya menyediakan 5000 candle terakhir (~104 hari di 30m)
+  initial_equity_usd: 200    # modal awal simulasi
+  taker_fee: 0.00045         # fee taker Hyperliquid (tier dasar)
+  slippage: 0.0002           # slippage per eksekusi
+  maintenance_margin_rate: 0.0125   # untuk estimasi harga likuidasi (BTC); ETH ~0.02
+  block_live_if_unprofitable: true  # tolak mode LIVE bila hasil backtest rugi

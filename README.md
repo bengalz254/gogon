@@ -1,5 +1,9 @@
 # gogon — Polymarket Auto-Trading Bot
 
+> **Also in this repo:** a Hyperliquid perpetuals bot (EMA 9/21 cross on
+> closed 30m candles, 10x, TP 2% + trailing 0.5%, mandatory backtest) —
+> see [HYPERLIQUID.md](HYPERLIQUID.md) (Bahasa Indonesia).
+
 An automated trading bot for [Polymarket](https://polymarket.com) built on
 Polymarket's official CLOB (Central Limit Order Book) API. It scans active
 markets, applies pluggable strategies, and executes trades through a risk
