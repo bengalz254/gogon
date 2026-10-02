@@ -23,9 +23,9 @@ from dca.config import DcaSettings, load_dca_settings  # noqa: E402
 from dca.engine import DcaEngine  # noqa: E402
 from dca.journal import DcaJournal  # noqa: E402
 from dca.paper import PaperBroker  # noqa: E402
+from dca.signals import candles_needed  # noqa: E402
 from dca.state import StateStore  # noqa: E402
 
-WINDOW = 500
 
 
 def load_csv(path: str) -> list[list[float]]:
@@ -81,11 +81,12 @@ def save_csv(path: str, candles: list[list[float]]) -> None:
 def run_backtest(settings: DcaSettings, candles: list[list[float]], journal_path: str | None = None) -> dict:
     engine = DcaEngine(settings, PaperBroker(settings), StateStore(None), DcaJournal(journal_path))
     closes = [c[4] for c in candles]
+    window = candles_needed(settings.entry)
     equity_peak = 0.0
     max_dd = 0.0
     for i, (ts, _o, high, low, close) in enumerate(c[:5] for c in candles):
         now = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
-        engine.tick(now, closes[max(0, i - WINDOW + 1): i + 1], low, high, close)
+        engine.tick(now, closes[max(0, i - window + 1): i + 1], low, high, close)
         equity = engine.state.total_pnl + sum(d.unrealized_pnl(close) for d in engine.state.deals.values())
         equity_peak = max(equity_peak, equity)
         max_dd = max(max_dd, equity_peak - equity)
@@ -109,6 +110,18 @@ def run_backtest(settings: DcaSettings, candles: list[list[float]], journal_path
         "max_drawdown": max_dd,
         "max_safety_orders_used": max((d.safety_orders_filled for d in deals), default=0),
         "fees": sum(d.fees_usdt for d in deals),
+        "net_pnl": engine.state.total_pnl + sum(d.unrealized_pnl(last) for d in engine.state.deals.values()),
+        "per_side": {
+            side: {
+                "deals": sum(1 for d in deals if d.side == side),
+                "stops": sum(1 for d in deals if d.side == side and d.close_reason != "take_profit"),
+                "realized": sum(d.realized_pnl for d in deals if d.side == side),
+                "unrealized": sum(d.unrealized_pnl(last) for d in engine.state.deals.values() if d.side == side),
+            }
+            for side in settings.sides
+        },
+        "stops": [d for d in deals if d.close_reason != "take_profit"],
+        "open": list(engine.state.deals.values()),
     }
 
 
@@ -141,6 +154,16 @@ def main() -> None:
     print(f"open at end      : {r['open_deals']} deal(s), unrealized ${r['unrealized_pnl']:.2f}")
     print(f"max drawdown     : ${r['max_drawdown']:.2f}")
     print(f"max SO used      : {r['max_safety_orders_used']}/{s.ladder.max_safety_orders}")
+    print(f"NET PnL          : ${r['net_pnl']:.2f}  (realized + unrealized)")
+    for side, v in r["per_side"].items():
+        print(f"  {side:<5} deals {v['deals']:>4} | stops {v['stops']} | realized ${v['realized']:>8.2f} "
+              f"| unrealized ${v['unrealized']:>8.2f}")
+    for d in r["stops"]:
+        print(f"  STOP  {d.side:<5} opened {d.opened_at[:16]} closed {d.closed_at[:16]} "
+              f"entry {d.entry_price:.3f} -> {d.close_price:.3f} | PnL ${d.realized_pnl:.2f}")
+    for d in r["open"]:
+        print(f"  OPEN  {d.side:<5} opened {d.opened_at[:16]} entry {d.entry_price:.3f} avg {d.avg_price:.3f} "
+              f"SO {d.safety_orders_filled}/{len(d.orders) - 1}")
 
 
 if __name__ == "__main__":

@@ -39,8 +39,24 @@ class BinanceFutures:
     # --- market data (no keys needed) -------------------------------------
 
     def closed_candles(self, timeframe: str, limit: int = 500) -> list[list[float]]:
-        """OHLCV rows, oldest first, without the still-forming last candle."""
-        return self.ex.fetch_ohlcv(self.symbol, timeframe, limit=limit)[:-1]
+        """OHLCV rows, oldest first, without the still-forming last candle.
+
+        Binance returns at most 1000 candles per request, so longer histories
+        (e.g. for a slow EMA) are paged.
+        """
+        if limit < 1000:
+            return self.ex.fetch_ohlcv(self.symbol, timeframe, limit=limit + 1)[:-1]
+        tf_ms = self.ex.parse_timeframe(timeframe) * 1000
+        since = self.ex.milliseconds() - (limit + 1) * tf_ms
+        by_ts: dict[float, list[float]] = {}
+        while True:
+            batch = self.ex.fetch_ohlcv(self.symbol, timeframe, since=since, limit=1000)
+            for row in batch:
+                by_ts[row[0]] = row
+            if len(batch) < 1000 or batch[-1][0] + 1 <= since:
+                break
+            since = batch[-1][0] + 1
+        return [by_ts[t] for t in sorted(by_ts)][:-1][-limit:]
 
     def last_price(self) -> float:
         return float(self.ex.fetch_ticker(self.symbol)["last"])

@@ -151,3 +151,19 @@ def test_state_round_trip(tmp_path):
     assert isinstance(restored, EngineState)
     for side in (LONG, SHORT):
         assert restored.deals[side].to_dict() == e.state.deals[side].to_dict()
+
+
+def test_candles_needed_covers_slow_ema():
+    from dca.signals import candles_needed
+
+    assert candles_needed(EntryConfig()) == 500
+    assert candles_needed(EntryConfig(trend_filter=True, ema_period=800)) == 2400
+
+
+def test_trend_filter_blocks_counter_trend_side():
+    s = DcaSettings(sides=[LONG, SHORT], entry=EntryConfig(mode="always", trend_filter=True, ema_period=50))
+    s.validate()
+    e = engine(s)
+    rising = [100 + i * 0.1 for i in range(200)]
+    e.tick(T0, rising, rising[-1], rising[-1], rising[-1])
+    assert set(e.state.deals) == {LONG}

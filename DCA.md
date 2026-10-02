@@ -60,6 +60,7 @@ pip install -r requirements.txt
 cp .env.example .env
 python scripts/dca_plan.py --price 150     # cek ladder & kebutuhan margin
 python scripts/dca_backtest.py --days 180  # backtest data Binance asli
+python scripts/dca_sweep.py --csv data/candles_SOLUSDT_15m_180d.csv  # bandingkan banyak variasi setting
 ```
 
 ### 1. Paper trading (tanpa API key)

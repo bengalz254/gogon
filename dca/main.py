@@ -14,9 +14,8 @@ from dca.exchange import BinanceFutures
 from dca.journal import DcaJournal
 from dca.live import LiveBroker
 from dca.paper import PaperBroker
+from dca.signals import candles_needed
 from dca.state import StateStore
-
-CANDLE_WINDOW = 500
 
 _stop = False
 
@@ -69,11 +68,12 @@ def run() -> None:
     signal_module.signal(signal_module.SIGINT, _request_stop)
     signal_module.signal(signal_module.SIGTERM, _request_stop)
 
+    window = candles_needed(settings.entry)
     ticks = 0
     while not _stop:
         started = time.time()
         try:
-            closes = [c[4] for c in ex.closed_candles(settings.timeframe, CANDLE_WINDOW)]
+            closes = [c[4] for c in ex.closed_candles(settings.timeframe, window)]
             last = ex.last_price()
             now = datetime.now(timezone.utc)
             engine.tick(now, closes, last, last, last)

@@ -6,6 +6,14 @@ from dca.indicators import ema, rsi
 from dca.ladder import LONG
 
 
+def candles_needed(cfg: EntryConfig) -> int:
+    """History the entry filter needs; ~3x the EMA period lets the EMA converge."""
+    need = max(500, cfg.rsi_period * 10)
+    if cfg.trend_filter:
+        need = max(need, cfg.ema_period * 3)
+    return need
+
+
 def entry_signal(side: str, closes: list[float], cfg: EntryConfig) -> tuple[bool, str]:
     """closes: closed candles only, oldest first."""
     reasons = []
