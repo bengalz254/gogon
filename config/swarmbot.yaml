@@ -14,12 +14,12 @@ max_buys_per_hour: 12
 cooldown_minutes: 60        # setelah jual, token yang sama tidak dibeli lagi selama ini
 max_hold_hours: 6           # jual otomatis setelah 6 jam kalau belum kena TP/SL; 0 = tanpa batas
 
-poll_seconds: 30            # cek mood semua token tiap 30 detik
-price_check_seconds: 10     # cek harga token yang dipegang tiap 10 detik
+poll_seconds: 20            # cek mood semua token tiap 20 detik
+price_check_seconds: 5      # cek harga token yang dipegang tiap 5 detik
 
 filters:
-  min_liquidity_usd: 20000  # lewati token dengan likuiditas kecil (susah dijual)
-  min_mcap_usd: 50000
+  min_liquidity_usd: 5000   # lewati token dengan likuiditas sangat kecil (susah dijual)
+  min_mcap_usd: 10000       # token baru pump.fun ($10 ribu ke atas) ikut dibeli
   max_mcap_usd: 20000000    # lewati koin besar (SOL, BTC, stablecoin); 0 = tanpa batas
   skip_suspicious: true     # lewati token yang ditandai mencurigakan oleh Jupiter
 
@@ -29,7 +29,7 @@ paper:
 jupiter:
   base_url: https://lite-api.jup.ag   # otomatis pindah ke api.jup.ag kalau JUPITER_API_KEY diisi di .env
   limit: 100
-  lists: [toptrending/5m, toptrending/1h, toptraded/1h, toporganicscore/1h, recent]
+  lists: [toptrending/5m, toptraded/5m, toporganicscore/5m, toptrending/1h, toptraded/1h, toporganicscore/1h, recent]
 
 # Aturan mood, sama dengan dotswarm.fun/how. "calm" tidak punya angka di situs; ini batas kita.
 mood_rules:

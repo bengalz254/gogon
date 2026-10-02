@@ -19,12 +19,13 @@ class ConfigError(ValueError):
 @dataclass
 class Config:
     mode: str = "paper"
-    poll_seconds: float = 30
-    price_check_seconds: float = 10
+    poll_seconds: float = 20
+    price_check_seconds: float = 5
     jupiter_base_url: str = "https://lite-api.jup.ag"
     jupiter_api_key: str = ""
     jupiter_lists: list[str] = field(default_factory=lambda: [
-        "toptrending/5m", "toptrending/1h", "toptraded/1h", "toporganicscore/1h", "recent",
+        "toptrending/5m", "toptraded/5m", "toporganicscore/5m",
+        "toptrending/1h", "toptraded/1h", "toporganicscore/1h", "recent",
     ])
     jupiter_limit: int = 100
     buy_moods: list[str] = field(default_factory=lambda: ["shocked", "happy", "calm"])
@@ -36,8 +37,8 @@ class Config:
     max_buys_per_hour: int = 6
     cooldown_minutes: float = 60
     max_hold_hours: float = 0
-    min_liquidity_usd: float = 20_000
-    min_mcap_usd: float = 50_000
+    min_liquidity_usd: float = 5_000
+    min_mcap_usd: float = 10_000
     max_mcap_usd: float = 20_000_000
     skip_suspicious: bool = True
     fee_pct: float = 1.0

@@ -200,3 +200,10 @@ def test_max_hold_sells_after_time(tmp_path):
     clock.t += 3600
     eng.refresh_positions()
     assert "A" not in eng.paper.positions
+
+
+def test_fresh_pump_token_is_bought(tmp_path):
+    # Like "Cassie": 4 minutes old, +881% in 5m, $35.7K market cap.
+    eng, _, _ = make(tmp_path, [raw("CASSIE", p5=881, p1=881, mcap=35_700, liq=9_000, pool_age_h=0.07)])
+    eng.try_buys(eng.scan())
+    assert eng.paper.positions["CASSIE"].mood == "shocked"

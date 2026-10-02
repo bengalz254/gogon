@@ -32,8 +32,8 @@ Situs tidak memberi angka untuk "calm", jadi batasnya kita tentukan sendiri (bis
 diubah di `config/swarmbot.yaml`). Karena itu hasil bot bisa sedikit beda dari layar
 dotswarm.
 
-Filter keamanan tambahan (bisa diubah): likuiditas minimal $20.000, market cap antara
-$50.000 dan $20 juta (koin besar seperti SOL/BTC dilewati), token yang ditandai
+Filter keamanan tambahan (bisa diubah): likuiditas minimal $5.000, market cap antara
+$10.000 dan $20 juta (koin besar seperti SOL/BTC dilewati), token yang ditandai
 mencurigakan dilewati, paling banyak 15 posisi sekaligus (12 beli per jam), $10 per posisi dari saldo
 simulasi $200, posisi dijual otomatis setelah 6 jam kalau belum kena TP/SL, dan token yang baru dijual tidak dibeli lagi selama 60 menit.
 Simulasi memotong perkiraan fee + selip 1% saat beli dan 1% saat jual, jadi TP 15%
