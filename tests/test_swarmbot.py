@@ -1,0 +1,151 @@
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from swarmbot import config as config_mod
+from swarmbot.config import Config
+from swarmbot.engine import Engine
+from swarmbot.moods import classify, parse_token
+from swarmbot.paper import Paper
+
+NOW = datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
+
+
+def raw(mint="M1", p5=0.0, p1=0.0, p24=0.0, traders=10, net=2, buys=20, sells=20,
+        sus=False, liq=50_000, mcap=200_000, price=1.0, pool_age_h=48, grad_age_h=None):
+    r = {
+        "id": mint, "symbol": mint, "name": mint, "usdPrice": price, "liquidity": liq, "mcap": mcap,
+        "stats5m": {"priceChange": p5},
+        "stats1h": {"priceChange": p1, "numTraders": traders, "numNetBuyers": net,
+                    "numBuys": buys, "numSells": sells},
+        "stats24h": {"priceChange": p24},
+        "audit": {"isSus": sus},
+        "firstPool": {"createdAt": (NOW - timedelta(hours=pool_age_h)).isoformat().replace("+00:00", "Z")},
+    }
+    if grad_age_h is not None:
+        r["graduatedAt"] = (NOW - timedelta(hours=grad_age_h)).isoformat()
+    return r
+
+
+def mood(**kw):
+    return classify(parse_token(raw(**kw)), now=NOW)
+
+
+def test_moods_follow_dotswarm_order():
+    assert mood(p5=35, p1=50) == "shocked"
+    assert mood(p5=10, p1=25) == "happy"
+    assert mood(net=6, traders=10) == "focused"
+    assert mood(grad_age_h=3) == "graduated"
+    assert mood(pool_age_h=0.5) == "newborn"
+    assert mood(p5=1, p1=-3) == "calm"
+    assert mood(sus=True) == "suspicious"
+    assert mood(p1=-25) == "stressed"
+    assert mood(p5=0, p1=0, traders=0, net=0, buys=0, sells=0) == "asleep"
+    assert mood(p5=12, p1=15) == "other"
+
+
+def test_shocked_wins_over_suspicious():
+    assert mood(p5=40, sus=True) == "shocked"
+
+
+class FakeJup:
+    def __init__(self, lists, prices=None):
+        self.lists = lists
+        self.prices = prices or {}
+
+    def token_list(self, name, limit=100):
+        return self.lists.get(name, [])
+
+    def tokens(self, mints):
+        return [raw(mint=m, price=self.prices[m]) for m in mints if m in self.prices]
+
+
+class Clock:
+    t = 1_000_000.0
+
+    def __call__(self):
+        return self.t
+
+
+def make(tmp_path, rows, **cfg_kw):
+    cfg = Config(data_dir=tmp_path, jupiter_lists=["a"], **cfg_kw)
+    jup = FakeJup({"a": rows})
+    clock = Clock()
+    eng = Engine(cfg, jupiter=jup, paper=Paper(tmp_path, cfg.starting_cash_usd, cfg.fee_pct), clock=clock)
+    return eng, jup, clock
+
+
+def test_buys_only_wanted_moods_and_filters(tmp_path):
+    rows = [
+        raw("SHOCK", p5=40), raw("HAPPY", p1=25), raw("CALM", p5=1, p1=2),
+        raw("FOCUS", net=8), raw("TINY", p5=40, liq=500), raw("SUS", p1=30, sus=True),
+        raw("BIG", p5=1, p1=0.3, mcap=200_000_000),
+    ]
+    eng, _, _ = make(tmp_path, rows)
+    eng.try_buys(eng.scan())
+    assert set(eng.paper.positions) == {"SHOCK", "HAPPY", "CALM"}
+    assert eng.paper.cash == pytest.approx(70)
+
+
+def test_take_profit_and_stop_loss(tmp_path):
+    eng, jup, clock = make(tmp_path, [raw("A", p5=40, price=1.0), raw("B", p1=25, price=2.0)])
+    eng.try_buys(eng.scan())
+    jup.prices = {"A": 1.14, "B": 1.81}
+    eng.refresh_positions()
+    assert set(eng.paper.positions) == {"A", "B"}  # +14% and -9.5%: hold
+    jup.prices = {"A": 1.15, "B": 1.79}
+    eng.refresh_positions()
+    assert eng.paper.positions == {}
+    lines = (tmp_path / "trades.csv").read_text().splitlines()
+    assert any(",TP" in line for line in lines[1:]) and any(",SL" in line for line in lines[1:])
+    # fees: 1% in and 1% out
+    assert eng.paper.cash == pytest.approx(80 + 10 * 0.99 * 1.15 * 0.99 + 10 * 0.99 * 0.895 * 0.99)
+
+
+def test_cooldown_and_limits(tmp_path):
+    rows = [raw(f"T{i}", p5=40) for i in range(10)]
+    eng, jup, clock = make(tmp_path, rows, max_open_positions=3)
+    eng.try_buys(eng.scan())
+    assert len(eng.paper.positions) == 3
+    jup.prices = {"T0": 2.0}
+    eng.refresh_positions()
+    assert "T0" not in eng.paper.positions
+    eng.try_buys(eng.scan())
+    assert "T0" not in eng.paper.positions  # cooldown
+    assert len(eng.paper.positions) == 3
+
+
+def test_state_survives_restart(tmp_path):
+    eng, _, _ = make(tmp_path, [raw("A", p5=40)])
+    eng.try_buys(eng.scan())
+    again = Paper(tmp_path, 100, 1.0)
+    assert set(again.positions) == {"A"} and again.cash == pytest.approx(90)
+
+
+def test_config_file_loads_and_refuses_live(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    cfg = config_mod.load(config_mod.Path(__file__).resolve().parents[1] / "config/swarmbot.yaml")
+    assert cfg.buy_moods == ["shocked", "happy", "calm"]
+    assert (cfg.take_profit_pct, cfg.stop_loss_pct) == (15, 10)
+    bad = tmp_path / "live.yaml"
+    bad.write_text("mode: live\n")
+    with pytest.raises(config_mod.ConfigError):
+        config_mod.load(bad)
+
+
+def test_real_jupiter_answer_shape(tmp_path):
+    # Trimmed copy of a real lite-api.jup.ag/tokens/v2/toptrending/1h entry (priceChange is in percent).
+    sample = {
+        "id": "cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij", "symbol": "cbBTC", "name": "Coinbase Wrapped BTC",
+        "mcap": 202575437.5, "usdPrice": 64139.0, "liquidity": 21492243.3,
+        "stats5m": {"priceChange": -0.166, "numBuys": 127, "numSells": 180, "numTraders": 46, "numNetBuyers": 3},
+        "stats1h": {"priceChange": 0.304, "numBuys": 2586, "numSells": 2279, "numTraders": 258, "numNetBuyers": 43},
+        "stats24h": {"priceChange": 0.34},
+        "firstPool": {"id": "x", "createdAt": "2024-11-07T14:34:00Z"},
+        "audit": {"topHoldersPercentage": 35.5, "devMints": 1},
+    }
+    t = parse_token(sample)
+    assert t.trades_1h == 4865 and t.traders_1h == 258
+    assert classify(t, now=NOW) == "calm"
+    eng = Engine(Config(data_dir=tmp_path), jupiter=FakeJup({}))
+    assert "besar" in eng.eligible(t, "calm")

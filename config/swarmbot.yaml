@@ -1,0 +1,45 @@
+# swarmbot: beli token Solana yang mood-nya (versi dotswarm.fun) shocked, happy, atau calm.
+# Ubah angka di sini lalu restart:  sudo systemctl restart swarmbot
+
+mode: paper                 # hanya simulasi. Uang sungguhan belum dibuat.
+
+buy_moods: [shocked, happy, calm]   # urutan = prioritas kalau slot terbatas
+take_profit_pct: 15         # jual kalau harga naik 15% dari harga beli
+stop_loss_pct: 10           # jual kalau harga turun 10% dari harga beli
+
+position_usd: 10            # besar tiap pembelian (USD simulasi)
+starting_cash_usd: 100      # saldo simulasi awal (dipakai sekali saat pertama jalan)
+max_open_positions: 5       # paling banyak 5 token dipegang sekaligus
+max_buys_per_hour: 6
+cooldown_minutes: 60        # setelah jual, token yang sama tidak dibeli lagi selama ini
+max_hold_hours: 0           # 0 = tidak ada batas waktu; hanya TP atau SL yang menjual
+
+poll_seconds: 30            # cek mood semua token tiap 30 detik
+price_check_seconds: 10     # cek harga token yang dipegang tiap 10 detik
+
+filters:
+  min_liquidity_usd: 20000  # lewati token dengan likuiditas kecil (susah dijual)
+  min_mcap_usd: 50000
+  max_mcap_usd: 20000000    # lewati koin besar (SOL, BTC, stablecoin); 0 = tanpa batas
+  skip_suspicious: true     # lewati token yang ditandai mencurigakan oleh Jupiter
+
+paper:
+  fee_pct: 1.0              # perkiraan fee + selip tiap beli dan tiap jual
+
+jupiter:
+  base_url: https://lite-api.jup.ag   # otomatis pindah ke api.jup.ag kalau JUPITER_API_KEY diisi di .env
+  limit: 100
+  lists: [toptrending/5m, toptrending/1h, toptraded/1h, toporganicscore/1h, recent]
+
+# Aturan mood, sama dengan dotswarm.fun/how. "calm" tidak punya angka di situs; ini batas kita.
+mood_rules:
+  shocked_5m_pct: 30
+  happy_1h_pct: 20
+  stressed_1h_pct: -20
+  rekt_1h_pct: -60
+  rekt_24h_pct: -80
+  calm_max_abs_5m_pct: 5
+  calm_max_abs_1h_pct: 10
+  calm_min_traders_1h: 2
+
+data_dir: data/swarmbot
