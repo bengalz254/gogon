@@ -76,7 +76,7 @@ python -m hlbot.backtest
 python -m hlbot.backtest --coin ETH --days 60
 python -m hlbot.backtest --coin SOL --save-candles data/sol_30m.csv
 
-# Bandingkan mode exit / tambah stop-loss opsional 30% margin (= 3% harga di 10x):
+# Bandingkan mode exit / coba stop-loss 30% margin (= 3% harga di 10x) tanpa mengubah config:
 python -m hlbot.backtest --exit-mode fixed
 python -m hlbot.backtest --stop-loss 0.3
 
@@ -168,7 +168,7 @@ Di mode live:
 | `trade.trailing_pct` | `0.005` | 0,5% |
 | `trade.pct_basis` | `margin` | Persen dihitung dari `margin` (ROE) atau `price` |
 | `trade.exit_mode` | `trailing` | `trailing` atau `fixed` |
-| `trade.stop_loss_pct` | `null` | Stop-loss opsional, basis sama (mis. `0.3` = 30% margin) |
+| `trade.stop_loss_pct` | `null` (kosong) | Stop-loss 30% margin **disiapkan tapi tidak aktif**. Isi `0.3` untuk mengaktifkan (= harga 3% melawan posisi di 10x) |
 | `trade.poll_seconds` | `2` | Interval cek harga untuk TP/trailing |
 | `backtest.days` | `100` | Panjang data backtest |
 | `backtest.intrabar` | `conservative` | `conservative` atau `ohlc` |

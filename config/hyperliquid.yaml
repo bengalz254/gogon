@@ -19,9 +19,10 @@ trade:
   # trailing : setelah profit 5%, trailing stop 0.5% di belakang harga terbaik (default)
   # fixed    : TP pas di 5%, plus trailing stop 0.5% sejak entry (berfungsi juga sbg stop-loss)
   exit_mode: trailing
-  # Stop-loss opsional (basis sama dgn pct_basis). null = tidak ada SL, posisi hanya ditutup
-  # oleh TP/trailing atau silang EMA berlawanan -- sesuai aturan strategi. Di 10x, gerak
-  # harga ~9% melawan posisi (~90% margin) = LIKUIDASI.
+  # Stop-loss 30% margin (= gerak harga 3% melawan posisi di 10x) sudah DISIAPKAN, tapi
+  # sengaja DIKOSONGKAN (null) -> SL TIDAK aktif. Posisi rugi hanya ditutup oleh silang EMA
+  # berlawanan, atau likuidasi (gerak harga ~9% melawan posisi = ~90% margin).
+  # Untuk mengaktifkan: ganti null dengan 0.3
   stop_loss_pct: null
   max_slippage: 0.01             # batas slippage order market (IOC)
   poll_seconds: 2                # seberapa sering harga dicek untuk TP/trailing

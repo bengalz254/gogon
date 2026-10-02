@@ -16,6 +16,7 @@ def test_shipped_config_uses_margin_basis(monkeypatch):
     assert t.tp_price_pct == pytest.approx(0.005)  # 5% of margin at 10x
     assert t.trailing_price_pct == pytest.approx(0.0005)  # 0.5% of margin at 10x
     assert s.backtest.intrabar == "conservative"
+    assert t.stop_loss_pct is None and t.stop_loss_price_pct is None  # SL 30% prepared but left empty
 
 
 def test_rejects_unknown_basis(tmp_path, monkeypatch):
