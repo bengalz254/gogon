@@ -109,3 +109,18 @@ def test_rejects_bad_side_and_mode():
         tracker(side="UP")
     with pytest.raises(ValueError):
         tracker(mode="moon")
+
+
+def test_no_take_profit_only_stop_loss_closes():
+    t = tracker(tp_pct=None, trailing_pct=None, stop_loss_pct=0.06)
+    assert t.tp_price is None
+    for p in (110.0, 150.0, 120.0, 95.0):  # big run up and pull back: no TP, no trailing
+        assert t.on_price(p) is None
+    assert not t.trailing_active
+    ev = t.on_price(93.0)
+    assert ev.reason == "STOP_LOSS" and ev.price == pytest.approx(94.0)
+
+
+def test_fixed_mode_requires_take_profit():
+    with pytest.raises(ValueError):
+        tracker(tp_pct=None, mode="fixed")

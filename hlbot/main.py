@@ -11,13 +11,15 @@ Startup:
      exchange position.
 
 Loop (every trade.poll_seconds):
-  * After each 30m candle has CLOSED (+ a few seconds for the API to catch
-    up), fetch candles, drop the still-forming one and check EMA fast/slow:
+  * After each candle (strategy.interval) has CLOSED (+ a few seconds for the
+    API to catch up), fetch candles, drop the still-forming one and check EMA
+    fast/slow:
       cross up   -> close SHORT if open, open LONG
       cross down -> close LONG if open, open SHORT
       no cross   -> do nothing
   * While a position is open, feed the current price to the ExitTracker
-    (TP 5% -> trailing 0.5% of margin) and close the position when it fires.
+    (stop-loss, and TP -> trailing when a TP is configured) and close the
+    position when it fires.
 """
 from __future__ import annotations
 
@@ -220,10 +222,12 @@ class LiveBot:
         self.tracker = self._new_tracker(side, fill.price)
         self.position_size = fill.size
         t = self.tracker
+        sl = t.protective_stop()
         logger.info(
-            "[%s] OPEN %s %s size=%s @ %.6g | TP at %.6g, then trailing %.3f%% of price",
-            self.mode.upper(), side, self.s.strategy.coin, fill.size, fill.price, t.tp_price,
-            t.trailing_pct * 100,
+            "[%s] OPEN %s %s size=%s @ %.6g | TP %s | SL %s",
+            self.mode.upper(), side, self.s.strategy.coin, fill.size, fill.price,
+            "off" if t.tp_price is None else f"{t.tp_price:.6g} then trailing {t.trailing_pct * 100:.3f}%",
+            "off" if sl is None else f"{sl.price:.6g}",
         )
         self.journal.record(self.mode, self.s.strategy.coin, "OPEN", side, fill.price, fill.size,
                             f"EMA{self.s.strategy.ema_fast}/{self.s.strategy.ema_slow} cross")
@@ -327,7 +331,7 @@ def run() -> int:
         broker = HyperliquidBroker(
             st.coin, conn.secret_key, conn.account_address, conn.base_url, settings.trade.max_slippage,
             # move the exchange stop in steps well below the trailing distance
-            stop_order_min_move=min(0.001, settings.trade.trailing_price_pct / 5),
+            stop_order_min_move=min(0.001, (settings.trade.trailing_price_pct or 0.005) / 5),
         )
     else:
         from hlbot.broker import PaperBroker
@@ -343,12 +347,16 @@ def run() -> int:
     signal_module.signal(signal_module.SIGINT, _request_stop)
     signal_module.signal(signal_module.SIGTERM, _request_stop)
     tr = settings.trade
+
+    def pct(v):
+        return "off" if v is None else f"{v * 100:.2f}%"
+
     logger.info(
-        "Running: %s %s EMA%d/%d, %dx %s, margin $%.2f (notional $%.2f), TP %.2f%% trailing %.2f%% of %s "
-        "(= %.3f%% / %.3f%% price move, %s mode)",
+        "Running: %s %s EMA%d/%d, %dx %s, margin $%.2f (notional $%.2f) | TP %s, trailing %s, SL %s of %s "
+        "(SL = %s price move)",
         st.coin, st.interval, st.ema_fast, st.ema_slow, tr.leverage, tr.margin_mode, tr.margin_usd,
-        tr.notional_usd, tr.take_profit_pct * 100, tr.trailing_pct * 100, tr.pct_basis,
-        tr.tp_price_pct * 100, tr.trailing_price_pct * 100, tr.exit_mode,
+        tr.notional_usd, pct(tr.take_profit_pct), pct(tr.trailing_pct if tr.take_profit_pct else None),
+        pct(tr.stop_loss_pct), tr.pct_basis, pct(tr.stop_loss_price_pct),
     )
 
     while not _stop:

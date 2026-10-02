@@ -149,3 +149,13 @@ def test_sweep_covers_grid_and_sorts_by_conservative_pnl():
     pnls = [r["net_pnl_conservative"] for r in rows]
     assert pnls == sorted(pnls, reverse=True)
     assert all(r["net_pnl_ohlc"] >= r["net_pnl_conservative"] - 1e-9 for r in rows)
+
+
+def test_no_take_profit_exits_only_on_reverse_signal():
+    closes = down_then_up() + [100.0 - 0.5 * i for i in range(1, 41)]
+    candles = candles_from_closes(closes, wick=0.002)
+    res = run_backtest(candles, strategy_cfg(), trade_cfg(take_profit_pct=None), frictionless("conservative"))
+    assert [(t.side, t.exit_reason) for t in res.trades] == [(LONG, "REVERSE_SIGNAL"), (SHORT, "END_OF_DATA")]
+    # the long rode the whole trend up instead of being cut at a TP
+    assert res.trades[0].pnl_usd > 0
+    assert res.summary()["params"]["take_profit_pct"] is None

@@ -16,7 +16,11 @@ leverage, see TradeConfig.pct_basis):
   `trailing_pct` behind the best price seen since entry (which also works as
   a tight stop-loss right after entry).
 
-Optional `stop_loss_pct` and `liquidation_price` are honoured in both modes.
+With `tp_pct=None` there is no take-profit and no trailing stop at all: the
+position is only closed by the strategy (opposite EMA cross), the optional
+stop-loss or liquidation.
+
+Optional `stop_loss_pct` and `liquidation_price` are honoured in all modes.
 """
 from __future__ import annotations
 
@@ -38,8 +42,8 @@ class ExitEvent:
 class ExitTracker:
     side: str
     entry_price: float
-    tp_pct: float
-    trailing_pct: float
+    tp_pct: Optional[float]
+    trailing_pct: Optional[float]
     mode: str = "trailing"
     stop_loss_pct: Optional[float] = None
     liquidation_price: Optional[float] = None
@@ -53,6 +57,8 @@ class ExitTracker:
             raise ValueError(f"side must be LONG or SHORT, got {self.side!r}")
         if self.mode not in EXIT_MODES:
             raise ValueError(f"exit mode must be one of {EXIT_MODES}, got {self.mode!r}")
+        if self.mode == "fixed" and self.tp_pct is None:
+            raise ValueError("exit mode 'fixed' needs a take-profit")
         if not self.best_price:
             self.best_price = self.entry_price
         if not self.worst_price:
@@ -68,7 +74,9 @@ class ExitTracker:
         return 1 if self.side == LONG else -1
 
     @property
-    def tp_price(self) -> float:
+    def tp_price(self) -> Optional[float]:
+        if self.tp_pct is None:
+            return None
         return self.entry_price * (1 + self.direction * self.tp_pct)
 
     @property
@@ -123,7 +131,8 @@ class ExitTracker:
                 return ExitEvent(self.tp_price, "TAKE_PROFIT")
             if (b - self.best_price) * d > 0:
                 self.best_price = b
-            if not self.trailing_active and (self.best_price - self.tp_price) * d >= 0:
+            tp = self.tp_price
+            if not self.trailing_active and tp is not None and (self.best_price - tp) * d >= 0:
                 self.trailing_active = True
             return None
 

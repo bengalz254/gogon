@@ -1,8 +1,8 @@
 # gogon — Polymarket Auto-Trading Bot
 
-> **Also in this repo:** a Hyperliquid perpetuals bot (ZEC by default, EMA 9/21 cross on
-> closed 30m candles, 10x, TP 5% + trailing 0.5% of margin, mandatory backtest) —
-> see [HYPERLIQUID.md](HYPERLIQUID.md) (Bahasa Indonesia).
+> **Also in this repo:** a Hyperliquid perpetuals bot (SOL by default, EMA 9/21 cross on
+> closed 4h candles, 5x, exit on the opposite cross or a 30%-of-margin stop-loss,
+> mandatory backtest) — see [HYPERLIQUID.md](HYPERLIQUID.md) (Bahasa Indonesia).
 
 An automated trading bot for [Polymarket](https://polymarket.com) built on
 Polymarket's official CLOB (Central Limit Order Book) API. It scans active

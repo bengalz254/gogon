@@ -8,18 +8,25 @@ from hlbot.config import load_hl_settings
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def test_shipped_config_uses_margin_basis(monkeypatch):
+def test_shipped_config(monkeypatch):
     monkeypatch.setenv("HL_LIVE_TRADING", "false")
     s = load_hl_settings(config_path=os.path.join(ROOT, "config", "hyperliquid.yaml"), env_path=os.devnull)
     t = s.trade
-    assert (s.strategy.coin, s.strategy.interval, s.strategy.ema_fast, s.strategy.ema_slow) == ("ZEC", "30m", 9, 21)
-    assert t.margin_usd == 100 and t.notional_usd == 1000
+    assert (s.strategy.coin, s.strategy.interval, s.strategy.ema_fast, s.strategy.ema_slow) == ("SOL", "4h", 9, 21)
+    assert t.leverage == 5 and t.pct_basis == "margin"
+    assert t.margin_usd == 100 and t.notional_usd == 500
+    assert t.take_profit_pct is None and t.tp_price_pct is None  # no TP: exit on opposite cross / SL
+    assert t.stop_loss_pct == 0.3 and t.stop_loss_price_pct == pytest.approx(0.06)  # 30% of margin at 5x
     assert s.backtest.maintenance_margin_rate is None  # "auto"
-    assert t.leverage == 10 and t.pct_basis == "margin"
-    assert t.tp_price_pct == pytest.approx(0.005)  # 5% of margin at 10x
-    assert t.trailing_price_pct == pytest.approx(0.0005)  # 0.5% of margin at 10x
-    assert s.backtest.intrabar == "conservative"
-    assert t.stop_loss_pct is None and t.stop_loss_price_pct is None  # SL 30% prepared but left empty
+    assert s.backtest.days == 800
+
+
+def test_tp_null_with_fixed_mode_is_rejected(tmp_path, monkeypatch):
+    monkeypatch.setenv("HL_LIVE_TRADING", "false")
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text("trade:\n  take_profit_pct: null\n  exit_mode: fixed\n")
+    with pytest.raises(ValueError):
+        load_hl_settings(config_path=str(cfg), env_path=os.devnull)
 
 
 def test_rejects_unknown_basis(tmp_path, monkeypatch):
@@ -58,7 +65,7 @@ def test_auto_maintenance_margin_from_max_leverage(monkeypatch):
 def test_leverage_above_coin_max_is_rejected(monkeypatch):
     s = _settings(monkeypatch)
     with pytest.raises(ValueError):
-        resolve_maintenance_margin(s, FakeMetaInfo(max_lev=5))
+        resolve_maintenance_margin(s, FakeMetaInfo(max_lev=3))
 
 
 def test_unlisted_coin_is_rejected(monkeypatch):
@@ -70,4 +77,4 @@ def test_unlisted_coin_is_rejected(monkeypatch):
 def test_offline_falls_back_to_conservative_maintenance_margin(monkeypatch):
     s = _settings(monkeypatch)
     resolve_maintenance_margin(s, FakeMetaInfo(error=ConnectionError("offline")))
-    assert s.backtest.maintenance_margin_rate == pytest.approx(1 / 20)  # as if max leverage were 10x
+    assert s.backtest.maintenance_margin_rate == pytest.approx(1 / 10)  # as if max leverage were 5x

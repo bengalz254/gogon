@@ -20,8 +20,8 @@ MIN_ORDER_NOTIONAL_USD = 10.0
 
 @dataclass
 class StrategyConfig:
-    coin: str = "ZEC"
-    interval: str = "30m"
+    coin: str = "SOL"
+    interval: str = "4h"
     ema_fast: int = 9
     ema_slow: int = 21
 
@@ -32,17 +32,17 @@ INTRABAR_MODES = ("conservative", "ohlc")
 
 @dataclass
 class TradeConfig:
-    leverage: int = 10
+    leverage: int = 5
     margin_mode: str = "isolated"  # isolated | cross
     margin_usd: float = 100.0  # margin per position; notional = margin_usd * leverage
-    take_profit_pct: float = 0.05
-    trailing_pct: float = 0.005
+    take_profit_pct: Optional[float] = None  # None = no TP / trailing: exit on opposite cross or stop-loss
+    trailing_pct: Optional[float] = 0.005
     # What take_profit_pct / trailing_pct / stop_loss_pct are measured against:
     #   margin -> % of margin (ROE); at 10x, 2% of margin = 0.2% price move
     #   price  -> % price move
     pct_basis: str = "margin"
     exit_mode: str = "trailing"  # trailing | fixed  (see hlbot/position.py)
-    stop_loss_pct: Optional[float] = None
+    stop_loss_pct: Optional[float] = 0.3
     max_slippage: float = 0.01
     poll_seconds: float = 2.0
     candle_close_delay_seconds: float = 5.0
@@ -59,11 +59,11 @@ class TradeConfig:
         return pct / self.leverage if self.pct_basis == "margin" else pct
 
     @property
-    def tp_price_pct(self) -> float:
+    def tp_price_pct(self) -> Optional[float]:
         return self.to_price_pct(self.take_profit_pct)
 
     @property
-    def trailing_price_pct(self) -> float:
+    def trailing_price_pct(self) -> Optional[float]:
         return self.to_price_pct(self.trailing_pct)
 
     @property
@@ -73,7 +73,7 @@ class TradeConfig:
 
 @dataclass
 class BacktestConfig:
-    days: int = 100
+    days: int = 800
     initial_equity_usd: float = 1000.0
     taker_fee: float = 0.00045
     slippage: float = 0.0002
@@ -141,27 +141,27 @@ def load_hl_settings(config_path: Optional[str] = None, env_path: Optional[str] 
     b_raw = raw.get("backtest", {}) or {}
 
     strategy = StrategyConfig(
-        coin=str(s_raw.get("coin", "ZEC")).upper(),
-        interval=str(s_raw.get("interval", "30m")),
+        coin=str(s_raw.get("coin", "SOL")).upper(),
+        interval=str(s_raw.get("interval", "4h")),
         ema_fast=int(s_raw.get("ema_fast", 9)),
         ema_slow=int(s_raw.get("ema_slow", 21)),
     )
     trade = TradeConfig(
-        leverage=int(t_raw.get("leverage", 10)),
+        leverage=int(t_raw.get("leverage", 5)),
         margin_mode=str(t_raw.get("margin_mode", "isolated")).lower(),
         margin_usd=float(t_raw.get("margin_usd", 100.0)),
-        take_profit_pct=float(t_raw.get("take_profit_pct", 0.05)),
-        trailing_pct=float(t_raw.get("trailing_pct", 0.005)),
+        take_profit_pct=_opt_float(t_raw.get("take_profit_pct")),
+        trailing_pct=_opt_float(t_raw.get("trailing_pct", 0.005)),
         pct_basis=str(t_raw.get("pct_basis", "margin")).lower(),
         exit_mode=str(t_raw.get("exit_mode", "trailing")).lower(),
-        stop_loss_pct=_opt_float(t_raw.get("stop_loss_pct")),
+        stop_loss_pct=_opt_float(t_raw.get("stop_loss_pct", 0.3)),
         max_slippage=float(t_raw.get("max_slippage", 0.01)),
         poll_seconds=float(t_raw.get("poll_seconds", 2.0)),
         candle_close_delay_seconds=float(t_raw.get("candle_close_delay_seconds", 5.0)),
         exchange_stop_order=bool(t_raw.get("exchange_stop_order", True)),
     )
     backtest = BacktestConfig(
-        days=int(b_raw.get("days", 100)),
+        days=int(b_raw.get("days", 800)),
         initial_equity_usd=float(b_raw.get("initial_equity_usd", 1000.0)),
         taker_fee=float(b_raw.get("taker_fee", 0.00045)),
         slippage=float(b_raw.get("slippage", 0.0002)),
@@ -194,10 +194,14 @@ def validate(settings: HLSettings) -> None:
         raise ValueError(f"trade.exit_mode must be one of {EXIT_MODES}")
     if t.pct_basis not in PCT_BASES:
         raise ValueError(f"trade.pct_basis must be one of {PCT_BASES}")
-    if t.take_profit_pct <= 0 or t.trailing_pct <= 0:
-        raise ValueError("trade.take_profit_pct and trade.trailing_pct must be > 0")
-    if t.trailing_pct >= t.take_profit_pct and t.exit_mode == "trailing":
-        raise ValueError("trade.trailing_pct must be smaller than trade.take_profit_pct")
+    if t.take_profit_pct is None:
+        if t.exit_mode == "fixed":
+            raise ValueError("trade.exit_mode 'fixed' needs trade.take_profit_pct")
+    else:
+        if not t.trailing_pct:
+            raise ValueError("trade.trailing_pct must be > 0 when trade.take_profit_pct is set")
+        if t.trailing_pct >= t.take_profit_pct and t.exit_mode == "trailing":
+            raise ValueError("trade.trailing_pct must be smaller than trade.take_profit_pct")
     if settings.backtest.intrabar not in INTRABAR_MODES:
         raise ValueError(f"backtest.intrabar must be one of {INTRABAR_MODES}")
     if t.notional_usd < MIN_ORDER_NOTIONAL_USD:

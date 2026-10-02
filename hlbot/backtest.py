@@ -198,6 +198,7 @@ def run_backtest(
             "trailing_price_pct": trade.trailing_price_pct,
             "exit_mode": trade.exit_mode,
             "stop_loss_pct": trade.stop_loss_pct,
+            "stop_loss_price_pct": trade.stop_loss_price_pct,
             "intrabar": bt.intrabar,
             "taker_fee": bt.taker_fee,
             "slippage": bt.slippage,
@@ -308,6 +309,28 @@ def run_backtest(
     return result
 
 
+def _pct(v: Optional[float], digits: int = 2) -> str:
+    return "off" if v is None else f"{v * 100:.{digits}f}%"
+
+
+def _exit_line(p: dict) -> str:
+    if p["take_profit_pct"] is None:
+        exits = "TP=off (tutup hanya saat silang EMA berlawanan / SL)"
+    else:
+        exits = f"mode={p['exit_mode']} TP={_pct(p['take_profit_pct'])} trailing={_pct(p['trailing_pct'])}"
+    return f" Exit          : {exits} SL={_pct(p['stop_loss_pct'])} (dari {p['pct_basis']})"
+
+
+def _price_line(p: dict) -> str:
+    parts = []
+    if p["tp_price_pct"] is not None:
+        parts.append(f"TP {_pct(p['tp_price_pct'], 3)} | trailing {_pct(p['trailing_price_pct'], 3)}")
+    if p["stop_loss_pct"] is not None:
+        parts.append(f"SL {_pct(p['stop_loss_price_pct'], 2)}")
+    parts.append(f"intrabar={p['intrabar']}")
+    return " = gerak harga : " + " | ".join(parts)
+
+
 def print_summary(summary: dict, file=sys.stdout) -> None:
     p = summary["params"]
     lines = [
@@ -316,12 +339,8 @@ def print_summary(summary: dict, file=sys.stdout) -> None:
         "=" * 64,
         f" Strategi      : EMA{p['ema_fast']}/EMA{p['ema_slow']} cross, leverage {p['leverage']}x, "
         f"margin ${p['margin_usd']}/posisi",
-        f" Exit          : mode={p['exit_mode']} TP={p['take_profit_pct'] * 100:.2f}% "
-        f"trailing={p['trailing_pct'] * 100:.2f}% SL="
-        + (f"{p['stop_loss_pct'] * 100:.2f}%" if p["stop_loss_pct"] else "off")
-        + f" (dari {p['pct_basis']})",
-        f" = gerak harga : TP {p['tp_price_pct'] * 100:.3f}% | trailing {p['trailing_price_pct'] * 100:.3f}% "
-        f"| intrabar={p['intrabar']}",
+        _exit_line(p),
+        _price_line(p),
         f" Candle        : {summary['candles']}",
         f" Jumlah trade  : {summary['trades']} (long {summary['long_trades']}, short {summary['short_trades']})",
         f" Win rate      : {summary['win_rate_pct']}%",
@@ -450,7 +469,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--stop-loss", type=float, help="override trade.stop_loss_pct, e.g. 0.3 (0 = off)")
     ap.add_argument("--pct-basis", choices=["margin", "price"], help="override trade.pct_basis")
     ap.add_argument("--intrabar", choices=["conservative", "ohlc"], help="override backtest.intrabar")
-    ap.add_argument("--tp", type=float, help="override trade.take_profit_pct, e.g. 0.1")
+    ap.add_argument("--tp", type=float, help="override trade.take_profit_pct, e.g. 0.1 (0 = no TP)")
     ap.add_argument("--trailing", type=float, help="override trade.trailing_pct, e.g. 0.02")
     ap.add_argument("--leverage", type=int, help="override trade.leverage, e.g. 5")
     ap.add_argument("--interval", choices=sorted(INTERVAL_MS, key=lambda k: INTERVAL_MS[k]),
@@ -473,8 +492,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         settings.trade.pct_basis = args.pct_basis
     if args.intrabar:
         settings.backtest.intrabar = args.intrabar
-    if args.tp:
-        settings.trade.take_profit_pct = args.tp
+    if args.tp is not None:
+        settings.trade.take_profit_pct = args.tp or None
     if args.trailing:
         settings.trade.trailing_pct = args.trailing
     if args.leverage:

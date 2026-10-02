@@ -1,47 +1,52 @@
 # Konfigurasi bot EMA-cross Hyperliquid (python -m hlbot.main).
 # Rahasia (private key, alamat wallet, saklar live) ada di .env, BUKAN di sini.
+#
+# Setelan 4h / 5x / tanpa TP / SL 30% dipilih dari backtest ZEC (Jul 2024 - Okt 2026): satu-
+# satunya kombinasi yang untung di ketiga periode uji (15m, 30m, 1h rugi di periode sideways).
+# Coin sekarang SOL -> setelan ini BELUM teruji di SOL. Uji dulu (lihat HYPERLIQUID.md).
 
 strategy:
-  coin: ZEC            # nama perp di Hyperliquid: ZEC, BTC, ETH, SOL, ...
-  interval: 30m        # candle 30 menit; sinyal hanya dari candle yang SUDAH ditutup
+  coin: SOL            # nama perp di Hyperliquid (SOL = SOLUSDT): SOL, BTC, ETH, ZEC, ...
+  interval: 4h         # candle 4 jam; sinyal hanya dari candle yang SUDAH ditutup
   ema_fast: 9
   ema_slow: 21
 
 trade:
-  leverage: 10
+  leverage: 5
   margin_mode: isolated   # isolated (rugi maksimal = margin posisi) | cross
-  margin_usd: 100         # margin per posisi -> nilai posisi = 100 x 10 = $1000
-  take_profit_pct: 0.05   # 5% dari margin (ROE) -> di 10x = gerak harga 0.5%
-  trailing_pct: 0.005     # 0.5% dari margin (ROE) -> di 10x = gerak harga 0.05%
+  margin_usd: 100         # margin per posisi -> nilai posisi = 100 x 5 = $500
+  # null = TANPA take-profit / trailing: posisi hanya ditutup oleh silang EMA berlawanan
+  # (yang langsung membuka posisi arah sebaliknya) atau oleh stop-loss.
+  # Isi angka (mis. 0.5 = 50% margin) untuk mengaktifkan TP + trailing.
+  take_profit_pct: null
+  trailing_pct: 0.005     # hanya dipakai kalau take_profit_pct diisi
   # margin : persen TP/trailing/SL dihitung dari margin (ROE) (default)
-  # price  : persen dihitung dari gerak harga (2% harga = 20% ROE di 10x)
+  # price  : persen dihitung dari gerak harga (6% harga = 30% ROE di 5x)
   pct_basis: margin
-  # trailing : setelah profit 5%, trailing stop 0.5% di belakang harga terbaik (default)
-  # fixed    : TP pas di 5%, plus trailing stop 0.5% sejak entry (berfungsi juga sbg stop-loss)
+  # trailing : setelah TP tersentuh, trailing stop di belakang harga terbaik (default)
+  # fixed    : TP pas di take_profit_pct, plus trailing stop sejak entry (butuh TP diisi)
   exit_mode: trailing
-  # Stop-loss 30% margin (= gerak harga 3% melawan posisi di 10x) sudah DISIAPKAN, tapi
-  # sengaja DIKOSONGKAN (null) -> SL TIDAK aktif. Posisi rugi hanya ditutup oleh silang EMA
-  # berlawanan, atau likuidasi. Jarak likuidasi tergantung max leverage coin: di 10x kira-kira
-  # 9% gerak harga untuk BTC (max 40x), tapi hanya ~5% untuk coin yang max-nya 10x.
-  # Backtest menampilkan jarak likuidasi untuk coin yang dipakai.
-  # Untuk mengaktifkan: ganti null dengan 0.3
-  stop_loss_pct: null
+  # Stop-loss 30% dari margin = gerak harga 6% melawan posisi di 5x ($30 dari margin $100).
+  # Jauh sebelum likuidasi di 5x (~16-18% gerak harga, tergantung coin). Di backtest ZEC tanpa
+  # SL sempat terjadi hingga 8 likuidasi, jadi SL ini DIAKTIFKAN. null = matikan SL.
+  stop_loss_pct: 0.3
   max_slippage: 0.01             # batas slippage order market (IOC)
-  poll_seconds: 2                # seberapa sering harga dicek untuk TP/trailing
+  poll_seconds: 2                # seberapa sering harga dicek untuk SL (dan TP/trailing bila aktif)
   candle_close_delay_seconds: 5  # tunggu sebentar setelah candle tutup agar data API lengkap
-  exchange_stop_order: true      # (live) pasang stop-market reduce-only di exchange saat trailing aktif
+  exchange_stop_order: true      # (live) pasang stop-market reduce-only di exchange untuk SL/trailing
 
 backtest:
-  days: 100                  # Hyperliquid hanya menyediakan 5000 candle terakhir (~104 hari di 30m)
+  days: 800                  # Hyperliquid hanya menyediakan 5000 candle terakhir (~833 hari di 4h)
   initial_equity_usd: 1000   # modal awal simulasi (margin $100 = 10% modal per posisi)
   taker_fee: 0.00045         # fee taker Hyperliquid (tier dasar)
   slippage: 0.0002           # slippage per eksekusi
   # auto = dihitung dari max leverage coin di Hyperliquid (1 / (2 x max leverage)),
   # dipakai untuk estimasi harga likuidasi. Bisa diisi angka manual, mis. 0.05
   maintenance_margin_rate: auto
-  # Candle 30m hanya punya OHLC, jadi pergerakan di dalam candle tidak diketahui.
+  # Hanya berpengaruh bila TP diisi. Candle hanya punya OHLC, jadi pergerakan di dalam
+  # candle tidak diketahui.
   # conservative : begitu trailing aktif, anggap harga langsung berbalik -> exit di profit
-  #                minimum yang terkunci (TP - trailing = 4.5% margin). Realistis utk trailing ketat.
-  # ohlc         : ikuti jalur open->low->high->close; terlalu optimis utk trailing 0.05% harga.
+  #                minimum yang terkunci (TP - trailing). Realistis utk trailing ketat.
+  # ohlc         : ikuti jalur open->low->high->close; terlalu optimis utk trailing ketat.
   intrabar: conservative
   block_live_if_unprofitable: true  # tolak mode LIVE bila hasil backtest rugi

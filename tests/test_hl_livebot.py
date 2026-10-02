@@ -205,3 +205,26 @@ def test_margin_basis_live_tp_and_trailing(tmp_path, scenario):
     bot.tick()
     assert bot.tracker is None
     assert journal_rows(tmp_path)[-1]["reason"] == "TRAILING_STOP"
+
+
+def test_no_take_profit_live_exits_only_on_stop_loss(tmp_path, scenario):
+    candles, k = scenario
+    info = FakeInfo(candles, price=100.0)
+    clock = Clock(candles[k].t + 60_000)
+    bot = make_bot(tmp_path, info, clock)
+    bot.s.trade.take_profit_pct = None
+    bot.s.trade.pct_basis = "margin"
+    bot.s.trade.stop_loss_pct = 0.3  # 30% of margin at 10x = 3% price
+    bot.start()
+    clock.t_ms = candles[k].t + SPAN_30M + 6_000
+    bot.tick()
+    assert bot.tracker.tp_price is None
+
+    for p in (110.0, 104.0, 97.5):
+        info.price = p
+        bot.tick()
+        assert bot.tracker is not None
+    info.price = 96.9
+    bot.tick()
+    assert bot.tracker is None
+    assert journal_rows(tmp_path)[-1]["reason"] == "STOP_LOSS"

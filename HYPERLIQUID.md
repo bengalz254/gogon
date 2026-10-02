@@ -1,63 +1,59 @@
 # Bot EMA Cross untuk Hyperliquid (`hlbot`)
 
-Bot trading perpetual di [Hyperliquid](https://app.hyperliquid.xyz) dengan
-aturan sederhana:
+Bot trading perpetual di [Hyperliquid](https://app.hyperliquid.xyz). Setelan
+saat ini (`config/hyperliquid.yaml`):
 
 | Aturan | Implementasi |
 |---|---|
 | **Wajib backtest** | Setiap kali bot dijalankan, backtest otomatis jalan dulu dengan parameter yang sama. Kalau backtest gagal → bot tidak start. Di mode LIVE, kalau hasil backtest rugi → bot menolak trading live. |
-| Candle 30 menit harus sudah **ditutup** | Candle yang masih berjalan selalu dibuang. Sinyal dibaca beberapa detik setelah candle tutup. |
+| Pair | **SOL** (SOLUSDT) |
+| Candle **4 jam** harus sudah **ditutup** | Candle yang masih berjalan selalu dibuang. Sinyal dibaca beberapa detik setelah candle tutup. |
 | EMA 9 menyilang **ke atas** EMA 21 | Tutup SHORT (kalau ada), lalu buka **LONG**. |
 | EMA 9 menyilang **ke bawah** EMA 21 | Tutup LONG (kalau ada), lalu buka **SHORT**. |
-| Tidak ada silang | Bot **diam**. |
-| Leverage | **10x** (isolated) |
-| TP 5%, trailing 0,5% **dari margin** | Setelah profit mencapai **5% dari margin** (di 10x = gerak harga 0,5%), trailing stop aktif **0,5% dari margin** (gerak harga 0,05%) di belakang harga terbaik. |
+| Tidak ada silang | Bot **diam** (posisi yang ada tetap dipegang). |
+| Leverage | **5x** isolated, margin **$100** per posisi (posisi $500) |
+| Take profit | **Tidak ada.** Posisi hanya ditutup oleh silang EMA berlawanan atau stop-loss. |
+| Stop-loss | **30% dari margin** = harga bergerak 6% melawan posisi (rugi ±$30). |
 
 > ⚠️ **Ini software trading dengan leverage. Bisa rugi uang sungguhan.**
-> Di 10x, harga yang bergerak melawan posisi sejauh jarak likuidasi =
-> **likuidasi** (seluruh margin posisi hilang). Jaraknya tergantung max
-> leverage coin: ±9% untuk BTC (max 40x), tapi hanya **±5%** untuk coin yang
-> max leverage-nya 10x. Backtest menampilkan jarak ini untuk coin yang dipakai. Strategi ini **tidak punya stop-loss** (sesuai aturan) —
-> posisi rugi hanya ditutup oleh silang EMA berlawanan. Jalankan di mode
-> paper / testnet dulu. Bukan saran keuangan.
+> Setelan di atas dipilih dari backtest **ZEC**, belum teruji di **SOL** —
+> jalankan uji SOL di bawah sebelum paper/live. Funding rate tidak dihitung
+> di backtest; karena bot hampir selalu memegang posisi, funding bisa
+> mengurangi hasil. Bukan saran keuangan.
 
-## Cara kerja TP + trailing (mode `trailing`, default)
+## Kenapa setelan ini (hasil uji ZEC)
 
-Persentase dihitung **dari margin (ROE)** (`pct_basis: margin`). Di 10x,
-persen margin ÷ 10 = persen gerak harga:
+Semua tes memakai margin $100, modal simulasi $1000, fee 0,045% + slippage.
+Syarat lolos: **untung di ketiga periode** dengan setelan yang sama persis.
 
-| | dari margin | gerak harga (10x) |
-|---|---|---|
-| Take profit | 5% | 0,5% |
-| Trailing | 0,5% | 0,05% |
+| Setelan | Jul 2024 – Jun 2025 (sideways) | Jul 2025 – Mei 2026 | Data terbaru Hyperliquid | Lolos |
+|---|---|---|---|---|
+| 30m, TP 5% + trailing 0,5% (setelan awal) | 23 bulan, 5x: -$1317 | — | 10x: -$226 (100 hari) | ❌ |
+| 30m, TP 50% 10x + SL 30% / TP 30% 5x (terbaik di 100 hari terakhir) | 23 bulan: -$760 / +$25 | — | +$751 / +$391 (100 hari) | ❌ |
+| 15m, 5x, tanpa TP, tanpa SL | -$1320 | +$664 | +$156 (50 hari) | ❌ |
+| 1h, 5x, tanpa TP, SL 30% | -$151 | +$1595 | +$352 (120 hari) | ❌ |
+| **4h, 5x, tanpa TP, SL 30%** | **+$54** | **+$1703** | **+$521** (120 hari) | ✅ |
 
-Contoh LONG, entry $100, margin $100 (posisi $1000):
+Pelajaran:
+- **TP kecil merusak strategi ini.** Win rate memang tinggi, tapi profit per
+  trade kecil dan habis dimakan fee, sementara kerugian saat sinyal berbalik
+  besar. Strategi EMA cross butuh membiarkan tren berjalan.
+- **Timeframe kecil = terlalu banyak trade.** Di 15m/30m fee 2 tahun mencapai
+  $650–1300 dan sinyal palsu di pasar sideways menghabiskan modal.
+- **Tanpa SL, ZEC sering terlikuidasi** (sampai 8 kali di 4h). SL 30% margin
+  mencegahnya.
+- Di periode sideways, 4h pun hanya **impas** (+$54, drawdown ±34%).
+  Profit datang dari periode tren. Siapkan mental untuk masa datar/minus
+  yang panjang.
 
-1. Harga $100,49 → belum apa-apa (profit < 5% margin).
-2. Harga sentuh **$100,50** (+5% margin = +$5) → trailing aktif, stop di
-   $100,50 × 0,9995 ≈ **$100,45**.
-3. Harga naik ke $101,00 → stop ikut naik ke ≈ **$100,95**.
-4. Harga turun ke $100,94 → **posisi ditutup** di ±$100,95.
+## Take profit + trailing (opsional, saat ini MATI)
 
-Begitu TP tersentuh, profit minimal ±4,5% dari margin (sebelum fee), dan bisa
-lebih besar kalau tren berlanjut. Setelah keluar, bot **diam** sampai ada
-silang EMA berikutnya.
-
-Kalau ingin persen dihitung dari gerak harga (5% harga = 50% margin di 10x),
-ubah ke `pct_basis: price`.
-
-Alternatif `exit_mode: fixed`: TP pasti di +5%, plus trailing stop 0,5% dari
-harga terbaik sejak entry (jadi juga berfungsi sebagai stop-loss ketat).
-Bandingkan dengan backtest: `python -m hlbot.backtest --exit-mode fixed`.
-
-### ⚠️ Fee vs TP dari margin
-
-Fee taker Hyperliquid 0,045% per eksekusi dihitung dari **nilai posisi**,
-bukan dari margin. Di 10x, buka + tutup = 0,09% × 10 = **0,9% dari margin**,
-ditambah slippage (±0,4% margin). Jadi trade yang menang dengan profit
-minimal 4,5% margin bersih sekitar **+3,2% margin**. Sementara itu trade yang rugi tidak
-dibatasi (tanpa stop-loss, hanya ditutup oleh silang EMA berlawanan) dan bisa
--20% margin atau lebih. Pastikan hasil backtest memang positif sebelum live.
+Isi `trade.take_profit_pct` (mis. `0.5` = 50% margin) untuk mengaktifkan:
+setelah profit mencapai TP, trailing stop `trailing_pct` mengikuti harga
+terbaik. Persen dihitung dari margin (`pct_basis: margin`): persen margin ÷
+leverage = persen gerak harga. Ingat fee taker 0,045% dihitung dari **nilai
+posisi**: buka + tutup = 0,09% × leverage dari margin. Di uji ZEC semua
+variasi TP lebih buruk daripada tanpa TP.
 
 ## Instalasi
 
@@ -71,16 +67,15 @@ cp .env.example .env
 ## 1. Backtest (WAJIB)
 
 ```bash
-# Ambil ~100 hari candle 30m ZEC (coin di config) dari Hyperliquid lalu backtest:
+# Ambil ±800 hari candle 4h SOL (setelan di config) dari Hyperliquid lalu backtest:
 python -m hlbot.backtest
 
 # Coin lain / periode lain:
-python -m hlbot.backtest --coin BTC --days 60
-python -m hlbot.backtest --coin SOL --save-candles data/sol_30m.csv
+python -m hlbot.backtest --coin BTC --days 120
 
-# Bandingkan mode exit / coba stop-loss 30% margin (= 3% harga di 10x) tanpa mengubah config:
-python -m hlbot.backtest --exit-mode fixed
-python -m hlbot.backtest --stop-loss 0.3
+# Tanpa SL / dengan TP 50% margin, tanpa mengubah config (0 = mati):
+python -m hlbot.backtest --stop-loss 0
+python -m hlbot.backtest --tp 0.5 --trailing 0.005
 
 # Hitung persen dari gerak harga, bukan margin:
 python -m hlbot.backtest --pct-basis price
@@ -96,22 +91,40 @@ python -m hlbot.backtest --sweep --leverage 5
 python -m hlbot.backtest --csv data/zec_binance_1h.csv --interval 1h --sweep
 ```
 
-Hyperliquid hanya menyediakan **5000 candle terakhir** (±104 hari untuk 30m).
-Untuk backtest lebih panjang, unduh data kline dari
-[data.binance.vision](https://data.binance.vision) (mis.
-`data/futures/um/monthly/klines/ZECUSDT/30m/`), gabungkan CSV-nya, lalu:
+Hyperliquid hanya menyediakan **5000 candle terakhir** (±833 hari di 4h,
+±104 hari di 30m). Output: ringkasan di terminal +
+`data/hl_backtest_<COIN>_<TF>_trades.csv` (setiap trade) dan `..._report.json`.
+
+### Uji coin baru di data panjang (Binance)
+
+Wajib dilakukan setiap ganti coin. Contoh SOL 4h, dibagi 3 periode
+(2022 – Jun 2024, Jul 2024 – Jun 2025, Jul 2025 – Mei 2026) ditambah 120 hari
+terakhir di Hyperliquid. Setelan yang layak harus **untung di semua periode**.
+Jalankan dari folder `hlbot` dengan venv aktif (`unzip` dan `wget` harus
+terpasang):
 
 ```bash
-python -m hlbot.backtest --csv data/ZECUSDT-30m-2025.csv
+C=SOLUSDT; TF=4h
+mkdir -p data/binance && cd data/binance
+for m in 2022-{01..12} 2023-{01..12} 2024-{01..12} 2025-{01..12} 2026-{01..05}; do
+  wget -q https://data.binance.vision/data/futures/um/monthly/klines/$C/$TF/$C-$TF-$m.zip && unzip -o -q $C-$TF-$m.zip
+done
+cat $C-$TF-2022-*.csv $C-$TF-2023-*.csv $C-$TF-2024-0[1-6].csv > ../${C}_${TF}_p0.csv
+cat $C-$TF-2024-0[7-9].csv $C-$TF-2024-1*.csv $C-$TF-2025-0[1-6].csv > ../${C}_${TF}_p1.csv
+cat $C-$TF-2025-0[7-9].csv $C-$TF-2025-1*.csv $C-$TF-2026-*.csv > ../${C}_${TF}_p2.csv
+cd ../..
+F='BACKTEST|Jumlah|Net PnL|Profit factor|Max drawdown|Likuidasi|Biaya'
+for p in p0 p1 p2; do python -m hlbot.backtest --csv data/${C}_${TF}_$p.csv | grep -E "$F"; done
+python -m hlbot.backtest --days 120 | grep -E "$F"
 ```
 
-Output: ringkasan di terminal + `data/hl_backtest_<COIN>_30m_trades.csv`
-(setiap trade) dan `..._report.json`.
+Kalau `C` berbeda dari `strategy.coin` di config, tambahkan `--coin <NAMA>`
+(dan `--interval` kalau `TF` berbeda) di setiap perintah `hlbot.backtest`.
 
 Yang disimulasikan backtest:
 - Sinyal dibaca saat candle **tutup**, eksekusi di **open candle berikutnya**
   (sama seperti bot live).
-- TP/trailing dicek di dalam setiap candle. Candle 30m hanya punya
+- Stop-loss (dan TP/trailing bila aktif) dicek di dalam setiap candle. Candle hanya punya
   open/high/low/close, padahal trailing 0,05% harga bisa kena oleh gerakan
   kecil dalam hitungan detik. Karena itu default `intrabar: conservative`:
   begitu trailing aktif, backtest menganggap harga langsung berbalik dan exit
@@ -139,7 +152,9 @@ harga live Hyperliquid. Log di `logs/hlbot.log`, riwayat trade di
 `data/hl_trades.csv`.
 
 Saat pertama start, bot **tidak** langsung masuk berdasarkan candle yang
-sudah lewat — bot menunggu candle 30m berikutnya tutup.
+sudah lewat — bot menunggu candle 4h berikutnya tutup (candle 4h Hyperliquid
+tutup tiap 00:00, 04:00, 08:00, ... UTC = 07:00, 11:00, 15:00, ... WIB). Jadi
+bisa beberapa hari sebelum trade pertama, karena harus menunggu silang EMA.
 
 ## 3. Live trading
 
@@ -155,15 +170,15 @@ sudah lewat — bot menunggu candle 30m berikutnya tutup.
    ```
    **Jangan pernah commit `.env` atau membagikan private key.**
 3. Atur ukuran di `config/hyperliquid.yaml` → `trade.margin_usd`
-   (default $100 margin × 10x = posisi $1000). Minimal nilai posisi $10.
+   (default $100 margin × 5x = posisi $500). Minimal nilai posisi $10.
 4. `python -m hlbot.main`
 
 Di mode live:
 - Entry/exit memakai order market (IOC, slippage maks `max_slippage`).
-- Begitu trailing aktif, bot memasang **stop-market reduce-only di
-  exchange** dan menggesernya mengikuti harga, jadi posisi tetap terlindungi
-  kalau bot mati. (Sebelum profit 5% margin, tidak ada stop di exchange karena memang tidak
-  ada stop-loss.)
+- Begitu posisi dibuka, bot memasang **stop-market reduce-only di exchange**
+  di harga stop-loss (dan menggesernya mengikuti harga bila trailing aktif),
+  jadi posisi tetap terlindungi kalau bot mati. Silang EMA berlawanan tetap
+  butuh bot yang menyala.
 - State disimpan di `data/hl_state_<COIN>_live.json`; kalau bot restart,
   posisi yang terbuka dilanjutkan.
 - `Ctrl+C` menghentikan bot **tanpa** menutup posisi yang terbuka.
@@ -172,19 +187,19 @@ Di mode live:
 
 | Key | Default | Arti |
 |---|---|---|
-| `strategy.coin` | `ZEC` | Perp yang ditradingkan |
-| `strategy.interval` | `30m` | Timeframe candle |
+| `strategy.coin` | `SOL` | Perp yang ditradingkan |
+| `strategy.interval` | `4h` | Timeframe candle |
 | `strategy.ema_fast` / `ema_slow` | `9` / `21` | Periode EMA |
-| `trade.leverage` | `10` | Leverage |
+| `trade.leverage` | `5` | Leverage |
 | `trade.margin_mode` | `isolated` | `isolated` atau `cross` |
-| `trade.margin_usd` | `100` | Margin per posisi (USD) → posisi $1000 di 10x |
-| `trade.take_profit_pct` | `0.05` | 5% |
-| `trade.trailing_pct` | `0.005` | 0,5% |
+| `trade.margin_usd` | `100` | Margin per posisi (USD) → posisi $500 di 5x |
+| `trade.take_profit_pct` | `null` (mati) | TP dari margin, mis. `0.5` = 50% |
+| `trade.trailing_pct` | `0.005` | Trailing setelah TP (hanya bila TP diisi) |
 | `trade.pct_basis` | `margin` | Persen dihitung dari `margin` (ROE) atau `price` |
 | `trade.exit_mode` | `trailing` | `trailing` atau `fixed` |
-| `trade.stop_loss_pct` | `null` (kosong) | Stop-loss 30% margin **disiapkan tapi tidak aktif**. Isi `0.3` untuk mengaktifkan (= harga 3% melawan posisi di 10x) |
-| `trade.poll_seconds` | `2` | Interval cek harga untuk TP/trailing |
-| `backtest.days` | `100` | Panjang data backtest |
+| `trade.stop_loss_pct` | `0.3` | Stop-loss 30% margin (= harga 6% melawan posisi di 5x). `null` = mati |
+| `trade.poll_seconds` | `2` | Interval cek harga untuk SL (dan TP/trailing) |
+| `backtest.days` | `800` | Panjang data backtest dari Hyperliquid |
 | `backtest.initial_equity_usd` | `1000` | Modal awal simulasi |
 | `backtest.maintenance_margin_rate` | `auto` | Dari max leverage coin, untuk estimasi likuidasi |
 | `backtest.intrabar` | `conservative` | `conservative` atau `ohlc` |
