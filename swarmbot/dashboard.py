@@ -161,7 +161,7 @@ async function tick(){
  const s=d.status,t=d.trades;
  if(s.missing){$("hb").innerHTML='<span class="warn">bot belum menulis data (baru start?)</span>'}
  else{$("hb").innerHTML=s.stale?`<span class="bad">bot tidak update ${ago(s.age_s)}; cek: systemctl status swarmbot</span>`
-   :`<span class="ok">● bot jalan</span> · update ${ago(s.age_s)} lalu${s.last_scan_ok?"":' · <span class="warn">scan terakhir gagal</span>'}`;
+   :`<span class="ok">● bot jalan</span> · update ${ago(s.age_s)} lalu${s.last_scan_ok?"":' · <span class="warn">scan terakhir gagal</span>'}${s.buy_block?` · <span class="warn">tidak beli: ${esc(s.buy_block)}</span>`:""}`;
   const st=s.settings||{},start=st.starting_cash_usd||0;
   $("eq").textContent=usd(s.equity);$("eqd").innerHTML=start?`awal ${usd(start)} · ${sgn((s.equity/start-1)*100)}`:"";
   $("cash").textContent=usd(s.cash);$("np").textContent=`${s.positions.length} / ${st.max_open_positions??"?"}`;
@@ -171,7 +171,7 @@ async function tick(){
   const c=Object.entries(s.mood_counts||{}).sort((a,b)=>b[1]-a[1]);
   $("counts").innerHTML=c.length?c.map(([m,n])=>`<span>${mood(m)} ${n}</span>`).join(""):'<span class="empty">–</span>';
   $("cand").innerHTML=table(["Token","Mood","5m","1j","Likuiditas","Mcap","Status"],
-   (s.candidates||[]).map(x=>[tok(x.symbol,x.mint),mood(x.mood),sgn(x.change_5m),sgn(x.change_1h),usd(x.liquidity,0),usd(x.mcap,0),x.skip?`<span class="k">${esc(x.skip)}</span>`:'<span class="ok">boleh dibeli</span>']),"Tidak ada token dengan mood ini sekarang.");}
+   (s.candidates||[]).map(x=>[tok(x.symbol,x.mint),mood(x.mood),sgn(x.change_5m),sgn(x.change_1h),usd(x.liquidity,0),usd(x.mcap,0),x.skip?`<span class="k">${esc(x.skip)}</span>`:(s.buy_block?`<span class="warn">menunggu: ${esc(s.buy_block)}</span>`:'<span class="ok">boleh dibeli</span>')]),"Tidak ada token dengan mood ini sekarang.");}
  $("pnl").innerHTML=sgnu(t.pnl_usd);$("tpsl").textContent=`TP ${t.tp} · SL ${t.sl}`;
  $("wr").textContent=t.closed?Math.round(t.wins/t.closed*100)+"%":"–";$("cl").textContent=`${t.wins} dari ${t.closed} posisi`;
  $("curve").innerHTML=curve(t.curve);

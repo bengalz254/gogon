@@ -10,8 +10,8 @@ stop_loss_pct: 50           # jual kalau harga turun 50% dari harga beli
 position_usd: 10            # besar tiap pembelian (USD simulasi)
 starting_cash_usd: 300      # saldo simulasi awal; kalau dinaikkan, selisihnya ditambahkan ke saldo
 max_open_positions: 25      # paling banyak 25 token dipegang sekaligus
-max_buys_per_hour: 30
-cooldown_minutes: 60        # setelah jual, token yang sama tidak dibeli lagi selama ini
+max_buys_per_hour: 0        # 0 = tanpa batas; hanya max_open_positions yang membatasi
+cooldown_minutes: 15        # setelah jual, token yang sama tidak dibeli lagi selama ini
 stale_minutes: 5            # jual kalau harga tidak bergerak (lebih dari stale_move_pct) selama 5 menit; 0 = mati
 stale_move_pct: 2           # gerak di bawah 2% dianggap diam
 max_hold_hours: 6           # jual otomatis setelah 6 jam kalau belum kena TP/SL; 0 = tanpa batas

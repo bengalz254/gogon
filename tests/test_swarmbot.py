@@ -257,3 +257,17 @@ def test_coin_that_stands_still_for_5_minutes_is_sold(tmp_path):
     # A crept up 1.5% in 5 minutes: sold as "diam". B kept moving 3%: still held.
     assert "A" not in eng.paper.positions and "B" in eng.paper.positions
     assert ",diam" in (tmp_path / "trades.csv").read_text()
+
+
+def test_fills_all_25_slots_without_hourly_cap(tmp_path):
+    rows = [raw(f"T{i}", p5=40) for i in range(40)]
+    eng, _, _ = make(tmp_path, rows, max_open_positions=25, max_buys_per_hour=0, starting_cash_usd=300)
+    eng.try_buys(eng.scan())
+    assert len(eng.paper.positions) == 25
+    assert eng.buy_block.startswith("slot penuh")
+
+
+def test_hourly_cap_is_reported(tmp_path):
+    eng, _, _ = make(tmp_path, [raw(f"T{i}", p5=40) for i in range(10)], max_buys_per_hour=3)
+    eng.try_buys(eng.scan())
+    assert len(eng.paper.positions) == 3 and "per jam" in eng.buy_block

@@ -26,6 +26,7 @@ class Engine:
         self.last_scan_ok = False
         self.mood_counts: dict[str, int] = {}
         self.candidates: list[dict] = []
+        self.buy_block = ""
 
     # -- scanning -----------------------------------------------------------
     def scan(self) -> list[tuple[Token, str]]:
@@ -79,13 +80,18 @@ class Engine:
         picks = [(t, m) for t, m in labelled if not self.eligible(t, m)]
         picks.sort(key=lambda tm: (order[tm[1]], -tm[0].liquidity))
         bought = 0
+        self.buy_block = ""
         for t, mood in picks:
             now = self.clock()
             recent = [x for x in self.paper.buy_times if x > now - 3600]
-            if len(self.paper.positions) >= c.max_open_positions or len(recent) >= c.max_buys_per_hour:
-                break
-            if self.paper.cash < c.position_usd * 0.999:
-                log.info("saldo paper habis (%.2f USD); tidak beli", self.paper.cash)
+            if len(self.paper.positions) >= c.max_open_positions:
+                self.buy_block = f"slot penuh ({len(self.paper.positions)}/{c.max_open_positions})"
+            elif c.max_buys_per_hour > 0 and len(recent) >= c.max_buys_per_hour:
+                self.buy_block = f"batas {c.max_buys_per_hour} beli per jam tercapai"
+            elif self.paper.cash < c.position_usd * 0.999:
+                self.buy_block = f"saldo simulasi habis ({self.paper.cash:.2f} USD)"
+            if self.buy_block:
+                log.info("tidak beli %d kandidat: %s", len(picks) - bought, self.buy_block)
                 break
             self.paper.buy(t.mint, t.symbol, mood, t.price, c.position_usd, now)
             bought += 1
@@ -127,6 +133,7 @@ class Engine:
                 "starting_cash_usd": c.starting_cash_usd, "max_open_positions": c.max_open_positions,
             },
             "cash": self.paper.cash, "equity": self.paper.equity(),
+            "buy_block": self.buy_block,
             "mood_counts": self.mood_counts, "candidates": self.candidates, "positions": positions,
         }
         path = self.paper.dir / "status.json"

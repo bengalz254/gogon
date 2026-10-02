@@ -34,8 +34,8 @@ class Config:
     position_usd: float = 10.0
     starting_cash_usd: float = 300.0
     max_open_positions: int = 25
-    max_buys_per_hour: int = 30
-    cooldown_minutes: float = 60
+    max_buys_per_hour: int = 0
+    cooldown_minutes: float = 15
     max_hold_hours: float = 0
     stale_minutes: float = 5
     stale_move_pct: float = 2.0
