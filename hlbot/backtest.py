@@ -41,7 +41,7 @@ if __package__ in (None, ""):
 from hlbot.config import BacktestConfig, StrategyConfig, TradeConfig
 from hlbot.indicators import ema
 from hlbot.position import ExitEvent, ExitTracker
-from hlbot.strategy import LONG, Candle, closed_candles, cross_at, interval_ms
+from hlbot.strategy import INTERVAL_MS, LONG, Candle, closed_candles, cross_at, interval_ms
 
 
 def liquidation_price(side: str, entry: float, leverage: int, mmr: float) -> float:
@@ -453,6 +453,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--tp", type=float, help="override trade.take_profit_pct, e.g. 0.1")
     ap.add_argument("--trailing", type=float, help="override trade.trailing_pct, e.g. 0.02")
     ap.add_argument("--leverage", type=int, help="override trade.leverage, e.g. 5")
+    ap.add_argument("--interval", choices=sorted(INTERVAL_MS, key=lambda k: INTERVAL_MS[k]),
+                    help="override strategy.interval, e.g. 1h or 4h (must match --csv data)")
     ap.add_argument("--sweep", action="store_true",
                     help="compare many TP / trailing / stop-loss combinations (%% of margin) in one run")
     ap.add_argument("--out-dir", default="data", help="where to write the report (default: data/)")
@@ -477,6 +479,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         settings.trade.trailing_pct = args.trailing
     if args.leverage:
         settings.trade.leverage = args.leverage
+    if args.interval:
+        settings.strategy.interval = args.interval
 
     info = HyperliquidInfo(settings.connection.base_url)
     try:

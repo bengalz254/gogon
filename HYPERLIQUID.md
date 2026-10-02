@@ -91,6 +91,9 @@ python -m hlbot.backtest --tp 0.2 --trailing 0.05 --leverage 5
 # Bandingkan banyak kombinasi TP / trailing / SL (persen dari margin) sekaligus:
 python -m hlbot.backtest --sweep
 python -m hlbot.backtest --sweep --leverage 5
+
+# Timeframe lain (data CSV harus timeframe yang sama):
+python -m hlbot.backtest --csv data/zec_binance_1h.csv --interval 1h --sweep
 ```
 
 Hyperliquid hanya menyediakan **5000 candle terakhir** (±104 hari untuk 30m).
