@@ -1,0 +1,49 @@
+# swarmbot: beli token Solana yang mood-nya (versi dotswarm.fun) shocked, happy, atau calm.
+# Ubah angka di sini lalu restart:  sudo systemctl restart swarmbot
+
+mode: paper                 # hanya simulasi. Uang sungguhan belum dibuat.
+currency: SOL               # saldo dan ukuran posisi dalam SOL
+
+buy_moods: [shocked, happy]   # urutan = prioritas kalau slot terbatas
+take_profit_pct: 12         # jual kalau harga naik 12% dari harga beli
+stop_loss_pct: 7            # jual kalau harga turun 7% dari harga beli
+
+position_size: 0.1          # besar tiap pembelian (SOL simulasi)
+starting_balance: 10        # saldo simulasi awal (SOL)
+max_open_positions: 25      # paling banyak 25 token dipegang sekaligus
+max_buys_per_hour: 0        # 0 = tanpa batas; hanya max_open_positions yang membatasi
+cooldown_minutes: 15        # setelah jual, token yang sama tidak dibeli lagi selama ini
+stale_minutes: 5            # jual kalau harga tidak bergerak (lebih dari stale_move_pct) selama 5 menit; 0 = mati
+stale_move_pct: 2           # gerak di bawah 2% dianggap diam
+max_hold_minutes: 10        # jual paling lama 10 menit setelah beli, untung atau rugi; 0 = mati
+max_hold_hours: 0           # batas lama dalam jam (tidak dipakai kalau max_hold_minutes aktif)
+
+poll_seconds: 20            # cek mood semua token tiap 20 detik
+price_check_seconds: 3      # cek harga token yang dipegang tiap 3 detik (Jupiter Price API)
+
+filters:
+  min_liquidity_usd: 0       # 0 = semua token dibeli, berapa pun likuiditasnya
+  min_mcap_usd: 0           # 0 = tanpa batas bawah
+  max_mcap_usd: 0           # 0 = tanpa batas atas
+  skip_suspicious: false    # true = lewati token yang ditandai mencurigakan oleh Jupiter
+
+paper:
+  fee_pct: 1.0              # perkiraan fee + selip tiap beli dan tiap jual
+
+jupiter:
+  base_url: https://lite-api.jup.ag   # otomatis pindah ke api.jup.ag kalau JUPITER_API_KEY diisi di .env
+  limit: 100
+  lists: [toptrending/5m, toptraded/5m, toporganicscore/5m, toptrending/1h, toptraded/1h, toporganicscore/1h, recent]
+
+# Aturan mood, sama dengan dotswarm.fun/how. "calm" tidak punya angka di situs; ini batas kita.
+mood_rules:
+  shocked_5m_pct: 30
+  happy_1h_pct: 20
+  stressed_1h_pct: -20
+  rekt_1h_pct: -60
+  rekt_24h_pct: -80
+  calm_max_abs_5m_pct: 5
+  calm_max_abs_1h_pct: 10
+  calm_min_traders_1h: 2
+
+data_dir: data/swarmbot

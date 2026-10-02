@@ -9,3 +9,4 @@ logs/*.log
 data/*.csv
 data/*.sqlite3
 .DS_Store
+data/swarmbot/
