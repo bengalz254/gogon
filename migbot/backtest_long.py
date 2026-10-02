@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import os
 import statistics
+from array import array
 
 from migbot.backtest import simulate_trade
 from migbot.config import ExitConfig, Settings
 from migbot.storage import iter_long_samples
 
 AGE, PRICE, LIQ, MCAP, VOL, BUYS, SELLS = range(7)  # one sample; age in seconds
+WIDTH = 7  # numbers per sample
 HOUR, DAY = 3600, 86_400
 TRADEABLE_LIQ, TRADEABLE_MCAP = 10_000.0, 30_000.0
 ENTRY_SLACK = 3 * HOUR  # a "day 1" entry is the first sample within 3 hours after the 24-hour mark
@@ -38,23 +40,32 @@ def _f(value: str) -> float:
         return 0.0
 
 
-def load_series(path: str) -> tuple[dict[str, list[tuple]], float]:
-    """mint -> samples sorted by age, and the time of the newest sample."""
-    series: dict[str, list[tuple]] = {}
+def load_series(path: str) -> tuple[dict[str, array], float]:
+    """mint -> its samples packed in one array (as tuples, a week of every migration takes gigabytes
+    of memory), and the time of the newest sample. points() unpacks one token."""
+    series: dict[str, array] = {}
     newest = 0.0
     for row in iter_long_samples(path):
         ts, mint, age_min = _f(row[0]), row[1], _f(row[2])
         price = _f(row[3])
-        values = [_f(v) for v in row[4:9]]
+        packed = series.get(mint)
+        if packed is None:
+            packed = series[mint] = array("d")
         if price <= 0:  # dropped as dead
-            sample = (age_min * 60, DEAD_PRICE, 0.0, 0.0, 0.0, 0.0, 0.0)
+            packed.extend((age_min * 60, DEAD_PRICE, 0.0, 0.0, 0.0, 0.0, 0.0))
         else:
-            sample = (age_min * 60, price, *values)
-        series.setdefault(mint, []).append(sample)
+            packed.append(age_min * 60)
+            packed.append(price)
+            packed.extend(_f(v) for v in row[4:9])
         newest = max(newest, ts)
-    for samples in series.values():
-        samples.sort()
     return series, newest
+
+
+def points(packed: array) -> list[tuple]:
+    """One token's samples as (age, price, liquidity, mcap, volume, buys, sells), sorted by age."""
+    out = list(zip(*[iter(packed)] * WIDTH))
+    out.sort()
+    return out
 
 
 def tradeable(p) -> bool:
@@ -117,22 +128,22 @@ RULES = [
 ]
 
 
-def _survival(series: dict) -> list[dict]:
-    """Of the tokens followed from their first hours: how many were still tradeable at each age."""
+SURVIVAL_AGES = (("6 jam", 6 * HOUR), ("1 hari", DAY), ("2 hari", 2 * DAY), ("3 hari", 3 * DAY))
+
+
+def _survives(samples: list[tuple]) -> list[bool | None]:
+    """For a token followed from its first hours, at each age in SURVIVAL_AGES: still tradeable then,
+    or None when that cannot be told (picked up later by the backfill, or not that old yet)."""
+    if samples[0][AGE] > 3 * HOUR:
+        return [None] * len(SURVIVAL_AGES)  # picked up later (backfill): its early hours are unknown
+    dead = samples[-1][PRICE] <= DEAD_PRICE
     out = []
-    for label, age in (("6 jam", 6 * HOUR), ("1 hari", DAY), ("2 hari", 2 * DAY), ("3 hari", 3 * DAY)):
-        eligible = alive = 0
-        for samples in series.values():
-            if samples[0][AGE] > 3 * HOUR:
-                continue  # picked up later (backfill): its early hours are unknown
-            last_ts_age = samples[-1][AGE]
-            dead = samples[-1][PRICE] <= DEAD_PRICE
-            if not dead and last_ts_age < age:
-                continue  # not old enough yet to tell
-            eligible += 1
-            i = _first_in(samples, age, age + ENTRY_SLACK)
-            alive += i is not None and tradeable(samples[i])
-        out.append({"label": label, "n": eligible, "pct": alive / eligible * 100 if eligible else None})
+    for _, age in SURVIVAL_AGES:
+        if not dead and samples[-1][AGE] < age:
+            out.append(None)  # not old enough yet to tell
+            continue
+        i = _first_in(samples, age, age + ENTRY_SLACK)
+        out.append(i is not None and tradeable(samples[i]))
     return out
 
 
@@ -141,13 +152,21 @@ def backtest_long(data_dir: str, s: Settings) -> dict:
     cost = (s.costs.est_swap_fee_pct + s.costs.extra_slippage_pct) / 100 + s.costs.priority_fee_sol / s.trading.buy_sol
     results = {name: {profile: [] for profile, _ in PROFILES} for name, _ in RULES}
     unfinished = 0
-    for points in series.values():
+    max_age = 0.0
+    told = [[0, 0] for _ in SURVIVAL_AGES]  # per age: tokens that can tell, of those still tradeable
+    for packed in series.values():
+        token = points(packed)
+        max_age = max(max_age, token[-1][AGE])
+        for k, alive in enumerate(_survives(token)):
+            if alive is not None:
+                told[k][0] += 1
+                told[k][1] += alive
         for name, rule in RULES:
-            i = rule(points)
-            if i is None or i >= len(points) - 1:
+            i = rule(token)
+            if i is None or i >= len(token) - 1:
                 continue
             for profile, exits in PROFILES:
-                pnl, closed = simulate_trade(points, i, exits, cost)
+                pnl, closed = simulate_trade(token, i, exits, cost)
                 if closed:
                     results[name][profile].append(pnl)
                 else:
@@ -165,9 +184,12 @@ def backtest_long(data_dir: str, s: Settings) -> dict:
                     best = {"rule": name, "profile": profile, **st}
             row[profile] = st
         rows.append(row)
-    max_age = max((samples[-1][AGE] for samples in series.values()), default=0) / DAY
+    survival = [
+        {"label": label, "n": n, "pct": alive / n * 100 if n else None}
+        for (label, _), (n, alive) in zip(SURVIVAL_AGES, told)
+    ]
     return {
-        "tokens": len(series), "max_age_days": max_age, "survival": _survival(series), "rows": rows,
+        "tokens": len(series), "max_age_days": max_age / DAY, "survival": survival, "rows": rows,
         "unfinished": unfinished, "best": best, "cost_pct": cost * 100, "buy_sol": s.trading.buy_sol,
     }
 

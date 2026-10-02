@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from migbot.backtest_long import DAY, HOUR, RULES, backtest_long, format_backtest_long, load_series
+from migbot.backtest_long import DAY, HOUR, RULES, backtest_long, format_backtest_long, load_series, points
 from migbot.cli import main
 from migbot.storage import LongSampleLog
 from migbot_fakes import T0, settings
@@ -31,8 +31,9 @@ def write(data_dir, *row_lists):
 def test_load_series_sorts_and_marks_dead_tokens(tmp_path):
     write(str(tmp_path), samples("A", lambda a: 1.0, end_h=3), samples("B", lambda a: 2.0, end_h=5, dead_at_h=4))
     series, newest = load_series(os.path.join(str(tmp_path), "long_samples.csv.gz"))
-    assert [p[0] for p in series["A"]] == sorted(p[0] for p in series["A"]) and series["A"][0][0] == 2 * HOUR
-    assert series["B"][-1][1] < 1e-9 and series["B"][-1][2] == 0  # the dead marker
+    a, b = points(series["A"]), points(series["B"])
+    assert [p[0] for p in a] == sorted(p[0] for p in a) and a[0] == (2 * HOUR, 1.0, 40_000, 200_000, 12_000, 300, 200)
+    assert b[-1][1] < 1e-9 and b[-1][2] == 0  # the dead marker
     assert newest == T0 + 4 * HOUR
 
 

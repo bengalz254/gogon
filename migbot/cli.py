@@ -126,7 +126,7 @@ def cmd_reset(args) -> int:
         write_json_atomic(state_path, state)
         dropped = len(old.get("positions") or []) if isinstance(old, dict) else 0
         print(f"Dashboard mulai dari nol. Tetap jalan: {len(state['long'])} token lama (diikuti sampai "
-              f"{s.long_tracking.max_days} hari) dan {len(state['tokens'])} token baru yang sedang dipantau.")
+              f"{s.long_tracking.max_days:g} hari) dan {len(state['tokens'])} token baru yang sedang dipantau.")
         if dropped:
             print(f"{dropped} posisi terbuka dihapus (paper, tanpa dijual).")
     return 0
