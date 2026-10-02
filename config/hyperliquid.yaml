@@ -2,7 +2,7 @@
 # Rahasia (private key, alamat wallet, saklar live) ada di .env, BUKAN di sini.
 
 strategy:
-  coin: BTC            # nama perp di Hyperliquid: BTC, ETH, SOL, ...
+  coin: ZEC            # nama perp di Hyperliquid: ZEC, BTC, ETH, SOL, ...
   interval: 30m        # candle 30 menit; sinyal hanya dari candle yang SUDAH ditutup
   ema_fast: 9
   ema_slow: 21
@@ -10,7 +10,7 @@ strategy:
 trade:
   leverage: 10
   margin_mode: isolated   # isolated (rugi maksimal = margin posisi) | cross
-  margin_usd: 20          # margin per posisi -> nilai posisi = 20 x 10 = $200
+  margin_usd: 100         # margin per posisi -> nilai posisi = 100 x 10 = $1000
   take_profit_pct: 0.05   # 5% dari margin (ROE) -> di 10x = gerak harga 0.5%
   trailing_pct: 0.005     # 0.5% dari margin (ROE) -> di 10x = gerak harga 0.05%
   # margin : persen TP/trailing/SL dihitung dari margin (ROE) (default)
@@ -21,7 +21,9 @@ trade:
   exit_mode: trailing
   # Stop-loss 30% margin (= gerak harga 3% melawan posisi di 10x) sudah DISIAPKAN, tapi
   # sengaja DIKOSONGKAN (null) -> SL TIDAK aktif. Posisi rugi hanya ditutup oleh silang EMA
-  # berlawanan, atau likuidasi (gerak harga ~9% melawan posisi = ~90% margin).
+  # berlawanan, atau likuidasi. Jarak likuidasi tergantung max leverage coin: di 10x kira-kira
+  # 9% gerak harga untuk BTC (max 40x), tapi hanya ~5% untuk coin yang max-nya 10x.
+  # Backtest menampilkan jarak likuidasi untuk coin yang dipakai.
   # Untuk mengaktifkan: ganti null dengan 0.3
   stop_loss_pct: null
   max_slippage: 0.01             # batas slippage order market (IOC)
@@ -31,10 +33,12 @@ trade:
 
 backtest:
   days: 100                  # Hyperliquid hanya menyediakan 5000 candle terakhir (~104 hari di 30m)
-  initial_equity_usd: 200    # modal awal simulasi
+  initial_equity_usd: 1000   # modal awal simulasi (margin $100 = 10% modal per posisi)
   taker_fee: 0.00045         # fee taker Hyperliquid (tier dasar)
   slippage: 0.0002           # slippage per eksekusi
-  maintenance_margin_rate: 0.0125   # untuk estimasi harga likuidasi (BTC); ETH ~0.02
+  # auto = dihitung dari max leverage coin di Hyperliquid (1 / (2 x max leverage)),
+  # dipakai untuk estimasi harga likuidasi. Bisa diisi angka manual, mis. 0.05
+  maintenance_margin_rate: auto
   # Candle 30m hanya punya OHLC, jadi pergerakan di dalam candle tidak diketahui.
   # conservative : begitu trailing aktif, anggap harga langsung berbalik -> exit di profit
   #                minimum yang terkunci (TP - trailing = 4.5% margin). Realistis utk trailing ketat.

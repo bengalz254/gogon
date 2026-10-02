@@ -1,3 +1,5 @@
+import pytest
+
 from hlbot.data import HyperliquidInfo, load_csv, save_csv
 from hlbot.strategy import Candle
 
@@ -31,6 +33,9 @@ class FakeSession:
         self.calls.append(json)
         if json["type"] == "allMids":
             return FakeResponse({"BTC": "65000.5"})
+        if json["type"] == "meta":
+            return FakeResponse({"universe": [{"name": "BTC", "szDecimals": 5, "maxLeverage": 40},
+                                              {"name": "ZEC", "szDecimals": 2, "maxLeverage": 10}]})
         req = json["req"]
         rows = [r for r in self.rows if req["startTime"] <= r["t"] <= req["endTime"]]
         return FakeResponse(rows[: self.page])
@@ -48,6 +53,13 @@ def test_candles_paginate_and_parse():
 def test_mid_price():
     info = HyperliquidInfo("https://example.invalid", session=FakeSession(1, 1))
     assert info.mid_price("BTC") == 65000.5
+
+
+def test_max_leverage():
+    info = HyperliquidInfo("https://example.invalid", session=FakeSession(1, 1))
+    assert info.max_leverage("ZEC") == 10
+    with pytest.raises(KeyError):
+        info.max_leverage("NOPE")
 
 
 def test_csv_roundtrip_and_binance_format(tmp_path):

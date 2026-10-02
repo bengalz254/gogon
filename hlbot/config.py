@@ -20,7 +20,7 @@ MIN_ORDER_NOTIONAL_USD = 10.0
 
 @dataclass
 class StrategyConfig:
-    coin: str = "BTC"
+    coin: str = "ZEC"
     interval: str = "30m"
     ema_fast: int = 9
     ema_slow: int = 21
@@ -34,7 +34,7 @@ INTRABAR_MODES = ("conservative", "ohlc")
 class TradeConfig:
     leverage: int = 10
     margin_mode: str = "isolated"  # isolated | cross
-    margin_usd: float = 20.0  # margin per position; notional = margin_usd * leverage
+    margin_usd: float = 100.0  # margin per position; notional = margin_usd * leverage
     take_profit_pct: float = 0.05
     trailing_pct: float = 0.005
     # What take_profit_pct / trailing_pct / stop_loss_pct are measured against:
@@ -74,10 +74,12 @@ class TradeConfig:
 @dataclass
 class BacktestConfig:
     days: int = 100
-    initial_equity_usd: float = 200.0
+    initial_equity_usd: float = 1000.0
     taker_fee: float = 0.00045
     slippage: float = 0.0002
-    maintenance_margin_rate: float = 0.0125
+    # None ("auto") = derive from the coin's max leverage on Hyperliquid:
+    # maintenance margin = 1 / (2 * max_leverage)
+    maintenance_margin_rate: Optional[float] = None
     # How TP/trailing are resolved inside a candle (only OHLC is known):
     #   conservative -> once the trailing stop arms, assume price turns right
     #                   away: exit at the minimum locked-in profit (TP - trailing)
@@ -114,6 +116,12 @@ def _bool_env(name: str, default: bool = False) -> bool:
     return val.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _mmr(value) -> Optional[float]:
+    if value is None or str(value).strip().lower() == "auto":
+        return None
+    return float(value)
+
+
 def _opt_float(value) -> Optional[float]:
     if value is None or value == "" or value is False:
         return None
@@ -133,7 +141,7 @@ def load_hl_settings(config_path: Optional[str] = None, env_path: Optional[str] 
     b_raw = raw.get("backtest", {}) or {}
 
     strategy = StrategyConfig(
-        coin=str(s_raw.get("coin", "BTC")),
+        coin=str(s_raw.get("coin", "ZEC")).upper(),
         interval=str(s_raw.get("interval", "30m")),
         ema_fast=int(s_raw.get("ema_fast", 9)),
         ema_slow=int(s_raw.get("ema_slow", 21)),
@@ -141,7 +149,7 @@ def load_hl_settings(config_path: Optional[str] = None, env_path: Optional[str] 
     trade = TradeConfig(
         leverage=int(t_raw.get("leverage", 10)),
         margin_mode=str(t_raw.get("margin_mode", "isolated")).lower(),
-        margin_usd=float(t_raw.get("margin_usd", 20.0)),
+        margin_usd=float(t_raw.get("margin_usd", 100.0)),
         take_profit_pct=float(t_raw.get("take_profit_pct", 0.05)),
         trailing_pct=float(t_raw.get("trailing_pct", 0.005)),
         pct_basis=str(t_raw.get("pct_basis", "margin")).lower(),
@@ -154,10 +162,10 @@ def load_hl_settings(config_path: Optional[str] = None, env_path: Optional[str] 
     )
     backtest = BacktestConfig(
         days=int(b_raw.get("days", 100)),
-        initial_equity_usd=float(b_raw.get("initial_equity_usd", 200.0)),
+        initial_equity_usd=float(b_raw.get("initial_equity_usd", 1000.0)),
         taker_fee=float(b_raw.get("taker_fee", 0.00045)),
         slippage=float(b_raw.get("slippage", 0.0002)),
-        maintenance_margin_rate=float(b_raw.get("maintenance_margin_rate", 0.0125)),
+        maintenance_margin_rate=_mmr(b_raw.get("maintenance_margin_rate", "auto")),
         intrabar=str(b_raw.get("intrabar", "conservative")).lower(),
         block_live_if_unprofitable=bool(b_raw.get("block_live_if_unprofitable", True)),
     )

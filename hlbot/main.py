@@ -35,7 +35,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bot.logger import setup_logging
-from hlbot.backtest import fetch_history, print_summary, run_backtest, save_report
+from hlbot.backtest import fetch_history, print_summary, resolve_maintenance_margin, run_backtest, save_report
 from hlbot.config import HLSettings, load_hl_settings
 from hlbot.data import HyperliquidInfo
 from hlbot.position import ExitTracker
@@ -283,6 +283,7 @@ def _request_stop(signum, frame):
 def mandatory_backtest(settings: HLSettings, info) -> Optional[dict]:
     st = settings.strategy
     logger.info("Running mandatory backtest: %s %s, last %d days ...", st.coin, st.interval, settings.backtest.days)
+    resolve_maintenance_margin(settings, info)
     candles = fetch_history(info, st.coin, st.interval, settings.backtest.days)
     result = run_backtest(candles, st, settings.trade, settings.backtest)
     summary = result.summary()

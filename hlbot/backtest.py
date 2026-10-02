@@ -51,6 +51,33 @@ def liquidation_price(side: str, entry: float, leverage: int, mmr: float) -> flo
     return entry * (1 - move_long) if side == LONG else entry * (1 + move_short)
 
 
+def resolve_maintenance_margin(settings, info) -> None:
+    """Fill backtest.maintenance_margin_rate when it is "auto" (None):
+    Hyperliquid's maintenance margin is half the initial margin at the coin's
+    max leverage. Also rejects a leverage above the coin's maximum. If the
+    exchange can't be reached, falls back to assuming max leverage == the
+    configured leverage (the closest, most conservative liquidation)."""
+    bt, trade, coin = settings.backtest, settings.trade, settings.strategy.coin
+    try:
+        max_lev = info.max_leverage(coin)
+    except KeyError:
+        raise
+    except Exception as e:
+        if bt.maintenance_margin_rate is None:
+            bt.maintenance_margin_rate = 1.0 / (2 * trade.leverage)
+            print(f"[WARN] Could not read {coin} max leverage ({e}); assuming maintenance margin "
+                  f"{bt.maintenance_margin_rate:.2%}")
+        return
+    if trade.leverage > max_lev:
+        raise ValueError(f"{coin} max leverage on Hyperliquid is {max_lev}x, config asks for {trade.leverage}x")
+    if bt.maintenance_margin_rate is None:
+        bt.maintenance_margin_rate = 1.0 / (2 * max_lev)
+
+
+def _mmr(trade: TradeConfig, bt: BacktestConfig) -> float:
+    return bt.maintenance_margin_rate if bt.maintenance_margin_rate is not None else 1.0 / (2 * trade.leverage)
+
+
 def _fmt_ts(ms: int) -> str:
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
 
@@ -174,6 +201,10 @@ def run_backtest(
             "intrabar": bt.intrabar,
             "taker_fee": bt.taker_fee,
             "slippage": bt.slippage,
+            "maintenance_margin_rate": _mmr(trade, bt),
+            "liquidation_move_pct": round(
+                100.0 * (1 - liquidation_price(LONG, 1.0, trade.leverage, _mmr(trade, bt))), 2
+            ),
         },
         initial_equity_usd=bt.initial_equity_usd,
     )
@@ -194,7 +225,7 @@ def run_backtest(
             trailing_pct=trade.trailing_price_pct,
             mode=trade.exit_mode,
             stop_loss_pct=trade.stop_loss_price_pct,
-            liquidation_price=liquidation_price(side, fill, trade.leverage, bt.maintenance_margin_rate),
+            liquidation_price=liquidation_price(side, fill, trade.leverage, _mmr(trade, bt)),
         )
         return _OpenPosition(tracker, size, fill, ts, trade.notional_usd * bt.taker_fee)
 
@@ -301,7 +332,8 @@ def print_summary(summary: dict, file=sys.stdout) -> None:
         f"terburuk {summary['worst_roe_pct']}%",
         f" Max drawdown  : ${summary['max_drawdown_usd']} ({summary['max_drawdown_pct']}%)",
         f" Max adverse   : {summary['max_adverse_move_pct']}% gerak harga melawan posisi",
-        f" Likuidasi     : {summary['liquidations']}",
+        f" Likuidasi     : {summary['liquidations']} (terjadi bila harga ~{p['liquidation_move_pct']}% "
+        f"melawan posisi)",
         f" Biaya (fee)   : ${summary['fees_usd']}",
         f" Exit reasons  : {summary['exit_reasons']}",
         "=" * 64,
@@ -364,6 +396,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.intrabar:
         settings.backtest.intrabar = args.intrabar
 
+    info = HyperliquidInfo(settings.connection.base_url)
+    try:
+        resolve_maintenance_margin(settings, info)
+    except (KeyError, ValueError) as e:
+        print(f"[FAIL] {e}")
+        return 1
+
     if args.csv:
         candles = load_csv(args.csv)
         print(f"Loaded {len(candles)} candles from {args.csv}")
@@ -375,7 +414,6 @@ def main(argv: Optional[list[str]] = None) -> int:
             )
             return 1
     else:
-        info = HyperliquidInfo(settings.connection.base_url)
         print(
             f"Downloading {settings.backtest.days} days of {settings.strategy.coin} "
             f"{settings.strategy.interval} candles from {settings.connection.base_url} ..."

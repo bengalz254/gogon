@@ -36,6 +36,13 @@ class HyperliquidInfo:
             raise KeyError(f"Coin {coin!r} not found on Hyperliquid")
         return mids[coin]
 
+    def max_leverage(self, coin: str) -> int:
+        """Max leverage of a perp; raises KeyError if the coin is not listed."""
+        for asset in self._post({"type": "meta"}).get("universe", []):
+            if asset.get("name") == coin:
+                return int(asset["maxLeverage"])
+        raise KeyError(f"Coin {coin!r} is not listed on Hyperliquid perps")
+
     def candles(self, coin: str, interval: str, start_ms: int, end_ms: int) -> list[Candle]:
         """Candles with open time in [start_ms, end_ms], oldest first. Paginates
         and de-duplicates. Includes the still-forming candle if in range —

@@ -14,8 +14,10 @@ aturan sederhana:
 | TP 5%, trailing 0,5% **dari margin** | Setelah profit mencapai **5% dari margin** (di 10x = gerak harga 0,5%), trailing stop aktif **0,5% dari margin** (gerak harga 0,05%) di belakang harga terbaik. |
 
 > ⚠️ **Ini software trading dengan leverage. Bisa rugi uang sungguhan.**
-> Di 10x, gerak harga ~9% melawan posisi = **likuidasi** (seluruh margin
-> posisi hilang). Strategi ini **tidak punya stop-loss** (sesuai aturan) —
+> Di 10x, harga yang bergerak melawan posisi sejauh jarak likuidasi =
+> **likuidasi** (seluruh margin posisi hilang). Jaraknya tergantung max
+> leverage coin: ±9% untuk BTC (max 40x), tapi hanya **±5%** untuk coin yang
+> max leverage-nya 10x. Backtest menampilkan jarak ini untuk coin yang dipakai. Strategi ini **tidak punya stop-loss** (sesuai aturan) —
 > posisi rugi hanya ditutup oleh silang EMA berlawanan. Jalankan di mode
 > paper / testnet dulu. Bukan saran keuangan.
 
@@ -29,10 +31,10 @@ persen margin ÷ 10 = persen gerak harga:
 | Take profit | 5% | 0,5% |
 | Trailing | 0,5% | 0,05% |
 
-Contoh LONG, entry $100, margin $20 (posisi $200):
+Contoh LONG, entry $100, margin $100 (posisi $1000):
 
 1. Harga $100,49 → belum apa-apa (profit < 5% margin).
-2. Harga sentuh **$100,50** (+5% margin = +$1,00) → trailing aktif, stop di
+2. Harga sentuh **$100,50** (+5% margin = +$5) → trailing aktif, stop di
    $100,50 × 0,9995 ≈ **$100,45**.
 3. Harga naik ke $101,00 → stop ikut naik ke ≈ **$100,95**.
 4. Harga turun ke $100,94 → **posisi ditutup** di ±$100,95.
@@ -69,11 +71,11 @@ cp .env.example .env
 ## 1. Backtest (WAJIB)
 
 ```bash
-# Ambil ~100 hari candle 30m BTC dari Hyperliquid lalu backtest:
+# Ambil ~100 hari candle 30m ZEC (coin di config) dari Hyperliquid lalu backtest:
 python -m hlbot.backtest
 
 # Coin lain / periode lain:
-python -m hlbot.backtest --coin ETH --days 60
+python -m hlbot.backtest --coin BTC --days 60
 python -m hlbot.backtest --coin SOL --save-candles data/sol_30m.csv
 
 # Bandingkan mode exit / coba stop-loss 30% margin (= 3% harga di 10x) tanpa mengubah config:
@@ -87,10 +89,10 @@ python -m hlbot.backtest --pct-basis price
 Hyperliquid hanya menyediakan **5000 candle terakhir** (±104 hari untuk 30m).
 Untuk backtest lebih panjang, unduh data kline dari
 [data.binance.vision](https://data.binance.vision) (mis.
-`data/futures/um/monthly/klines/BTCUSDT/30m/`), gabungkan CSV-nya, lalu:
+`data/futures/um/monthly/klines/ZECUSDT/30m/`), gabungkan CSV-nya, lalu:
 
 ```bash
-python -m hlbot.backtest --csv data/BTCUSDT-30m-2025.csv
+python -m hlbot.backtest --csv data/ZECUSDT-30m-2025.csv
 ```
 
 Output: ringkasan di terminal + `data/hl_backtest_<COIN>_30m_trades.csv`
@@ -107,12 +109,14 @@ Yang disimulasikan backtest:
   mengikuti jalur open→low→high→close / open→high→low→close dan **terlalu
   optimis** untuk trailing seketat ini; pakai hanya untuk perbandingan.
 - Fee taker 0,045% + slippage tiap entry/exit.
-- Likuidasi isolated margin (kehilangan seluruh margin posisi).
+- Likuidasi isolated margin (kehilangan seluruh margin posisi). Maintenance
+  margin dihitung otomatis dari max leverage coin di Hyperliquid
+  (`maintenance_margin_rate: auto`), jadi jarak likuidasi sesuai coin.
 - **Tidak** termasuk funding rate.
 
 Yang perlu dilihat: `Net PnL`, `Max drawdown`, `Likuidasi`, `ROE terburuk`,
-dan `Max adverse` (gerak harga terburuk melawan posisi — kalau mendekati 9%,
-artinya hampir likuidasi).
+dan `Max adverse` (gerak harga terburuk melawan posisi — kalau mendekati
+jarak likuidasi di baris `Likuidasi`, artinya hampir terlikuidasi).
 
 ## 2. Paper trading (simulasi, tanpa wallet)
 
@@ -141,7 +145,7 @@ sudah lewat — bot menunggu candle 30m berikutnya tutup.
    ```
    **Jangan pernah commit `.env` atau membagikan private key.**
 3. Atur ukuran di `config/hyperliquid.yaml` → `trade.margin_usd`
-   (default $20 margin × 10x = posisi $200). Minimal nilai posisi $10.
+   (default $100 margin × 10x = posisi $1000). Minimal nilai posisi $10.
 4. `python -m hlbot.main`
 
 Di mode live:
@@ -158,12 +162,12 @@ Di mode live:
 
 | Key | Default | Arti |
 |---|---|---|
-| `strategy.coin` | `BTC` | Perp yang ditradingkan |
+| `strategy.coin` | `ZEC` | Perp yang ditradingkan |
 | `strategy.interval` | `30m` | Timeframe candle |
 | `strategy.ema_fast` / `ema_slow` | `9` / `21` | Periode EMA |
 | `trade.leverage` | `10` | Leverage |
 | `trade.margin_mode` | `isolated` | `isolated` atau `cross` |
-| `trade.margin_usd` | `20` | Margin per posisi (USD) |
+| `trade.margin_usd` | `100` | Margin per posisi (USD) → posisi $1000 di 10x |
 | `trade.take_profit_pct` | `0.05` | 5% |
 | `trade.trailing_pct` | `0.005` | 0,5% |
 | `trade.pct_basis` | `margin` | Persen dihitung dari `margin` (ROE) atau `price` |
@@ -171,6 +175,8 @@ Di mode live:
 | `trade.stop_loss_pct` | `null` (kosong) | Stop-loss 30% margin **disiapkan tapi tidak aktif**. Isi `0.3` untuk mengaktifkan (= harga 3% melawan posisi di 10x) |
 | `trade.poll_seconds` | `2` | Interval cek harga untuk TP/trailing |
 | `backtest.days` | `100` | Panjang data backtest |
+| `backtest.initial_equity_usd` | `1000` | Modal awal simulasi |
+| `backtest.maintenance_margin_rate` | `auto` | Dari max leverage coin, untuk estimasi likuidasi |
 | `backtest.intrabar` | `conservative` | `conservative` atau `ohlc` |
 | `backtest.block_live_if_unprofitable` | `true` | Tolak live bila backtest rugi |
 
