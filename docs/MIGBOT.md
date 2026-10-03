@@ -448,6 +448,7 @@ tidak bergantung pada GMGN: bot menghitungnya sendiri lewat RPC Helius
 | `sudo systemctl stop migbot` / `start migbot` | Hentikan / nyalakan bot |
 | `sudo systemctl disable --now migbot migbot-dashboard` | Matikan total (tidak hidup lagi saat reboot) |
 | `sudo systemctl stop migbot && cd ~/migbot && venv/bin/python -m migbot reset && sudo systemctl start migbot` | Mulai dari nol, termasuk uji token lama: data lama dipindah ke `data/migbot/archive/`, tidak dihapus |
+| `cd ~/migbot && venv/bin/python -m migbot status` | Cek bot yang sedang jalan: hidup atau tidak, sumber data, data riset bertambah, peringatan di log, disk dan RAM |
 | `sudo systemctl stop migbot && cd ~/migbot && venv/bin/python -m migbot reset --simpan-lama && sudo systemctl start migbot` | Kosongkan dashboard saja (P&L, grafik, hitungan, saldo kembali ke modal awal); token lama tetap diikuti sampai 7 hari |
 | `cd ~/migbot && git pull && bash deploy/setup_migbot.sh` | Update bot |
 

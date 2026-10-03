@@ -1,4 +1,4 @@
-"""Command line: python -m migbot {run,check,setup,dashboard,report,analyze,backtest,reset}."""
+"""Command line: python -m migbot {run,check,status,setup,dashboard,report,analyze,backtest,reset}."""
 from __future__ import annotations
 
 import argparse
@@ -50,6 +50,14 @@ def cmd_dashboard(args) -> int:
 
     s = _settings(args)
     return serve(s.data_dir, host=args.host, port=args.port, open_browser=not args.no_browser)
+
+
+def cmd_status(args) -> int:
+    from migbot.status import collect, format_status
+
+    result = collect(_settings(args))
+    print(format_status(result))
+    return 1 if result["problems"] else 0
 
 
 def cmd_report(args) -> int:
@@ -148,6 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("check", parents=[common], help="cek konfigurasi dan koneksi ke semua sumber data")
     p.add_argument("--telegram-test", action="store_true", help="kirim pesan tes ke Telegram")
     p.set_defaults(func=cmd_check)
+    sub.add_parser("status", parents=[common], help="cek kesehatan bot yang sedang jalan").set_defaults(func=cmd_status)
     sub.add_parser("setup", parents=[common], help="isi Telegram dan RPC ke .env (langsung dites)").set_defaults(func=cmd_setup)
     p = sub.add_parser("dashboard", parents=[common], help="dashboard lokal (hanya baca)")
     p.add_argument("--host", default="127.0.0.1")
