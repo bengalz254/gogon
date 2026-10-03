@@ -382,14 +382,19 @@ cd ~/migbot && venv/bin/python -m migbot backtest --lama
 ```
 
 * **Masih bisa diperdagangkan setelah 6 jam / 1 / 2 / 3 hari**: berapa persen token yang
-  likuiditasnya masih ≥ $10k dan mcap ≥ $30k.
+  likuiditasnya masih ≥ $10k dan mcap ≥ $30k. Token yang belum mencapai umur itu (hidup atau
+  mati) belum dihitung.
 * Aturan beli: `hidup hari 1/2/3` (masih hidup di umur itu), `naik di hari 1` (lebih tinggi
   dari umur 12 jam), `ramai di hari 1` (volume 1 jam ≥ $10k), `dip hari 1-3` (≥ 30% di bawah
   puncak lalu naik 10%).
 * Dua cara jual: `1 hari` (SL −30%, +50% jual separuh, trailing 30%, maks 24 jam) dan
   `3 hari` (SL −50%, +100% jual separuh, trailing 40%, maks 72 jam).
-* Token yang mati saat dipegang dihitung terjual di harga nol. Pembelian yang datanya belum
-  cukup panjang tidak dihitung (ditulis sebagai "belum selesai").
+* Token yang mati saat dipegang dihitung terjual di harga nol.
+* Satu pembelian baru dihitung setelah seluruh waktu tahannya (24 atau 72 jam) ada di data,
+  juga kalau sudah kena stop loss lebih awal. Sebelum itu ditulis "belum selesai". Alasannya:
+  saat data masih bertambah, pembelian yang sudah selesai kebanyakan yang cepat kena stop
+  loss, sementara yang sedang naik masih jalan. Rata-rata dari yang selesai saja akan jauh
+  lebih buruk dari kenyataan.
 * Butuh 2–3 hari data sebelum ada hasil, dan 4–5 hari untuk aturan hari ke-3.
 
 ---
@@ -443,12 +448,12 @@ tidak bergantung pada GMGN: bot menghitungnya sendiri lewat RPC Helius
 | `cd ~/migbot && venv/bin/python -m migbot analyze` | Token mana yang hancur, dan apa yang membedakannya |
 | `cd ~/migbot && venv/bin/python -m migbot backtest` | Uji aturan beli pada catatan harga semua token |
 | `cd ~/migbot && venv/bin/python -m migbot backtest --lama` | Uji aturan beli untuk token umur 1–3 hari |
+| `cd ~/migbot && venv/bin/python -m migbot status` | Cek bot yang sedang jalan: hidup atau tidak, sumber data, data riset bertambah, peringatan di log, disk dan RAM |
 | `cd ~/migbot && venv/bin/python -m migbot check` | Cek koneksi semua sumber data |
 | `cd ~/migbot && venv/bin/python -m migbot setup` | Isi/ganti token Telegram dan RPC (langsung dites), lalu `sudo systemctl restart migbot` |
 | `sudo systemctl stop migbot` / `start migbot` | Hentikan / nyalakan bot |
 | `sudo systemctl disable --now migbot migbot-dashboard` | Matikan total (tidak hidup lagi saat reboot) |
 | `sudo systemctl stop migbot && cd ~/migbot && venv/bin/python -m migbot reset && sudo systemctl start migbot` | Mulai dari nol, termasuk uji token lama: data lama dipindah ke `data/migbot/archive/`, tidak dihapus |
-| `cd ~/migbot && venv/bin/python -m migbot status` | Cek bot yang sedang jalan: hidup atau tidak, sumber data, data riset bertambah, peringatan di log, disk dan RAM |
 | `sudo systemctl stop migbot && cd ~/migbot && venv/bin/python -m migbot reset --simpan-lama && sudo systemctl start migbot` | Kosongkan dashboard saja (P&L, grafik, hitungan, saldo kembali ke modal awal); token lama tetap diikuti sampai 7 hari |
 | `cd ~/migbot && git pull && bash deploy/setup_migbot.sh` | Update bot |
 

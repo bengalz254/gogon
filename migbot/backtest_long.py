@@ -4,8 +4,10 @@ Every real migration is followed for up to 7 days (a sample every 10 minutes,
 see long_tracking in the config). This replays entry rules that buy tokens
 still alive on day 1, 2 or 3, sells with two exit profiles through the bot's
 own evaluate_exit, and charges costs on both sides. A token dropped as dead is
-sold at nothing. Trades whose data has not run long enough yet are left out
-and counted, so the averages only use finished trades.
+sold at nothing. A trade only counts once its whole holding time (24 or 72
+hours) is in the data, early exits included: while data is still coming in,
+the trades that already closed are mostly quick stop-losses, and averaging
+only those would look far worse than the rule is.
 """
 from __future__ import annotations
 
@@ -40,10 +42,11 @@ def _f(value: str) -> float:
         return 0.0
 
 
-def load_series(path: str) -> tuple[dict[str, array], float]:
+def load_series(path: str) -> tuple[dict[str, array], dict[str, float], float]:
     """mint -> its samples packed in one array (as tuples, a week of every migration takes gigabytes
-    of memory), and the time of the newest sample. points() unpacks one token."""
+    of memory), mint -> its migration time, and the time of the newest sample. points() unpacks one token."""
     series: dict[str, array] = {}
+    born: dict[str, float] = {}
     newest = 0.0
     for row in iter_long_samples(path):
         ts, mint, age_min = _f(row[0]), row[1], _f(row[2])
@@ -51,6 +54,7 @@ def load_series(path: str) -> tuple[dict[str, array], float]:
         packed = series.get(mint)
         if packed is None:
             packed = series[mint] = array("d")
+            born[mint] = ts - age_min * 60
         if price <= 0:  # dropped as dead
             packed.extend((age_min * 60, DEAD_PRICE, 0.0, 0.0, 0.0, 0.0, 0.0))
         else:
@@ -58,7 +62,7 @@ def load_series(path: str) -> tuple[dict[str, array], float]:
             packed.append(price)
             packed.extend(_f(v) for v in row[4:9])
         newest = max(newest, ts)
-    return series, newest
+    return series, born, newest
 
 
 def points(packed: array) -> list[tuple]:
@@ -131,16 +135,17 @@ RULES = [
 SURVIVAL_AGES = (("6 jam", 6 * HOUR), ("1 hari", DAY), ("2 hari", 2 * DAY), ("3 hari", 3 * DAY))
 
 
-def _survives(samples: list[tuple]) -> list[bool | None]:
+def _survives(samples: list[tuple], reach: float) -> list[bool | None]:
     """For a token followed from its first hours, at each age in SURVIVAL_AGES: still tradeable then,
-    or None when that cannot be told (picked up later by the backfill, or not that old yet)."""
+    or None when that cannot be told: picked up later by the backfill, or the data does not reach that
+    age yet (reach: its age when the data ends). Dead tokens wait for that too, or early on only the
+    dead would count at the later ages."""
     if samples[0][AGE] > 3 * HOUR:
         return [None] * len(SURVIVAL_AGES)  # picked up later (backfill): its early hours are unknown
-    dead = samples[-1][PRICE] <= DEAD_PRICE
     out = []
     for _, age in SURVIVAL_AGES:
-        if not dead and samples[-1][AGE] < age:
-            out.append(None)  # not old enough yet to tell
+        if reach < age + ENTRY_SLACK:
+            out.append(None)
             continue
         i = _first_in(samples, age, age + ENTRY_SLACK)
         out.append(i is not None and tradeable(samples[i]))
@@ -148,16 +153,17 @@ def _survives(samples: list[tuple]) -> list[bool | None]:
 
 
 def backtest_long(data_dir: str, s: Settings) -> dict:
-    series, newest = load_series(os.path.join(data_dir, "long_samples.csv.gz"))
+    series, born, newest = load_series(os.path.join(data_dir, "long_samples.csv.gz"))
     cost = (s.costs.est_swap_fee_pct + s.costs.extra_slippage_pct) / 100 + s.costs.priority_fee_sol / s.trading.buy_sol
     results = {name: {profile: [] for profile, _ in PROFILES} for name, _ in RULES}
     unfinished = 0
     max_age = 0.0
     told = [[0, 0] for _ in SURVIVAL_AGES]  # per age: tokens that can tell, of those still tradeable
-    for packed in series.values():
+    for mint, packed in series.items():
         token = points(packed)
+        reach = newest - born[mint]  # its age when the data ends, dead or alive
         max_age = max(max_age, token[-1][AGE])
-        for k, alive in enumerate(_survives(token)):
+        for k, alive in enumerate(_survives(token, reach)):
             if alive is not None:
                 told[k][0] += 1
                 told[k][1] += alive
@@ -166,6 +172,9 @@ def backtest_long(data_dir: str, s: Settings) -> dict:
             if i is None or i >= len(token) - 1:
                 continue
             for profile, exits in PROFILES:
+                if reach < token[i][AGE] + exits.max_hold_minutes * 60:
+                    unfinished += 1  # its holding time is not over yet
+                    continue
                 pnl, closed = simulate_trade(token, i, exits, cost)
                 if closed:
                     results[name][profile].append(pnl)
